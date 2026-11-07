@@ -7,6 +7,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using DuelRoguelike.AI;
 using DuelRoguelike.Engine.Data;
 using DuelRoguelike.Engine.Duel;
 using DuelRoguelike.Engine.Ocg;
@@ -23,6 +24,9 @@ namespace DuelRoguelike.UI
         [SerializeField, Tooltip("체인할지 묻는 방식")]
         ChainPromptMode chainPrompt = ChainPromptMode.Smart;
 
+        [SerializeField, Tooltip("상대 AI(WindBot)가 나의 비공개 정보(손패, 뒷면 카드, 덱)를 본다. 끄면 EDOPro 서버처럼 가린다.")]
+        bool opponentSeesHiddenInfo = false;
+
         const byte Me = 0;
         const byte Opp = 1;
         const int MainZones = 5;
@@ -38,6 +42,8 @@ namespace DuelRoguelike.UI
         DuelText _text;
         DuelLogFormatter _logFormatter;
         SimpleAutoPlayer _helper;
+        WindBotPlayer _opponentAi;
+        bool _resultLogged;
 
         DuelInteraction _interaction;
         int _interactionSerial = -1;
@@ -122,14 +128,17 @@ namespace DuelRoguelike.UI
                 DeckShuffleSeed = duelSeed * 100,
             };
             _helper = new SimpleAutoPlayer(activateEffects: true, seed: duelSeed);
+            _opponentAi = new WindBotPlayer(Opp, _db, seed: duelSeed, hideOpponentInfo: !opponentSeesHiddenInfo);
+            _opponentAi.ProblemReported += text => Debug.LogWarning($"[WindBot] {text}");
             _session = DuelSession.Create(options, _db, _scripts,
                 new ManualPlayer { ChainPrompt = chainPrompt },
-                new SimpleAutoPlayer(activateEffects: false)); // 임시 상대 (AI는 개발 단계 6)
+                _opponentAi);
             _session.MessageReceived += OnMessage;
             _session.EngineLog += OnEngineLog;
             foreach (var (type, text) in _session.StartupLog)
                 OnEngineLog(type, text);
-            AddLog($"듀얼 시작 (시드 {duelSeed}) — 테스트 덱 40장 대 40장, 나의 선공", UiStyle.Accent);
+            _resultLogged = false;
+            AddLog($"듀얼 시작 (시드 {duelSeed}) — 테스트 덱 40장 대 40장, 나의 선공, 상대 AI: WindBot", UiStyle.Accent);
             _session.Start();
         }
 
@@ -233,6 +242,12 @@ namespace DuelRoguelike.UI
             _stripButtons.Clear();
             if (state.IsFinished)
             {
+                if (!_resultLogged && _opponentAi != null)
+                {
+                    _resultLogged = true;
+                    Debug.Log($"[WindBot] 듀얼 종료: 직접 답함 {_opponentAi.Answered}, 대신 답함 {_opponentAi.Fallbacks}, " +
+                              $"필드 모델 맞춤 {_opponentAi.ModelResyncs}칸, 메시지 처리 예외 {_opponentAi.MessageErrors}");
+                }
                 string result = state.Winner == OcgConstants.PlayerNone ? "무승부" : state.Winner == Me ? "승리!" : "패배";
                 _promptLabel.text = $"듀얼 종료: {result}";
                 _promptDetail.text = $"{state.Turn}턴, 나 LP {state.Players[Me].Lp} / 상대 LP {state.Players[Opp].Lp}";
