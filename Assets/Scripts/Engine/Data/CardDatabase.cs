@@ -96,6 +96,9 @@ namespace DuelRoguelike.Engine.Data
 
         public bool TryGet(uint code, out CardRecord record) => _cards.TryGetValue(code, out record);
 
+        /// <summary>읽은 카드 전부 (순서 없음).</summary>
+        public IEnumerable<CardRecord> Records => _cards.Values;
+
         /// <summary>엔진의 카드 데이터 요청(OcgDuelOptions.CardSource)에 그대로 넘길 수 있다.</summary>
         public OcgCardData? GetCardData(uint code) =>
             _cards.TryGetValue(code, out var record) ? record.Data : (OcgCardData?)null;
