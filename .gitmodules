@@ -1,0 +1,3 @@
+[submodule "External/ygopro-core"]
+	path = External/ygopro-core
+	url = https://github.com/edo9300/ygopro-core
