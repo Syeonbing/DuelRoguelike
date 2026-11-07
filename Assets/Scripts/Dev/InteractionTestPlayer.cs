@@ -1,5 +1,5 @@
 // 화면 조작 모델(DuelInteraction)만으로 답하는 시험용 플레이어.
-// 화면과 똑같이 "카드 메뉴의 행동 / 가운데 줄 버튼 / 카드 고르기 / 대화창"으로만 고른다.
+// 화면과 똑같이 "카드 메뉴의 행동 / 가운데 줄 버튼 / 카드 고르기 / 칸 고르기 / 대화창"으로만 고른다.
 // 이렇게 듀얼이 끝까지 가면, 화면에서 사람이 할 수 없는 선택이 없다는 뜻이다.
 using System;
 using System.Collections.Generic;
@@ -15,7 +15,12 @@ namespace DuelRoguelike.Dev
 
         readonly DuelText _text;
         readonly Random _random;
-        readonly ManualPlayer _manual = new ManualPlayer();
+        // 칸 고르기는 항상 묻게 해서, 소환·세트할 때마다 화면의 칸 고르기 모델을 거치게 한다
+        // (시험 덱에는 상대 쪽 칸·무효로 할 칸을 고르는 효과가 거의 없어 Smart로는 시험되지 않는다).
+        readonly ManualPlayer _manual = new ManualPlayer { PlaceSelect = PlaceSelectMode.Always };
+
+        /// <summary>칸 고르기(MSG_SELECT_PLACE / MSG_SELECT_DISFIELD)를 조작 모델로 답한 횟수.</summary>
+        public int PlacesAnswered { get; private set; }
         int _turn = -1;
         int _actions;
 
@@ -35,7 +40,7 @@ namespace DuelRoguelike.Dev
 
         public byte[] Respond(DuelRequest request, DuelState state)
         {
-            // 화면도 ManualPlayer가 자동으로 답하는 요청(체인 확인 일부, 칸 고르기, 순서 정하기)은 묻지 않는다.
+            // 화면도 ManualPlayer가 자동으로 답하는 요청(체인 확인 일부, 고를 것이 없는 칸 고르기, 순서 정하기)은 묻지 않는다.
             byte[] auto = _manual.Respond(request, state);
             if (auto != null)
                 return auto;
@@ -54,6 +59,8 @@ namespace DuelRoguelike.Dev
                 return new SimpleAutoPlayer().Respond(request, state);
             }
             Answered++;
+            if (it.Places != null)
+                PlacesAnswered++;
             return response;
         }
 
@@ -74,6 +81,9 @@ namespace DuelRoguelike.Dev
 
             if (it.Selection != null)
                 return Select(it);
+
+            if (it.Places != null)
+                return Place(it.Places);
 
             // 카드 메뉴의 행동과 가운데 줄 버튼 중에서 고른다. 한 턴에 너무 많이 움직이면 페이즈를 넘긴다.
             var choices = it.Actions.Values.SelectMany(a => a).Select(a => a.Response).ToList();
@@ -110,6 +120,20 @@ namespace DuelRoguelike.Dev
             if (sel.CanConfirm)
                 return sel.Confirm();
             return sel.CancelResponse;
+        }
+
+        /// <summary>화면처럼 강조된 칸을 무작위로 눌러 Count칸을 채운다. 여러 칸이면 확인을 누른다.</summary>
+        byte[] Place(PlaceSelection places)
+        {
+            foreach (var zone in places.Candidates.OrderBy(_ => _random.Next()).ToList())
+            {
+                byte[] r = places.Click(zone);
+                if (r != null)
+                    return r;
+                if (places.CanConfirm)
+                    return places.Confirm();
+            }
+            return null;
         }
     }
 }

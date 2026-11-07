@@ -39,6 +39,8 @@ namespace DuelRoguelike.Dev
             /// <summary>플레이어 0을 화면 조작 모델(InteractionTestPlayer)로 돌렸을 때: 모델로 답한 수, 자동 응답으로 대신한 수.</summary>
             public int InteractionAnswered;
             public int InteractionFallbacks;
+            /// <summary>그중 칸 고르기(MSG_SELECT_PLACE / MSG_SELECT_DISFIELD)를 화면 조작 모델로 답한 수.</summary>
+            public int InteractionPlaces;
             public readonly Dictionary<string, int> FallbackReasons = new Dictionary<string, int>();
 
             /// <summary>WindBot: 직접 답한 수, 대신 답한 수, 필드 모델을 맞춘 칸 수, 메시지 처리 예외 수.</summary>
@@ -55,6 +57,8 @@ namespace DuelRoguelike.Dev
             public readonly int[] Summons = new int[2];
             public readonly int[] Activations = new int[2];
             public readonly int[] Attacks = new int[2];
+            /// <summary>플레이어별로 엔진이 거절한 응답 수 (MSG_RETRY, 바로 앞 요청을 받은 플레이어 기준).</summary>
+            public readonly int[] Retries = new int[2];
 
             public bool Ok => Finished == Duels && EngineErrors == 0 && Exceptions == 0 && InteractionFallbacks == 0
                               && WindBotFallbacks == 0 && WindBotMessageErrors == 0 && WindBotResyncs == 0
@@ -111,6 +115,7 @@ namespace DuelRoguelike.Dev
                 {
                     using (var session = DuelSession.Create(options, _db, _scripts, p0, p1))
                     {
+                        byte lastRequestPlayer = 0;
                         session.EngineLog += (type, msg) =>
                         {
                             if (type == OcgLogType.Error) _log($"[시드 {seed}] 엔진 오류: {msg}");
@@ -120,8 +125,11 @@ namespace DuelRoguelike.Dev
                             if (message is RawMessage)
                                 Count(result.UnparsedTypes, message.Type);
                             CountAction(result, message);
+                            if (message.Type == OcgMessageType.Retry && lastRequestPlayer < 2)
+                                result.Retries[lastRequestPlayer]++;
                             if (message is DuelRequest request)
                             {
+                                lastRequestPlayer = request.Player;
                                 Count(result.RequestTypes, message.Type);
                                 if (request.Player == 0 && manual.Respond(request, session.State) == null)
                                     Count(result.HumanPrompts, message.Type);
@@ -158,6 +166,7 @@ namespace DuelRoguelike.Dev
                 {
                     result.InteractionAnswered += interactionPlayer.Answered;
                     result.InteractionFallbacks += interactionPlayer.Fallbacks;
+                    result.InteractionPlaces += interactionPlayer.PlacesAnswered;
                     foreach (string reason in interactionPlayer.FallbackReasons)
                         Count(result.FallbackReasons, reason);
                 }

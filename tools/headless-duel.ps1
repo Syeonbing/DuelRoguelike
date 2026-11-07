@@ -122,7 +122,7 @@ function Format-Counts($dict) { ($dict.GetEnumerator() | Sort-Object Value -Desc
 Write-Step "결과 ($([int]$watch.Elapsed.TotalSeconds)초)"
 Write-Host "    끝난 판: $($r.Finished) / $($r.Duels), 평균 $([math]::Round($r.TotalTurns / [math]::Max(1, $r.Duels), 1))턴"
 Write-Host "    승패: $(Format-Counts $r.Winners)"
-Write-Host "    엔진 오류 $($r.EngineErrors), 예외 $($r.Exceptions)"
+Write-Host "    엔진 오류 $($r.EngineErrors), 예외 $($r.Exceptions), 엔진이 거절한 응답 $($r.Retries[0]) / $($r.Retries[1])"
 Write-Host "    소환 $($r.Summons[0]) / $($r.Summons[1]), 효과 발동 $($r.Activations[0]) / $($r.Activations[1]), 공격 $($r.Attacks[0]) / $($r.Attacks[1])  (플레이어 0 / 1)"
 if ($Player0 -eq 'WindBot' -or $Player1 -eq 'WindBot') {
     Write-Host "    WindBot: 직접 답함 $($r.WindBotAnswered), 대신 답함 $($r.WindBotFallbacks), 모델 맞춤 $($r.WindBotResyncs)칸, 메시지 처리 예외 $($r.WindBotMessageErrors)"
@@ -130,7 +130,7 @@ if ($Player0 -eq 'WindBot' -or $Player1 -eq 'WindBot') {
     foreach ($problem in $r.WindBotProblems) { Write-Host "      $problem" -ForegroundColor Yellow }
 }
 if ($Player0 -eq 'Interaction') {
-    Write-Host "    화면 조작 모델: 답함 $($r.InteractionAnswered), 대신 답함 $($r.InteractionFallbacks) $(Format-Counts $r.FallbackReasons)"
+    Write-Host "    화면 조작 모델: 답함 $($r.InteractionAnswered) (칸 고르기 $($r.InteractionPlaces)), 대신 답함 $($r.InteractionFallbacks) $(Format-Counts $r.FallbackReasons)"
 }
 if ($r.UnparsedTypes.Count -gt 0) { Write-Host "    해석하지 않은 메시지: $(Format-Counts $r.UnparsedTypes)" }
 
