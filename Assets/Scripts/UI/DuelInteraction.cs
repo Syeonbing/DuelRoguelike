@@ -1,6 +1,7 @@
 // 엔진의 선택 요청을 "카드를 직접 누르는" 조작으로 바꾼다.
 // - 행동(소환·세트·발동·공격 등): 그 카드를 누르면 나오는 메뉴
 // - 카드 고르기(대상·릴리스·합 등): 고를 수 있는 카드를 강조하고 눌러서 고른다 (필드·패 밖의 카드가 섞이면 카드 목록 창)
+// - 칸 고르기(놓을 칸·무효로 할 칸): 고를 수 있는 필드 칸을 강조하고 눌러서 고른다
 // - 페이즈 넘기기·체인하지 않음·확인/취소: 필드 가운데 줄의 버튼
 // - 예/아니오, 효과·표시 형식 고르기, 선언: 가운데 대화창
 using System;
@@ -11,7 +12,7 @@ using DuelRoguelike.Engine.Ocg;
 
 namespace DuelRoguelike.UI
 {
-    /// <summary>카드 자리 (표시 형식 제외). 요청의 카드와 화면의 칸을 맞출 때 쓴다.</summary>
+    /// <summary>카드 자리 (표시 형식 제외). 요청의 카드·칸과 화면의 칸을 맞출 때 쓴다.</summary>
     internal readonly struct CardKey : IEquatable<CardKey>
     {
         public readonly byte Controller;
@@ -23,6 +24,13 @@ namespace DuelRoguelike.UI
             Controller = loc.Controller;
             Location = loc.Location;
             Sequence = loc.Sequence;
+        }
+
+        public CardKey(byte controller, OcgLocation location, uint sequence)
+        {
+            Controller = controller;
+            Location = location;
+            Sequence = sequence;
         }
 
         public bool Equals(CardKey o) => Controller == o.Controller && Location == o.Location && Sequence == o.Sequence;
@@ -99,6 +107,49 @@ namespace DuelRoguelike.UI
             !loc.IsOverlay && (loc.Location == OcgLocation.Hand || loc.Location == OcgLocation.MonsterZone || loc.Location == OcgLocation.SpellTrapZone);
     }
 
+    /// <summary>
+    /// 칸 고르기 (MSG_SELECT_PLACE / MSG_SELECT_DISFIELD). 고를 수 있는 칸을 강조하고 눌러서 고른다.
+    /// 한 칸이면 누르자마자 보내고, 여러 칸이면 정확히 Count칸을 고른 뒤 확인으로 보낸다. 엔진이 취소를 받지 않으므로 취소는 없다.
+    /// </summary>
+    internal sealed class PlaceSelection
+    {
+        public int Count;
+        /// <summary>true면 카드가 있는 칸도 고를 수 있다 (무효로 할 칸·지정할 칸).</summary>
+        public bool IsDisableField;
+        public readonly List<CardKey> Candidates = new List<CardKey>();
+        /// <summary>고른 순서대로.</summary>
+        public readonly List<CardKey> Chosen = new List<CardKey>();
+
+        public bool Contains(CardKey zone) => Candidates.Contains(zone);
+
+        public bool IsChosen(CardKey zone) => Chosen.Contains(zone);
+
+        /// <summary>칸을 눌렀을 때 보낼 응답. 여러 칸을 고르는 중이면 null을 돌려주고 선택만 바꾼다.</summary>
+        public byte[] Click(CardKey zone)
+        {
+            if (!Contains(zone))
+                return null;
+            if (Count <= 1)
+                return Build(new List<CardKey> { zone });
+            if (!Chosen.Remove(zone) && Chosen.Count < Count)
+                Chosen.Add(zone);
+            return null;
+        }
+
+        public bool NeedsConfirm => Count > 1;
+
+        public bool CanConfirm => NeedsConfirm && Chosen.Count == Count;
+
+        public byte[] Confirm() => Build(Chosen);
+
+        static byte[] Build(IEnumerable<CardKey> zones) =>
+            DuelResponses.Places(zones.Select(z => new DuelResponses.Place(z.Controller, z.Location, (byte)z.Sequence)).ToList());
+
+        /// <summary>화면에 칸이 있는 자리: 메인 몬스터 존 0~4, 마법·함정 존 0~4, 필드 존(5). 엑스트라 몬스터 존과 펜듈럼 존은 두지 않는다.</summary>
+        public static bool IsOnScreen(OcgLocation location, int sequence) =>
+            location == OcgLocation.MonsterZone ? sequence < 5 : location == OcgLocation.SpellTrapZone && sequence <= 5;
+    }
+
     internal sealed class DialogSpec
     {
         public string Title;
@@ -120,6 +171,7 @@ namespace DuelRoguelike.UI
         public readonly Dictionary<CardKey, List<CardAction>> Actions = new Dictionary<CardKey, List<CardAction>>();
         public readonly List<StripButton> Buttons = new List<StripButton>();
         public CardSelection Selection;
+        public PlaceSelection Places;
         public DialogSpec Dialog;
 
         public bool HasAction(CardKey key) => Actions.ContainsKey(key);
@@ -175,6 +227,7 @@ namespace DuelRoguelike.UI
                     it.Selection.AlwaysConfirm = true; // 합 조건은 한 장이라도 확인을 눌러 보낸다.
                     break;
                 case SelectUnselectCardRequest r: it.Unselect(r, text); break;
+                case SelectPlaceRequest r: it.Place(r, text); break;
                 case SelectCounterRequest r:
                     it.Dialog = new DialogSpec { Title = $"카운터 {r.Count}개를 제거할 카드를 정하세요", Detail = "지금은 자동으로 나눠서 뺀다." };
                     it.Dialog.Buttons.Add(new StripButton { Label = "자동으로 나누기", Response = new SimpleAutoPlayer().Respond(r, state) });
@@ -274,6 +327,33 @@ namespace DuelRoguelike.UI
                 Buttons.Add(new StripButton { Label = "선택 끝내기", Response = DuelResponses.FinishSelectUnselect() });
             else if (r.Cancelable)
                 Buttons.Add(new StripButton { Label = "취소", Response = DuelResponses.FinishSelectUnselect() });
+        }
+
+        void Place(SelectPlaceRequest r, DuelText text)
+        {
+            int count = Math.Max(r.Count, 1);
+            var zones = DuelResponses.AvailablePlaces(r)
+                .Where(p => PlaceSelection.IsOnScreen(p.Location, p.Sequence))
+                .Select(p => new CardKey(p.Player, p.Location, p.Sequence))
+                .ToList();
+            if (zones.Count < count)
+            {
+                // 이 룰(엑스트라 몬스터 존·펜듈럼 존 없음)에서는 나오지 않는다.
+                Dialog = new DialogSpec { Title = "화면에 없는 칸만 고를 수 있다", Detail = "첫 빈칸을 자동으로 고른다." };
+                Dialog.Buttons.Add(new StripButton { Label = "자동으로 고르기", Response = SimpleAutoPlayer.FirstPlaces(r) });
+                return;
+            }
+            Places = new PlaceSelection { Count = count, IsDisableField = r.IsDisableField };
+            Places.Candidates.AddRange(zones);
+            Prompt = PlaceTitle(r, text) + (count > 1 ? $" ({count}칸)" : "");
+        }
+
+        static string PlaceTitle(SelectPlaceRequest r, DuelText text)
+        {
+            // 카드를 필드에 낼 때 엔진은 고르기 안내(HINT_SELECTMSG)에 그 카드의 코드를 넣는다.
+            if (r.SelectHint != 0 && r.SelectHint <= uint.MaxValue && text.Record((uint)r.SelectHint) != null)
+                return $"「{text.CardName((uint)r.SelectHint)}」을(를) 놓을 칸을 고르세요";
+            return HintTitle(r, text, r.IsDisableField ? "사용할 수 없게 할 칸을 고르세요" : "카드를 놓을 칸을 고르세요");
         }
 
         void Add(CardLocation loc, string label, byte[] response)

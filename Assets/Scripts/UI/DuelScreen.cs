@@ -1,7 +1,8 @@
 // 최소 듀얼 화면 (UI Toolkit). 설계 문서의 화면 구성을 따른다:
 // 왼쪽 플레이어 정보(위 상대, 아래 나, 카드 효과문은 내 초상화 자리), 가운데 필드(점대칭, 엑스트라 몬스터 존 없음,
 // 패는 필드 위아래, 묘지 옆 필드 가운데 쪽에 원형 제외 칸), 오른쪽 로그.
-// 조작: 카드를 직접 눌러 행동을 고른다. 행동할 수 있는 카드·고를 수 있는 카드는 테두리로 강조한다.
+// 조작: 카드를 직접 눌러 행동을 고른다. 행동할 수 있는 카드·고를 수 있는 카드·고를 수 있는 칸은 테두리로 강조한다.
+// 칸 고르기(놓을 칸·무효로 할 칸)는 필드 칸(빈칸 포함)을 눌러서 고른다.
 // 센터 카드, 초상화 그림, 체인 박스 연출, 카드 크게 보기는 아직 없다.
 using System;
 using System.Collections.Generic;
@@ -23,6 +24,9 @@ namespace DuelRoguelike.UI
 
         [SerializeField, Tooltip("체인할지 묻는 방식")]
         ChainPromptMode chainPrompt = ChainPromptMode.Smart;
+
+        [SerializeField, Tooltip("카드를 놓을 칸·무효로 할 칸을 묻는 방식. Smart: 무효로 할 칸, 상대 쪽 칸, 몬스터 존과 마법·함정 존이 함께 후보일 때만 묻고, 나머지는 첫 빈칸")]
+        PlaceSelectMode placeSelect = PlaceSelectMode.Smart;
 
         [SerializeField, Tooltip("상대 AI(WindBot)가 나의 비공개 정보(손패, 뒷면 카드, 덱)를 본다. 끄면 EDOPro 서버처럼 가린다.")]
         bool opponentSeesHiddenInfo = false;
@@ -131,7 +135,7 @@ namespace DuelRoguelike.UI
             _opponentAi = new WindBotPlayer(Opp, _db, seed: duelSeed, hideOpponentInfo: !opponentSeesHiddenInfo);
             _opponentAi.ProblemReported += text => Debug.LogWarning($"[WindBot] {text}");
             _session = DuelSession.Create(options, _db, _scripts,
-                new ManualPlayer { ChainPrompt = chainPrompt },
+                new ManualPlayer { ChainPrompt = chainPrompt, PlaceSelect = placeSelect },
                 _opponentAi);
             _session.MessageReceived += OnMessage;
             _session.EngineLog += OnEngineLog;
@@ -262,9 +266,12 @@ namespace DuelRoguelike.UI
             }
             _promptLabel.text = _interaction.Prompt;
             var sel = _interaction.Selection;
+            var places = _interaction.Places;
             string detail = _interaction.PromptDetail;
             if (sel != null && sel.NeedsConfirm)
                 detail = $"{sel.Chosen.Count}장 골랐다" + (detail != null ? $" · {detail}" : "");
+            if (places != null && places.NeedsConfirm)
+                detail = $"{places.Chosen.Count} / {places.Count}칸 골랐다" + (detail != null ? $" · {detail}" : "");
             _promptDetail.text = detail ?? "";
 
             foreach (var b in _interaction.Buttons)
@@ -276,6 +283,11 @@ namespace DuelRoguelike.UI
             {
                 var confirm = AddStripButton("확인", () => Respond(sel.Confirm()), true);
                 confirm.SetEnabled(sel.CanConfirm);
+            }
+            if (places != null && places.NeedsConfirm)
+            {
+                var confirm = AddStripButton("확인", () => Respond(places.Confirm()), true);
+                confirm.SetEnabled(places.CanConfirm);
             }
             if (sel != null && sel.NeedsWindow && _windowHidden)
                 AddStripButton("카드 목록 열기", () => { _windowHidden = false; OpenSelectionWindow(); }, true);
@@ -313,6 +325,21 @@ namespace DuelRoguelike.UI
         {
             bool visible = visibleOverride ?? IsVisible(card);
             cell.Set(card, visible);
+            var places = _interaction?.Places;
+            if (places != null && cell.Zone.HasValue)
+            {
+                var zone = cell.Zone.Value;
+                if (!places.Contains(zone))
+                {
+                    cell.SetHighlight(null);
+                    return;
+                }
+                bool chosen = places.IsChosen(zone);
+                cell.SetHighlight(chosen ? Chosen : Selectable);
+                if (card == null)
+                    cell.ShowEmptyHint(chosen ? "고름" : places.IsDisableField ? "고르기" : "여기에 놓기", chosen ? Chosen : Selectable);
+                return;
+            }
             cell.SetHighlight(HighlightFor(card));
         }
 
@@ -338,12 +365,26 @@ namespace DuelRoguelike.UI
 
         // ================= 카드 누르기 =================
 
-        void OnCardClicked(CardInfo card, bool visible, VisualElement anchor, Action refresh)
+        void OnCardClicked(CardInfo card, bool visible, VisualElement anchor, Action refresh, CardKey? zone)
         {
-            if (card == null)
-                return;
-            ShowCard(card, visible);
+            if (card != null)
+                ShowCard(card, visible);
             if (_interaction == null)
+                return;
+            var places = _interaction.Places;
+            if (places != null)
+            {
+                // 칸 고르기 중에는 카드가 아니라 칸을 고른다 (무효로 할 칸은 카드가 있는 칸일 수도 있다).
+                if (zone == null || !places.Contains(zone.Value))
+                    return;
+                byte[] placeResponse = places.Click(zone.Value);
+                if (placeResponse != null)
+                    Respond(placeResponse);
+                else
+                    Render();
+                return;
+            }
+            if (card == null)
                 return;
             var key = new CardKey(card.Location);
             var sel = _interaction.Selection;
@@ -829,9 +870,9 @@ namespace DuelRoguelike.UI
         VisualElement FrontRow(byte p)
         {
             var row = FieldRow();
-            _fieldZone[p] = new CardCell(this, 104, 104);
+            _fieldZone[p] = new CardCell(this, 104, 104, zone: new CardKey(p, OcgLocation.SpellTrapZone, 5));
             for (int i = 0; i < MainZones; i++)
-                _monsters[p, i] = new CardCell(this, 104, 104);
+                _monsters[p, i] = new CardCell(this, 104, 104, zone: new CardKey(p, OcgLocation.MonsterZone, (uint)i));
             var gravePile = GraveStack(p);
             if (p == Me)
             {
@@ -854,7 +895,7 @@ namespace DuelRoguelike.UI
         {
             var row = FieldRow();
             for (int i = 0; i < MainZones; i++)
-                _spells[p, i] = new CardCell(this, 104, 92);
+                _spells[p, i] = new CardCell(this, 104, 92, zone: new CardKey(p, OcgLocation.SpellTrapZone, (uint)i));
             _deck[p] = new PileCell(104, 92, 6, () => OpenPileWindow(p, OcgLocation.Deck));
             _extra[p] = new PileCell(104, 92, 6, () => OpenPileWindow(p, OcgLocation.Extra));
             if (p == Me)
@@ -946,6 +987,8 @@ namespace DuelRoguelike.UI
         sealed class CardCell
         {
             public readonly VisualElement Root;
+            /// <summary>필드 칸이면 그 자리 (칸 고르기용). 패·창 안의 카드는 null.</summary>
+            public readonly CardKey? Zone;
             readonly Label _name;
             readonly Label _stats;
             readonly Label _caption;
@@ -956,9 +999,10 @@ namespace DuelRoguelike.UI
             Color _border;
             float _borderWidth;
 
-            public CardCell(DuelScreen screen, float width, float height, Action refresh = null)
+            public CardCell(DuelScreen screen, float width, float height, Action refresh = null, CardKey? zone = null)
             {
                 _screen = screen;
+                Zone = zone;
                 Root = UiStyle.Box();
                 Root.style.width = width;
                 Root.style.height = height;
@@ -974,7 +1018,7 @@ namespace DuelRoguelike.UI
                 Root.Add(_name);
                 Root.Add(_caption);
                 Root.Add(_stats);
-                Root.RegisterCallback<ClickEvent>(_ => _screen.OnCardClicked(_card, _visible, Root, refresh));
+                Root.RegisterCallback<ClickEvent>(_ => _screen.OnCardClicked(_card, _visible, Root, refresh, Zone));
                 Set(null, false);
             }
 
@@ -982,6 +1026,14 @@ namespace DuelRoguelike.UI
             {
                 _emptyText = text;
                 if (_card == null) _name.text = text;
+            }
+
+            /// <summary>빈칸에 잠깐 띄우는 안내 (칸 고르기). 다음 Set에서 원래 문구로 돌아간다.</summary>
+            public void ShowEmptyHint(string text, Color color)
+            {
+                if (_card != null) return;
+                _name.text = text;
+                _name.style.color = color;
             }
 
             public void SetCaption(string text)
