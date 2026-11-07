@@ -22,6 +22,12 @@ namespace DuelRoguelike.UI
         [SerializeField, Tooltip("듀얼 난수·덱 셔플 시드. 다시 시작할 때마다 1씩 늘어난다.")]
         int duelSeed = 1;
 
+        [SerializeField, Tooltip("내 덱 (스타터 덱)")]
+        StarterDeckId myDeck = StarterDeckId.Yugi;
+
+        [SerializeField, Tooltip("상대 덱 (스타터 덱)")]
+        StarterDeckId opponentDeck = StarterDeckId.Kaiba;
+
         [SerializeField, Tooltip("체인할지 묻는 방식")]
         ChainPromptMode chainPrompt = ChainPromptMode.Smart;
 
@@ -124,11 +130,12 @@ namespace DuelRoguelike.UI
             _log.Clear();
             CloseMenu();
             CloseModal();
-            var deck = TestDecks.Yugi;
+            var myRecipe = StarterDecks.Get(myDeck);
+            var opponentRecipe = StarterDecks.Get(opponentDeck);
             var options = new DuelSessionOptions
             {
                 Seed = new ulong[] { (ulong)duelSeed, 2, 3, 4 },
-                Decks = new IReadOnlyList<uint>[] { deck, deck },
+                Decks = new IReadOnlyList<uint>[] { myRecipe.ToCardList(), opponentRecipe.ToCardList() },
                 DeckShuffleSeed = duelSeed * 100,
             };
             _helper = new SimpleAutoPlayer(activateEffects: true, seed: duelSeed);
@@ -142,7 +149,7 @@ namespace DuelRoguelike.UI
             foreach (var (type, text) in _session.StartupLog)
                 OnEngineLog(type, text);
             _resultLogged = false;
-            AddLog($"듀얼 시작 (시드 {duelSeed}) — 테스트 덱 40장 대 40장, 나의 선공, 상대 AI: WindBot", UiStyle.Accent);
+            AddLog($"듀얼 시작 (시드 {duelSeed}) — 나: {myRecipe.Name}, 상대: {opponentRecipe.Name}, 나의 선공, 상대 AI: WindBot", UiStyle.Accent);
             _session.Start();
         }
 
@@ -1126,37 +1133,5 @@ namespace DuelRoguelike.UI
                 UiStyle.BorderColor(Root, highlight ? Actionable : UiStyle.Border, highlight ? 4 : 1);
             }
         }
-    }
-
-    /// <summary>임시 테스트 덱. 정식 스타터 덱 4개는 개발 단계 5에서 정한다.</summary>
-    public static class TestDecks
-    {
-        /// <summary>
-        /// 스타터 덱 —유희 편— 카드 일부로 짠 40장.
-        /// 주석의 카드명은 EDOPro 한글 패치 DB(External/edopro-korean) 기준이고, 괄호 안은 BabelCDB 영문명이다.
-        /// </summary>
-        public static readonly (uint Code, int Count)[] YugiEntries =
-        {
-            (46986414, 2), // 블랙 매지션 (Dark Magician)
-            (70781052, 2), // 데몬 소환 (Summoned Skull)
-            (6368038, 2),  // 암흑 기사 가이아 (Gaia The Fierce Knight)
-            (28279543, 3), // 커스 오브 드래곤 (Curse of Dragon)
-            (91152256, 3), // 엘프 검사 (Celtic Guardian)
-            (15025844, 3), // 홀리 엘프 (Mystical Elf)
-            (41392891, 3), // 그렘린 (Feral Imp)
-            (13039848, 3), // 암석 거인 (Giant Soldier of Stone)
-            (32452818, 3), // 루이즈 (Beaver Warrior)
-            (90357090, 3), // 실버 팽 (Silver Fang)
-            (53129443, 1), // 블랙홀 (Dark Hole)
-            (83764718, 1), // 죽은 자의 소생 (Monster Reborn)
-            (72302403, 2), // 빛의 봉인검 (Swords of Revealing Light)
-            (84257639, 3), // 치료의 신 다이안 켓 (Dian Keto the Cure Master)
-            (66788016, 2), // 갈라진 대지 (Fissure)
-            (4206964, 2),  // 함정 속으로 (Trap Hole)
-            (50045299, 2), // 드래곤족 봉인항아리 (Dragon Capture Jar)
-        };
-
-        public static readonly IReadOnlyList<uint> Yugi =
-            YugiEntries.SelectMany(e => Enumerable.Repeat(e.Code, e.Count)).ToList();
     }
 }

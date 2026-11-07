@@ -1,5 +1,5 @@
 // 개발용 확인 스크립트: 플레이 모드에서 카드 DB(BabelCDB)와 카드 스크립트(CardScripts)를 엔진에 연결해
-// 테스트 덱으로 듀얼을 시작하고, 메인 페이즈 1 입력 대기까지 진행한 결과를 콘솔에 출력한다.
+// 스타터 덱 —유희 편—으로 듀얼을 시작하고, 메인 페이즈 1 입력 대기까지 진행한 결과를 콘솔에 출력한다.
 // 씬: Assets/Scenes/Dev/CardDataSmokeTest.unity
 using System;
 using System.IO;

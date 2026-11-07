@@ -12,8 +12,8 @@ namespace DuelRoguelike.Dev
 {
     public sealed class CardDataSmokeRun
     {
-        /// <summary>임시 테스트 덱 40장 (카드 목록은 UI.TestDecks.YugiEntries 한 곳에서 관리한다).</summary>
-        public static (uint Code, int Count)[] TestDeck => UI.TestDecks.YugiEntries;
+        /// <summary>양쪽 플레이어가 쓰는 덱: 스타터 덱 —유희 편—.</summary>
+        public static DeckRecipe TestDeck => StarterDecks.Yugi;
 
         readonly Action<string> _info;
         readonly Action<string> _warn;
@@ -135,7 +135,7 @@ namespace DuelRoguelike.Dev
         List<uint> ExpandDeck(CardDatabase database)
         {
             var deck = new List<uint>();
-            foreach (var (code, count) in TestDeck)
+            foreach (var (code, count) in TestDeck.Entries)
             {
                 if (!database.TryGet(code, out _))
                     _warn($"카드 DB에 없는 카드: {code}");
