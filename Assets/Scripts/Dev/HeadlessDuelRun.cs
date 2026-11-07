@@ -24,7 +24,11 @@ namespace DuelRoguelike.Dev
             public readonly Dictionary<OcgMessageType, int> RequestTypes = new Dictionary<OcgMessageType, int>();
             /// <summary>플레이어 0이 사람(ManualPlayer, 체인 확인 Smart)이었다면 실제로 물었을 요청 수.</summary>
             public readonly Dictionary<OcgMessageType, int> HumanPrompts = new Dictionary<OcgMessageType, int>();
-            public bool Ok => Finished == Duels && EngineErrors == 0 && Exceptions == 0;
+            /// <summary>플레이어 0을 화면 조작 모델(InteractionTestPlayer)로 돌렸을 때: 모델로 답한 수, 자동 응답으로 대신한 수.</summary>
+            public int InteractionAnswered;
+            public int InteractionFallbacks;
+            public readonly Dictionary<string, int> FallbackReasons = new Dictionary<string, int>();
+            public bool Ok => Finished == Duels && EngineErrors == 0 && Exceptions == 0 && InteractionFallbacks == 0;
         }
 
         readonly CardDatabase _db;
@@ -41,7 +45,8 @@ namespace DuelRoguelike.Dev
         }
 
         /// <param name="printLogSeed">이 시드의 듀얼은 로그 전체를 출력한다 (-1이면 출력하지 않음).</param>
-        public Result Run(int duels, int firstSeed = 1, int printLogSeed = -1, int maxTurns = 60)
+        /// <param name="viaInteraction">true면 플레이어 0이 화면 조작 모델로만 답한다 (화면에서 고를 수 없는 선택이 있는지 확인).</param>
+        public Result Run(int duels, int firstSeed = 1, int printLogSeed = -1, int maxTurns = 60, bool viaInteraction = false)
         {
             var result = new Result();
             var deck = CardDataSmokeRun.TestDeck.SelectMany(e => Enumerable.Repeat(e.Code, e.Count)).ToList();
@@ -59,10 +64,12 @@ namespace DuelRoguelike.Dev
                     Decks = new IReadOnlyList<uint>[] { deck, deck },
                     DeckShuffleSeed = seed * 100,
                 };
+                var interactionPlayer = viaInteraction ? new InteractionTestPlayer(text, seed) : null;
+                IDuelPlayer player0 = (IDuelPlayer)interactionPlayer ?? new SimpleAutoPlayer(activateEffects: true, seed: seed);
                 try
                 {
                     using (var session = DuelSession.Create(options, _db, _scripts,
-                               new SimpleAutoPlayer(activateEffects: true, seed: seed),
+                               player0,
                                new SimpleAutoPlayer(activateEffects: true, seed: seed + 7777)))
                     {
                         session.EngineLog += (type, msg) =>
@@ -106,6 +113,13 @@ namespace DuelRoguelike.Dev
                 {
                     result.Exceptions++;
                     _log($"[시드 {seed}] 예외: {e.GetType().Name}: {e.Message}");
+                }
+                if (interactionPlayer != null)
+                {
+                    result.InteractionAnswered += interactionPlayer.Answered;
+                    result.InteractionFallbacks += interactionPlayer.Fallbacks;
+                    foreach (string reason in interactionPlayer.FallbackReasons)
+                        Count(result.FallbackReasons, reason);
                 }
             }
             return result;

@@ -43,6 +43,9 @@ namespace DuelRoguelike.Engine.Duel
         /// <summary>사람이 답해야 하는 요청. 없으면 null.</summary>
         public DuelRequest PendingRequest { get; private set; }
 
+        /// <summary>사람에게 물을 때마다 1씩 는다. 거절 뒤 같은 요청을 다시 물을 때도 는다 (화면이 새로 그릴 때를 알 수 있다).</summary>
+        public int PendingSerial { get; private set; }
+
         /// <summary>바로 앞 응답이 엔진에 거절되어 같은 요청을 다시 묻는 중인지.</summary>
         public bool IsRetry { get; private set; }
 
@@ -176,6 +179,7 @@ namespace DuelRoguelike.Engine.Duel
                 if (response == null)
                 {
                     PendingRequest = request;
+                    PendingSerial++;
                     return;
                 }
                 if (_retries >= MaxAutoRetries)
