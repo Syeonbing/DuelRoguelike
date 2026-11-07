@@ -141,6 +141,132 @@ namespace DuelRoguelike.Engine.Ocg
         Defense = FaceUpDefense | FaceDownDefense,
     }
 
+    // PHASE_* 페이즈 (ocgapi_constants.h)
+    [Flags]
+    public enum OcgPhase : ushort
+    {
+        None = 0,
+        Draw = 0x01,
+        Standby = 0x02,
+        Main1 = 0x04,
+        BattleStart = 0x08,
+        BattleStep = 0x10,
+        Damage = 0x20,
+        DamageCalculation = 0x40,
+        Battle = 0x80,
+        Main2 = 0x100,
+        End = 0x200,
+    }
+
+    // REASON_* 카드가 움직인 이유 (ocgapi_constants.h)
+    [Flags]
+    public enum OcgReason : uint
+    {
+        None = 0,
+        Destroy = 0x1,
+        Release = 0x2,
+        Temporary = 0x4,
+        Material = 0x8,
+        Summon = 0x10,
+        Battle = 0x20,
+        Effect = 0x40,
+        Cost = 0x80,
+        Adjust = 0x100,
+        LostTarget = 0x200,
+        Rule = 0x400,
+        SpSummon = 0x800,
+        DisSummon = 0x1000,
+        Flip = 0x2000,
+        Discard = 0x4000,
+        ReverseDamage = 0x8000,
+        ReverseRecover = 0x10000,
+        Return = 0x20000,
+        Fusion = 0x40000,
+        Synchro = 0x80000,
+        Ritual = 0x100000,
+        Xyz = 0x200000,
+        Replace = 0x1000000,
+        Draw = 0x2000000,
+        Redirect = 0x4000000,
+        Link = 0x10000000,
+    }
+
+    // HINT_* (MSG_HINT의 종류)
+    public enum OcgHintType : byte
+    {
+        Event = 1,
+        Message = 2,
+        SelectMessage = 3,
+        OptionSelected = 4,
+        Effect = 5,
+        Race = 6,
+        Attribute = 7,
+        Code = 8,
+        Number = 9,
+        Card = 10,
+        Zone = 11,
+    }
+
+    // QUERY_* 카드 상태 조회 항목 (ocgapi_constants.h)
+    [Flags]
+    public enum OcgQuery : uint
+    {
+        None = 0,
+        Code = 0x1,
+        Position = 0x2,
+        Alias = 0x4,
+        Type = 0x8,
+        Level = 0x10,
+        Rank = 0x20,
+        Attribute = 0x40,
+        Race = 0x80,
+        Attack = 0x100,
+        Defense = 0x200,
+        BaseAttack = 0x400,
+        BaseDefense = 0x800,
+        Reason = 0x1000,
+        ReasonCard = 0x2000,
+        EquipCard = 0x4000,
+        TargetCard = 0x8000,
+        OverlayCard = 0x10000,
+        Counters = 0x20000,
+        Owner = 0x40000,
+        Status = 0x80000,
+        IsPublic = 0x100000,
+        LeftScale = 0x200000,
+        RightScale = 0x400000,
+        Link = 0x800000,
+        IsHidden = 0x1000000,
+        Cover = 0x2000000,
+        End = 0x80000000,
+    }
+
+    // ATTRIBUTE_* 속성
+    [Flags]
+    public enum OcgAttribute : uint
+    {
+        None = 0,
+        Earth = 0x01,
+        Water = 0x02,
+        Fire = 0x04,
+        Wind = 0x08,
+        Light = 0x10,
+        Dark = 0x20,
+        Divine = 0x40,
+    }
+
+    public static class OcgConstants
+    {
+        /// <summary>MSG_WIN의 승자 값이 이것이면 무승부.</summary>
+        public const byte PlayerNone = 2;
+
+        /// <summary>MSG_WIN 이유: LP 0</summary>
+        public const byte WinReasonLp = 1;
+
+        /// <summary>MSG_WIN 이유: 덱에서 드로우하지 못함</summary>
+        public const byte WinReasonDeckOut = 2;
+    }
+
     // MSG_* 메시지 종류 (ocgapi_constants.h)
     public enum OcgMessageType : byte
     {

@@ -219,6 +219,36 @@ namespace DuelRoguelike.Engine.Ocg
             return result;
         }
 
+        /// <summary>한 영역의 카드 수 (덱 등 내용을 보면 안 되는 영역에 쓴다).</summary>
+        public uint QueryCount(byte team, OcgLocation location)
+        {
+            ThrowIfDisposed();
+            return OcgNative.OCG_DuelQueryCount(_handle, team, (uint)location);
+        }
+
+        /// <summary>한 영역의 카드 전부를 조회한다. 결과 형식은 DuelQueryReader가 읽는다.</summary>
+        public byte[] QueryLocation(byte team, OcgLocation location, OcgQuery flags)
+        {
+            ThrowIfDisposed();
+            var info = new OcgNative.QueryInfo { Flags = (uint)flags, Controller = team, Location = (uint)location };
+            return CopyBuffer(OcgNative.OCG_DuelQueryLocation(_handle, out uint length, ref info), length);
+        }
+
+        /// <summary>양쪽 LP, 각 영역 카드 수, 현재 체인을 조회한다.</summary>
+        public byte[] QueryField()
+        {
+            ThrowIfDisposed();
+            return CopyBuffer(OcgNative.OCG_DuelQueryField(_handle, out uint length), length);
+        }
+
+        static byte[] CopyBuffer(IntPtr ptr, uint length)
+        {
+            var buffer = new byte[length];
+            if (ptr != IntPtr.Zero && length > 0)
+                Marshal.Copy(ptr, buffer, 0, (int)length);
+            return buffer;
+        }
+
         public void SetResponse(byte[] response)
         {
             ThrowIfDisposed();

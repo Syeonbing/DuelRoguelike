@@ -2,7 +2,8 @@
     "name": "DuelRoguelike.Dev",
     "rootNamespace": "DuelRoguelike.Dev",
     "references": [
-        "DuelRoguelike.Engine"
+        "DuelRoguelike.Engine",
+        "DuelRoguelike.UI"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
