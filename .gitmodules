@@ -1,3 +1,11 @@
 [submodule "External/ygopro-core"]
 	path = External/ygopro-core
 	url = https://github.com/edo9300/ygopro-core
+[submodule "External/CardScripts"]
+	path = External/CardScripts
+	url = https://github.com/ProjectIgnis/CardScripts
+	shallow = true
+[submodule "External/BabelCDB"]
+	path = External/BabelCDB
+	url = https://github.com/ProjectIgnis/BabelCDB
+	shallow = true
