@@ -1,8 +1,9 @@
-// 화면 없이 양쪽 다 자동 응답으로 듀얼을 끝까지 돌려, 메시지 해석·응답·상태 갱신이 끝까지 문제없는지 확인한다.
-// 유니티 타입을 쓰지 않으므로 에디터 밖에서도 그대로 돌릴 수 있다.
+// 화면 없이 자동으로 듀얼을 끝까지 돌려, 메시지 해석·응답·상태 갱신과 상대 AI가 끝까지 문제없는지 확인한다.
+// 유니티 타입을 쓰지 않으므로 에디터 밖에서도 그대로 돌릴 수 있다 (tools/headless-duel.ps1).
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using DuelRoguelike.AI;
 using DuelRoguelike.Engine.Data;
 using DuelRoguelike.Engine.Duel;
 using DuelRoguelike.Engine.Ocg;
@@ -10,6 +11,17 @@ using DuelRoguelike.UI;
 
 namespace DuelRoguelike.Dev
 {
+    /// <summary>화면 밖 대전에서 한쪽을 맡을 플레이어.</summary>
+    public enum HeadlessPlayerKind
+    {
+        /// <summary>SimpleAutoPlayer (효과 발동 켬, 무작위)</summary>
+        Auto,
+        /// <summary>WindBot Ignite AI (상대 비공개 정보 가림)</summary>
+        WindBot,
+        /// <summary>화면 조작 모델(InteractionTestPlayer)로만 답한다: 화면에서 고를 수 없는 선택이 있는지 확인. 플레이어 0만.</summary>
+        Interaction,
+    }
+
     public sealed class HeadlessDuelRun
     {
         public sealed class Result
@@ -28,8 +40,28 @@ namespace DuelRoguelike.Dev
             public int InteractionAnswered;
             public int InteractionFallbacks;
             public readonly Dictionary<string, int> FallbackReasons = new Dictionary<string, int>();
-            public bool Ok => Finished == Duels && EngineErrors == 0 && Exceptions == 0 && InteractionFallbacks == 0;
+
+            /// <summary>WindBot: 직접 답한 수, 대신 답한 수, 필드 모델을 맞춘 칸 수, 메시지 처리 예외 수.</summary>
+            public int WindBotAnswered;
+            public int WindBotFallbacks;
+            public int WindBotResyncs;
+            public int WindBotMessageErrors;
+            /// <summary>WindBot이 코드를 알고 있던 상대 손패의 비공개 카드 (응답마다 센 누적, 가리기를 켰다면 0).</summary>
+            public int WindBotKnownSecrets;
+            public bool WindBotHidesInfo = true;
+            public readonly List<string> WindBotProblems = new List<string>();
+
+            /// <summary>플레이어별 일반·특수·반전 소환, 효과 발동(체인), 공격 선언 수.</summary>
+            public readonly int[] Summons = new int[2];
+            public readonly int[] Activations = new int[2];
+            public readonly int[] Attacks = new int[2];
+
+            public bool Ok => Finished == Duels && EngineErrors == 0 && Exceptions == 0 && InteractionFallbacks == 0
+                              && WindBotFallbacks == 0 && WindBotMessageErrors == 0 && WindBotResyncs == 0
+                              && (!WindBotHidesInfo || WindBotKnownSecrets == 0);
         }
+
+        const int MaxProblemsKept = 40;
 
         readonly CardDatabase _db;
         readonly CardScriptSource _scripts;
@@ -45,10 +77,14 @@ namespace DuelRoguelike.Dev
         }
 
         /// <param name="printLogSeed">이 시드의 듀얼은 로그 전체를 출력한다 (-1이면 출력하지 않음).</param>
-        /// <param name="viaInteraction">true면 플레이어 0이 화면 조작 모델로만 답한다 (화면에서 고를 수 없는 선택이 있는지 확인).</param>
-        public Result Run(int duels, int firstSeed = 1, int printLogSeed = -1, int maxTurns = 60, bool viaInteraction = false)
+        public Result Run(int duels, int firstSeed = 1, int printLogSeed = -1, int maxTurns = 60,
+            HeadlessPlayerKind player0 = HeadlessPlayerKind.Auto, HeadlessPlayerKind player1 = HeadlessPlayerKind.Auto,
+            bool windBotHidesInfo = true)
         {
-            var result = new Result();
+            if (player1 == HeadlessPlayerKind.Interaction)
+                throw new ArgumentException("화면 조작 모델은 플레이어 0만 맡을 수 있습니다.", nameof(player1));
+
+            var result = new Result { WindBotHidesInfo = windBotHidesInfo };
             var deck = CardDataSmokeRun.TestDeck.SelectMany(e => Enumerable.Repeat(e.Code, e.Count)).ToList();
             var text = new DuelText(_db, _strings);
             var formatter = new DuelLogFormatter(text);
@@ -64,13 +100,16 @@ namespace DuelRoguelike.Dev
                     Decks = new IReadOnlyList<uint>[] { deck, deck },
                     DeckShuffleSeed = seed * 100,
                 };
-                var interactionPlayer = viaInteraction ? new InteractionTestPlayer(text, seed) : null;
-                IDuelPlayer player0 = (IDuelPlayer)interactionPlayer ?? new SimpleAutoPlayer(activateEffects: true, seed: seed);
+                var interactionPlayer = player0 == HeadlessPlayerKind.Interaction ? new InteractionTestPlayer(text, seed) : null;
+                var windBots = new List<WindBotPlayer>();
+                IDuelPlayer p0 = (IDuelPlayer)interactionPlayer ?? CreatePlayer(player0, 0, seed, windBotHidesInfo, windBots);
+                IDuelPlayer p1 = CreatePlayer(player1, 1, seed + 7777, windBotHidesInfo, windBots);
+                if (print)
+                    foreach (var bot in windBots)
+                        bot.DebugLog += line => _log($"    [WindBot] {line}");
                 try
                 {
-                    using (var session = DuelSession.Create(options, _db, _scripts,
-                               player0,
-                               new SimpleAutoPlayer(activateEffects: true, seed: seed + 7777)))
+                    using (var session = DuelSession.Create(options, _db, _scripts, p0, p1))
                     {
                         session.EngineLog += (type, msg) =>
                         {
@@ -80,6 +119,7 @@ namespace DuelRoguelike.Dev
                         {
                             if (message is RawMessage)
                                 Count(result.UnparsedTypes, message.Type);
+                            CountAction(result, message);
                             if (message is DuelRequest request)
                             {
                                 Count(result.RequestTypes, message.Type);
@@ -121,8 +161,44 @@ namespace DuelRoguelike.Dev
                     foreach (string reason in interactionPlayer.FallbackReasons)
                         Count(result.FallbackReasons, reason);
                 }
+                foreach (var bot in windBots)
+                {
+                    result.WindBotAnswered += bot.Answered;
+                    result.WindBotFallbacks += bot.Fallbacks;
+                    result.WindBotResyncs += bot.ModelResyncs;
+                    result.WindBotMessageErrors += bot.MessageErrors;
+                    result.WindBotKnownSecrets += bot.KnownOpponentSecrets;
+                    foreach (string problem in bot.Problems)
+                        if (result.WindBotProblems.Count < MaxProblemsKept)
+                            result.WindBotProblems.Add($"[시드 {seed}] {problem}");
+                }
             }
             return result;
+        }
+
+        IDuelPlayer CreatePlayer(HeadlessPlayerKind kind, byte team, int seed, bool hides, List<WindBotPlayer> windBots)
+        {
+            if (kind != HeadlessPlayerKind.WindBot)
+                return new SimpleAutoPlayer(activateEffects: true, seed: seed);
+            var bot = new WindBotPlayer(team, _db, seed, hides);
+            windBots.Add(bot);
+            return bot;
+        }
+
+        static void CountAction(Result result, DuelMessage message)
+        {
+            switch (message)
+            {
+                case SummoningMessage m when m.Location.Controller < 2:
+                    result.Summons[m.Location.Controller]++;
+                    break;
+                case ChainingMessage m when m.Location.Controller < 2:
+                    result.Activations[m.Location.Controller]++;
+                    break;
+                case AttackMessage m when m.Attacker.Controller < 2:
+                    result.Attacks[m.Attacker.Controller]++;
+                    break;
+            }
         }
 
         static void Count<T>(Dictionary<T, int> counts, T key) =>
