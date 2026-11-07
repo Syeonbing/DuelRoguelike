@@ -2,9 +2,7 @@
     "name": "DuelRoguelike.UI",
     "rootNamespace": "DuelRoguelike.UI",
     "references": [
-        "DuelRoguelike.Engine",
-        "Unity.InputSystem",
-        "UnityEngine.UI"
+        "DuelRoguelike.Engine"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

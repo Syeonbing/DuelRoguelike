@@ -192,51 +192,8 @@ namespace DuelRoguelike.Engine.Duel
             return DuelResponses.Counters(counts);
         }
 
-        /// <summary>합 조건을 만족하는 조합을 찾는다 (선택지가 적다고 보고 전부 시도한다).</summary>
-        static byte[] Sum(SelectSumRequest r)
-        {
-            int n = Math.Min(r.Selectable.Count, 20);
-            for (int mask = 1; mask < (1 << n); mask++)
-            {
-                var chosen = new List<int>();
-                for (int i = 0; i < n; i++)
-                    if ((mask & (1 << i)) != 0)
-                        chosen.Add(i);
-                var all = r.MustSelect.Concat(chosen.Select(i => r.Selectable[i])).ToList();
-                if (r.Exact)
-                {
-                    if (chosen.Count < r.Min || chosen.Count > r.Max)
-                        continue;
-                    if (CanSumExactly(all, 0, r.Target))
-                        return DuelResponses.Cards(chosen);
-                }
-                else
-                {
-                    int sum = 0, smallest = int.MaxValue, largestTotal = 0;
-                    foreach (var o in all)
-                    {
-                        int o1 = (int)(o.Param & 0xffff), o2 = (int)(o.Param >> 16);
-                        int low = (o2 != 0 && o2 < o1) ? o2 : o1;
-                        sum += low;
-                        largestTotal += Math.Max(o1, o2);
-                        smallest = Math.Min(smallest, low);
-                    }
-                    if (largestTotal >= r.Target && sum - smallest < r.Target)
-                        return DuelResponses.Cards(chosen);
-                }
-            }
-            return DuelResponses.Cards(new List<int>());
-        }
-
-        static bool CanSumExactly(List<SumOption> cards, int index, int left)
-        {
-            if (index == cards.Count)
-                return left == 0;
-            int o1 = (int)(cards[index].Param & 0xffff), o2 = (int)(cards[index].Param >> 16);
-            if (left >= o1 && CanSumExactly(cards, index + 1, left - o1))
-                return true;
-            return o2 > 0 && left >= o2 && CanSumExactly(cards, index + 1, left - o2);
-        }
+        static byte[] Sum(SelectSumRequest r) =>
+            DuelResponses.Cards(DuelSelectionRules.FindSum(r) ?? new List<int>());
 
         /// <summary>앞에서부터 빈칸을 골라 응답을 만든다 (자기 몬스터 존 → 자기 마법·함정 존 → 상대 쪽).</summary>
         public static byte[] FirstPlaces(SelectPlaceRequest r)
