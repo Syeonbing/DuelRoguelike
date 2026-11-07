@@ -17,9 +17,24 @@ namespace DuelRoguelike.Engine.Duel
         Never,
     }
 
+    /// <summary>카드를 놓을 칸(MSG_SELECT_PLACE)·고를 칸(MSG_SELECT_DISFIELD)을 묻는 방식.</summary>
+    public enum PlaceSelectMode
+    {
+        /// <summary>묻지 않고 첫 빈칸을 고른다 (자기 몬스터 존 → 자기 마법·함정 존 → 상대 쪽).</summary>
+        Auto,
+        /// <summary>
+        /// 고르는 칸이 결과를 바꿀 수 있을 때만 묻는다: 무효로 할 칸·지정할 칸(MSG_SELECT_DISFIELD),
+        /// 후보에 상대 쪽 칸이 있을 때, 몬스터 존과 마법·함정 존이 함께 후보일 때.
+        /// 자기 몬스터 존끼리, 자기 마법·함정 존끼리 고르는 경우는 첫 빈칸을 고른다.
+        /// </summary>
+        Smart,
+        /// <summary>고를 수 있는 칸이 고를 칸 수보다 많으면 언제나 묻는다.</summary>
+        Always,
+    }
+
     /// <summary>
     /// 사람이 화면에서 답한다. 고를 것이 없거나 의미가 적은 요청만 자동으로 답한다:
-    /// 묻지 않아도 되는 체인 확인(ChainPrompt), 놓을 칸 고르기(첫 빈칸), 카드 순서 정하기(엔진 기본 순서).
+    /// 묻지 않아도 되는 체인 확인(ChainPrompt), 묻지 않아도 되는 칸 고르기(PlaceSelect, 첫 빈칸), 카드 순서 정하기(엔진 기본 순서).
     /// </summary>
     public sealed class ManualPlayer : IDuelPlayer
     {
@@ -27,6 +42,23 @@ namespace DuelRoguelike.Engine.Duel
         const byte SelectTrigger = 0x7f;
 
         public ChainPromptMode ChainPrompt = ChainPromptMode.Smart;
+        public PlaceSelectMode PlaceSelect = PlaceSelectMode.Smart;
+
+        public static bool ShouldAskPlace(SelectPlaceRequest r, PlaceSelectMode mode)
+        {
+            var places = DuelResponses.AvailablePlaces(r);
+            if (places.Count <= Math.Max(r.Count, 1))
+                return false; // 고를 것이 없다
+            switch (mode)
+            {
+                case PlaceSelectMode.Auto: return false;
+                case PlaceSelectMode.Always: return true;
+                default:
+                    return r.IsDisableField
+                           || places.Any(p => p.Player != r.Player)
+                           || places.Any(p => p.Location != places[0].Location);
+            }
+        }
 
         public static bool ShouldAskChain(SelectChainRequest r, ChainPromptMode mode)
         {
@@ -48,7 +80,7 @@ namespace DuelRoguelike.Engine.Duel
             {
                 case SelectChainRequest r when !ShouldAskChain(r, ChainPrompt):
                     return DuelResponses.NoChain();
-                case SelectPlaceRequest r:
+                case SelectPlaceRequest r when !ShouldAskPlace(r, PlaceSelect):
                     return SimpleAutoPlayer.FirstPlaces(r);
                 case SortCardRequest _:
                     return DuelResponses.DefaultSort();
