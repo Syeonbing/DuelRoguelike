@@ -15,6 +15,12 @@ namespace DuelRoguelike.Engine.Duel
     {
         /// <summary>응답할 플레이어 (0 또는 1).</summary>
         public byte Player;
+
+        /// <summary>
+        /// 이 요청 바로 앞에 엔진이 보낸 안내 문구 번호 (MSG_HINT의 HINT_SELECTMSG, 예: "파괴할 카드를 선택하세요").
+        /// 없으면 0. 시스템 문구 번호이거나 카드 문구 번호(카드 코드 &lt;&lt; 20 | 순번)다. DuelSession이 채운다.
+        /// </summary>
+        public ulong SelectHint;
     }
 
     /// <summary>해석하지 않는 메시지. 본문만 보관한다.</summary>

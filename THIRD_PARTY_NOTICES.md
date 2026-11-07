@@ -10,11 +10,13 @@
 | Lua | `External/ygopro-core/lua/src` (ygopro-core 안의 서브모듈) | https://github.com/lua/lua | 5.4.8 (`6e22fed`) | MIT |
 | Project Ignis CardScripts (카드 효과 Lua 스크립트) | `External/CardScripts` (얕은 Git 서브모듈) | https://github.com/ProjectIgnis/CardScripts | master `6a59aedb` (2026-11-07) | AGPL-3.0-or-later |
 | Project Ignis BabelCDB (카드 DB, SQLite .cdb) | `External/BabelCDB` (얕은 Git 서브모듈) | https://github.com/ProjectIgnis/BabelCDB | master `85c0539` (2026-11-07) | 명시 없음 (저장소에 LICENSE 파일과 라이선스 안내가 없다) |
+| EDOPro 한글 패치 (한국어 카드 DB, strings.conf) | `External/edopro-korean` (얕은 Git 서브모듈) | https://github.com/Team-AllYGOPro/edopro-korean | main `2e11436` (2026-10-29) | AGPL-3.0 |
 | SQLite | `Assets/Plugins/x86_64/sqlite3.dll` (`tools/fetch-sqlite.ps1`로 받음, 저장소에 넣지 않음) | https://www.sqlite.org | 3.54.1 (공식 64비트 DLL) | 퍼블릭 도메인 |
 
 - ocgcore.dll은 저장소에 넣지 않고 `tools/build-ocgcore.ps1`로 위 소스에서 빌드한다. Lua는 ocgcore.dll 안에 정적으로 링크된다.
 - `Assets/Scripts/Engine/Ocg/`의 C# 선언은 ocgcore의 `ocgapi.h`, `ocgapi_types.h`, `ocgapi_constants.h`를 옮긴 것이다.
-- BabelCDB의 카드 텍스트(영문 카드명·효과문)는 원작 카드의 텍스트다. 화면에 쓰는 한글 카드명·효과문은 카드 ID별로 따로 입힌다.
+- BabelCDB와 EDOPro 한글 패치의 카드 텍스트(카드명·효과문)는 원작 카드의 텍스트다. 이 저장소에는 복사하지 않고 서브모듈로만 가리킨다.
+- 화면의 한글 카드명·효과문·선택지 문구는 EDOPro 한글 패치의 `cards.cdb`를 카드 ID별로 덮어써서 쓴다 (엔진 수치는 BabelCDB 그대로). 시스템 문구·승리 이유는 같은 패치의 `strings.conf`를 쓴다.
 
 ## 빌드할 때만 쓰는 것
 

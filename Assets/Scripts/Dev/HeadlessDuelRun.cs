@@ -29,12 +29,14 @@ namespace DuelRoguelike.Dev
 
         readonly CardDatabase _db;
         readonly CardScriptSource _scripts;
+        readonly SystemStrings _strings;
         readonly Action<string> _log;
 
-        public HeadlessDuelRun(CardDatabase db, CardScriptSource scripts, Action<string> log)
+        public HeadlessDuelRun(CardDataSet data, Action<string> log)
         {
-            _db = db;
-            _scripts = scripts;
+            _db = data.Database;
+            _scripts = data.Scripts;
+            _strings = data.Strings;
             _log = log;
         }
 
@@ -43,7 +45,7 @@ namespace DuelRoguelike.Dev
         {
             var result = new Result();
             var deck = CardDataSmokeRun.TestDeck.SelectMany(e => Enumerable.Repeat(e.Code, e.Count)).ToList();
-            var text = new DuelText(_db);
+            var text = new DuelText(_db, _strings);
             var formatter = new DuelLogFormatter(text);
             var manual = new ManualPlayer();
 

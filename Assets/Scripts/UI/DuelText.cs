@@ -11,15 +11,24 @@ namespace DuelRoguelike.UI
     public sealed class DuelText
     {
         readonly CardDatabase _db;
+        readonly SystemStrings _strings;
 
         /// <summary>화면 앞쪽(아래)에 있는 플레이어. 이 플레이어 기준으로 "나"/"상대"라고 쓴다.</summary>
         public byte LocalPlayer { get; }
 
-        public DuelText(CardDatabase db, byte localPlayer = 0)
+        /// <param name="strings">EDOPro strings.conf (시스템 문구). 없으면 번호로 보여 준다.</param>
+        public DuelText(CardDatabase db, SystemStrings strings, byte localPlayer = 0)
         {
             _db = db;
+            _strings = strings ?? new SystemStrings();
             LocalPlayer = localPlayer;
         }
+
+        /// <summary>시스템 문구. 없으면 null.</summary>
+        public string System(uint id) => _strings.System(id);
+
+        /// <summary>특수 승리 이유 문구. 없으면 null.</summary>
+        public string Victory(uint reason) => _strings.Victory(reason);
 
         public string Player(byte player) =>
             player == LocalPlayer ? "나" : player == 1 - LocalPlayer ? "상대" : "양쪽";
@@ -188,7 +197,7 @@ namespace DuelRoguelike.UI
 
         /// <summary>
         /// 효과 설명 번호를 문구로 바꾼다. 카드 문구는 (카드 코드 &lt;&lt; 20 | 순번)이고 카드 DB의 str1~str16에 있다.
-        /// 그보다 작은 번호는 EDOPro의 시스템 문구(아직 없음)라 번호로 보여 준다.
+        /// 그보다 작은 번호는 strings.conf의 시스템 문구다.
         /// </summary>
         public string Description(ulong description)
         {
@@ -196,13 +205,15 @@ namespace DuelRoguelike.UI
                 return null;
             uint code = (uint)(description >> 20);
             int index = (int)(description & 0xfffff);
-            if (code != 0 && _db.TryGet(code, out var record))
+            if (code == 0)
+                return _strings.System((uint)description) ?? $"시스템 문구 #{description}";
+            if (_db.TryGet(code, out var record))
             {
                 if (index < record.Strings.Length && !string.IsNullOrEmpty(record.Strings[index]))
                     return record.Strings[index];
                 return $"{record.Name}의 효과 {index + 1}";
             }
-            return $"시스템 문구 #{description}";
+            return $"카드 {code}의 효과 {index + 1}";
         }
 
         /// <summary>효과 선택지 한 줄: "카드명" 또는 "카드명: 설명"</summary>

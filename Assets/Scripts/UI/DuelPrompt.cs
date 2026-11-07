@@ -60,7 +60,7 @@ namespace DuelRoguelike.UI
                     YesNo(_text.Description(r.Description) ?? "예/아니오를 고르세요.", null);
                     break;
                 case SelectOptionRequest r:
-                    _title.text = "효과를 고르세요";
+                    _title.text = HintTitle(r, "효과를 고르세요");
                     for (int i = 0; i < r.Options.Count; i++)
                     {
                         int index = i;
@@ -68,17 +68,18 @@ namespace DuelRoguelike.UI
                     }
                     break;
                 case SelectCardRequest r:
-                    MultiSelect(r.Min == r.Max ? $"카드를 {r.Min}장 고르세요" : $"카드를 {r.Min}~{r.Max}장 고르세요",
+                    MultiSelect(HintTitle(r, r.Min == r.Max ? $"카드를 {r.Min}장 고르세요" : $"카드를 {r.Min}~{r.Max}장 고르세요")
+                                + CountSuffix(r.Min, r.Max),
                         r.Cards.Select(c => CardLabel(c, state)).ToList(), r.Min, r.Max, r.Cancelable,
                         chosen => DuelSelectionRules.IsValidCards(r, chosen));
                     break;
                 case SelectTributeRequest r:
-                    MultiSelect($"릴리스할 몬스터를 고르세요 (릴리스 {r.Min}장분)",
+                    MultiSelect(HintTitle(r, "릴리스할 몬스터를 고르세요") + $" (릴리스 {r.Min}장분)",
                         r.Cards.Select(c => CardLabel(new CardRef(c.Code, c.Location), state) + (c.ReleaseParam > 1 ? $" ×{c.ReleaseParam}" : "")).ToList(),
                         r.Min, r.Max, r.Cancelable, chosen => DuelSelectionRules.IsValidTribute(r, chosen));
                     break;
                 case SelectSumRequest r:
-                    MultiSelect($"합이 {r.Target}{(r.Exact ? "" : " 이상")}이 되도록 고르세요",
+                    MultiSelect(HintTitle(r, "카드를 고르세요") + $" (합 {r.Target}{(r.Exact ? "" : " 이상")})",
                         r.Selectable.Select(c => $"{CardLabel(new CardRef(c.Code, c.Location), state)} ({c.Param & 0xffff})").ToList(),
                         r.Min, Math.Max(r.Max, r.Selectable.Count), false, chosen => DuelSelectionRules.IsValidSum(r, chosen));
                     break;
@@ -162,9 +163,16 @@ namespace DuelRoguelike.UI
             AddButton("아니오", () => _respond(DuelResponses.YesNo(false)));
         }
 
+        /// <summary>엔진이 보낸 안내 문구(예: "파괴할 카드를 선택하세요")가 있으면 그것을, 없으면 fallback을 쓴다.</summary>
+        string HintTitle(DuelRequest r, string fallback) =>
+            r.SelectHint != 0 ? _text.Description(r.SelectHint) ?? fallback : fallback;
+
+        static string CountSuffix(int min, int max) =>
+            min == max ? (min > 1 ? $" ({min}장)" : "") : $" ({min}~{max}장)";
+
         void Unselect(SelectUnselectCardRequest r, DuelState state)
         {
-            _title.text = r.Min == r.Max ? $"카드를 {r.Min}장 고르세요" : $"카드를 {r.Min}~{r.Max}장 고르세요";
+            _title.text = HintTitle(r, "카드를 고르세요") + CountSuffix(r.Min, r.Max);
             for (int i = 0; i < r.Selectable.Count; i++) { int k = i; AddButton($"선택: {CardLabel(r.Selectable[i], state)}", () => _respond(DuelResponses.SelectUnselect(k))); }
             for (int i = 0; i < r.Unselectable.Count; i++) { int k = r.Selectable.Count + i; AddButton($"선택 해제: {CardLabel(r.Unselectable[i], state)}", () => _respond(DuelResponses.SelectUnselect(k))); }
             if (r.Finishable) AddButton("✔ 선택 끝내기", () => _respond(DuelResponses.FinishSelectUnselect()));

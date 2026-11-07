@@ -33,6 +33,7 @@ namespace DuelRoguelike.Engine.Duel
 
         readonly OcgDuel _duel;
         readonly IDuelPlayer[] _players;
+        readonly ulong[] _selectHint = new ulong[2];
         DuelRequest _lastRequest;
         int _retries;
 
@@ -141,10 +142,16 @@ namespace DuelRoguelike.Engine.Duel
 
                     if (message.Type == OcgMessageType.Retry)
                         retried = true;
+                    if (message is HintMessage hint && hint.HintType == OcgHintType.SelectMessage && hint.Player < 2)
+                        _selectHint[hint.Player] = hint.Data;
+                    if (message is DuelRequest r)
+                    {
+                        r.SelectHint = _selectHint[r.Player];
+                        _selectHint[r.Player] = 0;
+                        request = r;
+                    }
                     State.Apply(message);
                     MessageReceived?.Invoke(message);
-                    if (message is DuelRequest r)
-                        request = r;
                 }
                 State.Refresh(_duel);
 

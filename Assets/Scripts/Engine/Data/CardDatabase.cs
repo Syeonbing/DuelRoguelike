@@ -5,7 +5,7 @@ using DuelRoguelike.Engine.Ocg;
 
 namespace DuelRoguelike.Engine.Data
 {
-    /// <summary>카드 DB 한 장. 텍스트는 .cdb에 들어 있는 원문(영문)이다.</summary>
+    /// <summary>카드 DB 한 장. 텍스트는 번역 DB(LoadLocale)가 있으면 번역문, 없으면 기본 DB의 원문(영문)이다.</summary>
     public sealed class CardRecord
     {
         public OcgCardData Data;
@@ -13,6 +13,12 @@ namespace DuelRoguelike.Engine.Data
         public ulong Category;
         public string Name;
         public string Description;
+
+        /// <summary>기본 DB(BabelCDB)의 원래 카드명 (영문). 번역 여부와 상관없이 남는다.</summary>
+        public string BaseName;
+
+        /// <summary>번역 DB의 텍스트가 입혀졌는지.</summary>
+        public bool IsLocalized;
 
         /// <summary>효과 선택지·힌트 문구 str1~str16. 없는 칸은 null.</summary>
         public string[] Strings;
@@ -51,6 +57,41 @@ namespace DuelRoguelike.Engine.Data
                 });
             }
             return loaded;
+        }
+
+        const string SelectTexts =
+            "SELECT id, name, desc, str1, str2, str3, str4, str5, str6, str7, str8, " +
+            "str9, str10, str11, str12, str13, str14, str15, str16 FROM texts";
+
+        /// <summary>
+        /// 번역 DB(.cdb)의 texts 표로 카드명·효과문·선택지 문구를 카드 ID별로 덮어쓴다 (EDOPro의 언어 DB와 같은 방식).
+        /// 엔진이 쓰는 수치(datas)는 바꾸지 않는다. 기본 DB에 없는 카드와 빈 칸은 건너뛴다. Load 다음에 부른다.
+        /// </summary>
+        /// <returns>번역을 입힌 카드 수</returns>
+        public int LoadLocale(string cdbPath)
+        {
+            int applied = 0;
+            using (var db = new SqliteReader(cdbPath))
+            {
+                db.Query(SelectTexts, row =>
+                {
+                    if (!_cards.TryGetValue((uint)row.GetInt64(0), out var record))
+                        return;
+                    string name = row.GetText(1);
+                    string desc = row.GetText(2);
+                    if (!string.IsNullOrEmpty(name)) record.Name = name;
+                    if (!string.IsNullOrEmpty(desc)) record.Description = desc;
+                    for (int i = 0; i < record.Strings.Length; i++)
+                    {
+                        string s = row.GetText(3 + i);
+                        if (!string.IsNullOrEmpty(s))
+                            record.Strings[i] = s;
+                    }
+                    record.IsLocalized = true;
+                    applied++;
+                });
+            }
+            return applied;
         }
 
         public bool TryGet(uint code, out CardRecord record) => _cards.TryGetValue(code, out record);
@@ -94,12 +135,14 @@ namespace DuelRoguelike.Engine.Data
             for (int i = 0; i < strings.Length; i++)
                 strings[i] = NullIfEmpty(row.GetText(13 + i));
 
+            string name = row.GetText(11);
             return new CardRecord
             {
                 Data = data,
                 Ot = (uint)row.GetInt64(1),
                 Category = (ulong)row.GetInt64(10),
-                Name = row.GetText(11),
+                Name = name,
+                BaseName = name,
                 Description = row.GetText(12),
                 Strings = strings,
             };

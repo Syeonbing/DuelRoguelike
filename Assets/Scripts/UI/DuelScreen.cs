@@ -62,7 +62,7 @@ namespace DuelRoguelike.UI
             catch (Exception e)
             {
                 loadError = e;
-                _text = new DuelText(new CardDatabase(), Me);
+                _text = new DuelText(new CardDatabase(), null, Me);
                 _logFormatter = new DuelLogFormatter(_text);
             }
             BuildLayout();
@@ -84,12 +84,14 @@ namespace DuelRoguelike.UI
 
         void LoadData()
         {
-            string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
-            _db = new CardDatabase();
-            _db.Load(Path.Combine(projectRoot, "External", "BabelCDB", "cards.cdb"));
-            _scripts = new CardScriptSource(Path.Combine(projectRoot, "External", "CardScripts"));
-            _text = new DuelText(_db, Me);
+            // 에디터에서는 저장소의 External 폴더를 바로 읽는다. 실행 파일 빌드용 경로는 나중에 정한다.
+            string externalRoot = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "External"));
+            var data = CardDataSet.Load(externalRoot);
+            _db = data.Database;
+            _scripts = data.Scripts;
+            _text = new DuelText(_db, data.Strings, Me);
             _logFormatter = new DuelLogFormatter(_text);
+            Debug.Log($"[듀얼] 카드 {data.CardCount}장, 한글 {data.LocalizedCount}장, 시스템 문구 {data.Strings.Count}개, 스크립트 {_scripts.Count}개");
         }
 
         void StartDuel()
@@ -584,26 +586,32 @@ namespace DuelRoguelike.UI
     /// <summary>임시 테스트 덱. 정식 스타터 덱 4개는 개발 단계 5에서 정한다.</summary>
     public static class TestDecks
     {
-        /// <summary>스타터 덱 —유희 편— 카드 일부로 짠 40장 (카드 DB 영문명 기준).</summary>
-        public static readonly IReadOnlyList<uint> Yugi = new (uint Code, int Count)[]
+        /// <summary>
+        /// 스타터 덱 —유희 편— 카드 일부로 짠 40장.
+        /// 주석의 카드명은 EDOPro 한글 패치 DB(External/edopro-korean) 기준이고, 괄호 안은 BabelCDB 영문명이다.
+        /// </summary>
+        public static readonly (uint Code, int Count)[] YugiEntries =
         {
-            (46986414, 2), // Dark Magician
-            (70781052, 2), // Summoned Skull
-            (6368038, 2),  // Gaia The Fierce Knight
-            (28279543, 3), // Curse of Dragon
-            (91152256, 3), // Celtic Guardian
-            (15025844, 3), // Mystical Elf
-            (41392891, 3), // Feral Imp
-            (13039848, 3), // Giant Soldier of Stone
-            (32452818, 3), // Beaver Warrior
-            (90357090, 3), // Silver Fang
-            (53129443, 1), // Dark Hole
-            (83764718, 1), // Monster Reborn
-            (72302403, 2), // Swords of Revealing Light
-            (84257639, 3), // Dian Keto the Cure Master
-            (66788016, 2), // Fissure
-            (4206964, 2),  // Trap Hole
-            (50045299, 2), // Dragon Capture Jar
-        }.SelectMany(e => Enumerable.Repeat(e.Code, e.Count)).ToList();
+            (46986414, 2), // 블랙 매지션 (Dark Magician)
+            (70781052, 2), // 데몬 소환 (Summoned Skull)
+            (6368038, 2),  // 암흑 기사 가이아 (Gaia The Fierce Knight)
+            (28279543, 3), // 커스 오브 드래곤 (Curse of Dragon)
+            (91152256, 3), // 엘프 검사 (Celtic Guardian)
+            (15025844, 3), // 홀리 엘프 (Mystical Elf)
+            (41392891, 3), // 그렘린 (Feral Imp)
+            (13039848, 3), // 암석 거인 (Giant Soldier of Stone)
+            (32452818, 3), // 루이즈 (Beaver Warrior)
+            (90357090, 3), // 실버 팽 (Silver Fang)
+            (53129443, 1), // 블랙홀 (Dark Hole)
+            (83764718, 1), // 죽은 자의 소생 (Monster Reborn)
+            (72302403, 2), // 빛의 봉인검 (Swords of Revealing Light)
+            (84257639, 3), // 치료의 신 다이안 켓 (Dian Keto the Cure Master)
+            (66788016, 2), // 갈라진 대지 (Fissure)
+            (4206964, 2),  // 함정 속으로 (Trap Hole)
+            (50045299, 2), // 드래곤족 봉인항아리 (Dragon Capture Jar)
+        };
+
+        public static readonly IReadOnlyList<uint> Yugi =
+            YugiEntries.SelectMany(e => Enumerable.Repeat(e.Code, e.Count)).ToList();
     }
 }

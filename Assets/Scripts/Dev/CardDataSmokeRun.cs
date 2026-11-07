@@ -12,31 +12,8 @@ namespace DuelRoguelike.Dev
 {
     public sealed class CardDataSmokeRun
     {
-        /// <summary>
-        /// 임시 테스트 덱 40장. 스타터 덱 —유희 편—에 들어 있는 카드 일부로 짰다.
-        /// 정식 스타터 덱 4개 목록은 개발 단계 5에서 정한다.
-        /// 주석의 카드명은 카드 DB의 영문명이다. 한글 카드명은 개발 단계 5에서 카드 ID별로 입힌다.
-        /// </summary>
-        public static readonly (uint Code, int Count)[] TestDeck =
-        {
-            (46986414, 2), // Dark Magician
-            (70781052, 2), // Summoned Skull
-            (6368038, 2),  // Gaia The Fierce Knight
-            (28279543, 3), // Curse of Dragon
-            (91152256, 3), // Celtic Guardian
-            (15025844, 3), // Mystical Elf
-            (41392891, 3), // Feral Imp
-            (13039848, 3), // Giant Soldier of Stone
-            (32452818, 3), // Beaver Warrior
-            (90357090, 3), // Silver Fang
-            (53129443, 1), // Dark Hole
-            (83764718, 1), // Monster Reborn
-            (72302403, 2), // Swords of Revealing Light
-            (84257639, 3), // Dian Keto the Cure Master
-            (66788016, 2), // Fissure
-            (4206964, 2),  // Trap Hole
-            (50045299, 2), // Dragon Capture Jar
-        };
+        /// <summary>임시 테스트 덱 40장 (카드 목록은 UI.TestDecks.YugiEntries 한 곳에서 관리한다).</summary>
+        public static (uint Code, int Count)[] TestDeck => UI.TestDecks.YugiEntries;
 
         readonly Action<string> _info;
         readonly Action<string> _warn;

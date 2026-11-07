@@ -64,6 +64,9 @@ namespace DuelRoguelike.UI
                     return $"{_text.Player(m.Player)}에게 공개: {string.Join(", ", m.Cards.Select(c => _text.CardName(c.Code)))}";
                 case CardPairMessage m when m.Type == OcgMessageType.Equip:
                     return $"{CardAt(state.Find(m.Card), m.Card)} → {CardAt(state.Find(m.Target), m.Target)}에 장착";
+                case HintMessage m when m.HintType == OcgHintType.OptionSelected:
+                    // 상대가 고른 효과를 알려 주는 안내 (Player는 안내를 받는 쪽).
+                    return $"{_text.Player((byte)(1 - m.Player))}의 선택: {_text.Description(m.Data)}";
                 case HintMessage m when m.HintType == OcgHintType.Code:
                     return $"{_text.Player(m.Player)}: 「{_text.CardName((uint)m.Data)}」 선언";
                 case HintMessage m when m.HintType == OcgHintType.Number:
@@ -130,7 +133,7 @@ namespace DuelRoguelike.UI
         {
             string reason = m.Reason == OcgConstants.WinReasonLp ? "LP 0"
                 : m.Reason == OcgConstants.WinReasonDeckOut ? "덱에서 카드를 뽑을 수 없음"
-                : $"특수 승리 (이유 0x{m.Reason:X})";
+                : _text.Victory(m.Reason) ?? $"특수 승리 (이유 0x{m.Reason:X})";
             if (m.Winner == OcgConstants.PlayerNone)
                 return $"════ 무승부 ({reason}) ════";
             return $"════ {_text.Player(m.Winner)}의 승리 ({reason}) ════";

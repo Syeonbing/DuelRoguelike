@@ -9,3 +9,7 @@
 	path = External/BabelCDB
 	url = https://github.com/ProjectIgnis/BabelCDB
 	shallow = true
+[submodule "External/edopro-korean"]
+	path = External/edopro-korean
+	url = https://github.com/Team-AllYGOPro/edopro-korean
+	shallow = true
