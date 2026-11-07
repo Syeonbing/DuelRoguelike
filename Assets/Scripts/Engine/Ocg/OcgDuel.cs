@@ -153,7 +153,7 @@ namespace DuelRoguelike.Engine.Ocg
             return OcgNative.OCG_LoadScript(_handle, source, (uint)source.Length, ToUtf8z(name)) != 0;
         }
 
-        public void AddCard(byte team, byte duelist, uint code, byte controller, uint location, uint sequence, uint position)
+        public void AddCard(byte team, byte duelist, uint code, byte controller, OcgLocation location, uint sequence, OcgPosition position)
         {
             ThrowIfDisposed();
             var info = new OcgNative.NewCardInfo
@@ -162,12 +162,19 @@ namespace DuelRoguelike.Engine.Ocg
                 Duelist = duelist,
                 Code = code,
                 Controller = controller,
-                Location = location,
+                Location = (uint)location,
                 Sequence = sequence,
-                Position = position,
+                Position = (uint)position,
             };
             OcgNative.OCG_DuelNewCard(_handle, ref info);
         }
+
+        /// <summary>
+        /// 덱에 카드 한 장을 넣는다. 엑스트라 덱 몬스터는 엔진이 엑스트라 덱으로 옮긴다.
+        /// 엔진은 시작할 때 덱을 섞지 않으므로, 섞는 것은 부르는 쪽이 넣기 전에 한다.
+        /// </summary>
+        public void AddDeckCard(byte team, uint code) =>
+            AddCard(team, 0, code, team, OcgLocation.Deck, 0, OcgPosition.FaceDownDefense);
 
         public void Start()
         {
