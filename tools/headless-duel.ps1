@@ -202,6 +202,12 @@ if ($results.Count -gt 1) {
     } | Format-Table -AutoSize | Out-String -Width 200 | Write-Host
 }
 
+Write-Step '카드별 확인 범위 (일반 몬스터 제외, 통과 조건에는 넣지 않음)'
+$coverage = $run.CoverageReport([DuelRoguelike.Dev.HeadlessDuelRun+Result[]]$results,
+    [DuelRoguelike.Engine.Data.DeckRecipe[]]$decks0, [DuelRoguelike.Engine.Data.DeckRecipe[]]$decks1)
+if ($coverage.Count -eq 0) { Write-Host '    효과 카드가 모두 양쪽 플레이어에서 한 번 이상 발동·소환됐다' }
+foreach ($line in $coverage) { Write-Host "    $line" -ForegroundColor $(if ($line.StartsWith('  ')) { 'Yellow' } else { 'Gray' }) }
+
 if ($recipeProblems -gt 0) { Write-Host "==> 실패: 레시피 문제 $recipeProblems 건" -ForegroundColor Red; exit 1 }
 if (@($results | Where-Object { -not $_.Ok }).Count -eq 0) {
     Write-Step '통과'

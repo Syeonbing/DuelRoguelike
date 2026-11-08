@@ -71,6 +71,11 @@ namespace DuelRoguelike.Dev
             public string Deck0;
             public string Deck1;
 
+            /// <summary>카드 코드별 효과 발동(체인) 수 [플레이어 0, 플레이어 1]. 발동한 플레이어 기준.</summary>
+            public readonly Dictionary<uint, int[]> CardActivations = new Dictionary<uint, int[]>();
+            /// <summary>카드 코드별 일반·특수·반전 소환 수 [플레이어 0, 플레이어 1].</summary>
+            public readonly Dictionary<uint, int[]> CardSummons = new Dictionary<uint, int[]>();
+
             public bool Ok => Finished == Duels && EngineErrors == 0 && Exceptions == 0 && InteractionFallbacks == 0
                               && WindBotFallbacks == 0 && WindBotMessageErrors == 0 && WindBotResyncs == 0
                               && (!WindBotHidesInfo || WindBotKnownSecrets == 0)
@@ -99,17 +104,81 @@ namespace DuelRoguelike.Dev
         public List<string> CheckRecipe(DeckRecipe recipe)
         {
             var problems = recipe.Validate(_db);
-            const OcgCardType needsScript = OcgCardType.Fusion | OcgCardType.Ritual | OcgCardType.Synchro | OcgCardType.Xyz
-                                            | OcgCardType.Link | OcgCardType.Pendulum;
             foreach (var (code, _) in recipe.Entries)
             {
                 if (!_db.TryGet(code, out var record))
                     continue;
-                bool vanilla = (record.Type & OcgCardType.Normal) != 0 && (record.Type & needsScript) == 0;
-                if (!vanilla && !_scripts.TryGetPath($"c{code}.lua", out _))
+                if (!IsVanilla(record) && !_scripts.TryGetPath($"c{code}.lua", out _))
                     problems.Add($"{code} {record.Name}: 카드 스크립트 없음");
             }
             return problems;
+        }
+
+        /// <summary>효과도 소환 절차도 없는 일반 몬스터 (카드 스크립트가 필요 없다).</summary>
+        static bool IsVanilla(CardRecord record)
+        {
+            const OcgCardType procedures = OcgCardType.Fusion | OcgCardType.Ritual | OcgCardType.Synchro | OcgCardType.Xyz
+                                           | OcgCardType.Link | OcgCardType.Pendulum;
+            return (record.Type & OcgCardType.Normal) != 0 && (record.Type & procedures) == 0;
+        }
+
+        /// <summary>
+        /// 시험한 덱의 카드마다 효과 발동·소환 수를 모든 조합에서 합쳐, 확인이 덜 된 카드를 돌려준다 (일반 몬스터는 뺀다).
+        /// - 한 번도 나오지 않음: 마법·함정은 발동 0, 몬스터는 발동 0이고 소환 0.
+        /// - 소환만 됨: 효과 몬스터인데 소환은 됐고 효과 발동은 0 (지속 효과만 있으면 정상).
+        /// - 플레이어 0은 쓴 적 없음: 플레이어 0의 덱에 있는데 플레이어 0(화면 조작 모델 등)은 발동·소환한 적 없고 상대만 썼다.
+        /// </summary>
+        public List<string> CoverageReport(IEnumerable<Result> results, IEnumerable<DeckRecipe> decks0, IEnumerable<DeckRecipe> decks1)
+        {
+            var activations = new Dictionary<uint, int[]>();
+            var summons = new Dictionary<uint, int[]>();
+            foreach (var r in results)
+            {
+                Merge(activations, r.CardActivations);
+                Merge(summons, r.CardSummons);
+            }
+            var player0Codes = new HashSet<uint>(decks0.SelectMany(d => d.Entries.Select(e => e.Code)));
+            var lines = new List<string>();
+            var seen = new HashSet<uint>();
+            foreach (var deck in decks0.Concat(decks1).Distinct())
+            {
+                var notSeen = new List<string>();
+                var summonOnly = new List<string>();
+                var opponentOnly = new List<string>();
+                foreach (var (code, _) in deck.Entries)
+                {
+                    if (!seen.Add(code) || !_db.TryGet(code, out var record) || IsVanilla(record))
+                        continue;
+                    int[] act = activations.TryGetValue(code, out var a) ? a : new int[2];
+                    int[] sum = summons.TryGetValue(code, out var s) ? s : new int[2];
+                    bool monster = (record.Type & OcgCardType.Monster) != 0;
+                    string name = $"{record.Name} (발동 {act[0]}/{act[1]}{(monster ? $", 소환 {sum[0]}/{sum[1]}" : "")})";
+                    if (act[0] + act[1] == 0 && sum[0] + sum[1] == 0)
+                        notSeen.Add(name);
+                    else if (monster && (record.Type & OcgCardType.Effect) != 0 && act[0] + act[1] == 0)
+                        summonOnly.Add(name);
+                    else if (player0Codes.Contains(code) && act[0] == 0 && sum[0] == 0)
+                        opponentOnly.Add(name);
+                }
+                if (notSeen.Count + summonOnly.Count + opponentOnly.Count == 0)
+                    continue;
+                lines.Add($"{deck.Name} (앞서 나온 덱과 겹치는 카드는 뺀다, 숫자는 플레이어 0/1)");
+                if (notSeen.Count > 0) lines.Add($"  한 번도 나오지 않음: {string.Join(", ", notSeen)}");
+                if (summonOnly.Count > 0) lines.Add($"  소환만 되고 효과 발동 없음: {string.Join(", ", summonOnly)}");
+                if (opponentOnly.Count > 0) lines.Add($"  플레이어 0은 쓴 적 없음: {string.Join(", ", opponentOnly)}");
+            }
+            return lines;
+        }
+
+        static void Merge(Dictionary<uint, int[]> into, Dictionary<uint, int[]> from)
+        {
+            foreach (var pair in from)
+            {
+                if (!into.TryGetValue(pair.Key, out var counts))
+                    into[pair.Key] = counts = new int[2];
+                counts[0] += pair.Value[0];
+                counts[1] += pair.Value[1];
+            }
         }
 
         /// <param name="printLogSeed">이 시드의 듀얼은 로그 전체를 출력한다 (-1이면 출력하지 않음).</param>
@@ -259,14 +328,23 @@ namespace DuelRoguelike.Dev
             {
                 case SummoningMessage m when m.Location.Controller < 2:
                     result.Summons[m.Location.Controller]++;
+                    CountCard(result.CardSummons, m.Code, m.Location.Controller);
                     break;
                 case ChainingMessage m when m.Location.Controller < 2:
                     result.Activations[m.Location.Controller]++;
+                    CountCard(result.CardActivations, m.Code, m.TriggerController < 2 ? m.TriggerController : m.Location.Controller);
                     break;
                 case AttackMessage m when m.Attacker.Controller < 2:
                     result.Attacks[m.Attacker.Controller]++;
                     break;
             }
+        }
+
+        static void CountCard(Dictionary<uint, int[]> counts, uint code, byte player)
+        {
+            if (!counts.TryGetValue(code, out var perPlayer))
+                counts[code] = perPlayer = new int[2];
+            perPlayer[player]++;
         }
 
         static void Count<T>(Dictionary<T, int> counts, T key) =>
