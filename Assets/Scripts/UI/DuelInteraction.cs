@@ -2,6 +2,7 @@
 // - 행동(소환·세트·발동·공격 등): 그 카드를 누르면 나오는 메뉴
 // - 카드 고르기(대상·릴리스·합 등): 고를 수 있는 카드를 강조하고 눌러서 고른다 (필드·패 밖의 카드가 섞이면 카드 목록 창)
 // - 칸 고르기(놓을 칸·무효로 할 칸): 고를 수 있는 필드 칸을 강조하고 눌러서 고른다
+// - 순서 정하기(덱 위의 카드 순서 등): 카드 목록 창에서 누른 순서대로 번호를 붙인다
 // - 페이즈 넘기기·체인하지 않음·확인/취소: 필드 가운데 줄의 버튼
 // - 예/아니오, 효과·표시 형식 고르기, 선언: 가운데 대화창
 using System;
@@ -64,18 +65,32 @@ namespace DuelRoguelike.UI
         public bool Immediate;
         /// <summary>true면 한 장만 고르는 경우에도 확인 버튼으로 보낸다.</summary>
         public bool AlwaysConfirm;
+        /// <summary>
+        /// true면 누른 순서를 기억한다 (카드 순서 정하기). 카드에 누른 순서대로 번호가 붙고, 확인하면 누른 순서대로 Build에 넘긴다.
+        /// 같은 카드가 두 번 나올 수 있어(체인 순서 정하기) 언제나 목록 창으로 고른다.
+        /// </summary>
+        public bool Ordered;
+        public string ConfirmLabel = "확인";
         public int Min;
         public int Max;
         public bool Cancelable;
         public readonly List<SelectionCandidate> Candidates = new List<SelectionCandidate>();
         public readonly HashSet<int> Chosen = new HashSet<int>();
+        /// <summary>누른 순서 (Ordered일 때만 쓴다).</summary>
+        public readonly List<int> Order = new List<int>();
         public Func<IReadOnlyCollection<int>, bool> IsValid = _ => true;
         public Func<List<int>, byte[]> Build;
         public Func<int, byte[]> BuildImmediate;
         public byte[] CancelResponse;
 
         /// <summary>필드·패 밖(덱, 묘지, 제외, 엑스트라 덱, 엑시즈 소재)의 카드가 섞여 있으면 목록 창으로 고른다.</summary>
-        public bool NeedsWindow => Candidates.Any(c => !IsOnBoard(c.Card.Location));
+        public bool NeedsWindow => Ordered || Candidates.Any(c => !IsOnBoard(c.Card.Location));
+
+        /// <summary>순서 정하기에서 이 카드의 번호 (1부터). 아직 누르지 않았으면 0.</summary>
+        public int OrderOf(SelectionCandidate c) => Ordered ? Order.IndexOf(c.Index) + 1 : 0;
+
+        /// <summary>안내 줄에 쓰는 진행 상황.</summary>
+        public string Progress => Ordered ? $"{Chosen.Count} / {Candidates.Count}장 순서를 정했다" : $"{Chosen.Count}장 골랐다";
 
         public SelectionCandidate Find(CardKey key) => Candidates.FirstOrDefault(c => new CardKey(c.Card.Location).Equals(key));
 
@@ -88,8 +103,14 @@ namespace DuelRoguelike.UI
                 return BuildImmediate(c.Index);
             if (IsSingle)
                 return Build(new List<int> { c.Index });
-            if (!Chosen.Remove(c.Index))
+            // 순서 정하기에서 번호가 붙은 카드를 다시 누르면 번호가 빠지고 뒤 번호가 하나씩 당겨진다.
+            if (Chosen.Remove(c.Index))
+                Order.Remove(c.Index);
+            else
+            {
                 Chosen.Add(c.Index);
+                Order.Add(c.Index);
+            }
             return null;
         }
 
@@ -101,7 +122,7 @@ namespace DuelRoguelike.UI
 
         public bool CanConfirm => NeedsConfirm && IsValid(Chosen);
 
-        public byte[] Confirm() => Build(Chosen.OrderBy(i => i).ToList());
+        public byte[] Confirm() => Build(Ordered ? Order.ToList() : Chosen.OrderBy(i => i).ToList());
 
         public static bool IsOnBoard(CardLocation loc) =>
             !loc.IsOverlay && (loc.Location == OcgLocation.Hand || loc.Location == OcgLocation.MonsterZone || loc.Location == OcgLocation.SpellTrapZone);
@@ -228,6 +249,7 @@ namespace DuelRoguelike.UI
                     break;
                 case SelectUnselectCardRequest r: it.Unselect(r, text); break;
                 case SelectPlaceRequest r: it.Place(r, text); break;
+                case SortCardRequest r: it.Sort(r, state); break;
                 case SelectCounterRequest r:
                     it.Dialog = new DialogSpec { Title = $"카운터 {r.Count}개를 제거할 카드를 정하세요", Detail = "지금은 자동으로 나눠서 뺀다." };
                     it.Dialog.Buttons.Add(new StripButton { Label = "자동으로 나누기", Response = new SimpleAutoPlayer().Respond(r, state) });
@@ -327,6 +349,52 @@ namespace DuelRoguelike.UI
                 Buttons.Add(new StripButton { Label = "선택 끝내기", Response = DuelResponses.FinishSelectUnselect() });
             else if (r.Cancelable)
                 Buttons.Add(new StripButton { Label = "취소", Response = DuelResponses.FinishSelectUnselect() });
+        }
+
+        /// <summary>
+        /// 카드 순서 정하기 (MSG_SORT_CARD / MSG_SORT_CHAIN). 카드를 누른 순서대로 번호를 붙이고, 모두 누르면 확정한다.
+        /// 덱 위·아래에 둘 카드(Duel.SortDecktop / SortDeckbottom)는 먼저 누른 카드가 위로 간다.
+        /// 동시에 처리하는 효과(MSG_SORT_CHAIN, 공격할 때의 비용)는 먼저 누른 효과부터 처리한다.
+        /// </summary>
+        void Sort(SortCardRequest r, DuelState state)
+        {
+            int count = r.Cards.Count;
+            string how;
+            if (r.Type == OcgMessageType.SortChain)
+            {
+                Prompt = "효과를 처리할 순서를 정하세요";
+                how = "먼저 처리할 효과부터 누른다.";
+            }
+            else
+            {
+                byte owner = count > 0 ? r.Cards[0].Location.Controller : r.Player;
+                bool deck = count > 0 && r.Cards.All(c => c.Location.Location == OcgLocation.Deck && c.Location.Controller == owner);
+                // 덱은 순번 0이 맨 아래다. 맨 아래 카드들을 정할 때(Duel.SortDeckbottom)는 고를 카드가 순번 0부터 count-1까지다.
+                bool bottom = deck && owner < state.Players.Length && count < state.Players[owner].DeckCount
+                              && r.Cards.All(c => c.Location.Sequence < count);
+                string whose = owner == r.Player ? "내" : "상대";
+                Prompt = !deck ? "카드의 순서를 정하세요" : bottom ? $"{whose} 덱 맨 아래 카드의 순서를 정하세요" : $"{whose} 덱 위 카드의 순서를 정하세요";
+                how = bottom ? "위에 둘 카드부터 누른다 (마지막에 누른 카드가 덱 맨 아래)." : "위에 둘 카드부터 누른다 (먼저 누른 카드가 덱 맨 위).";
+            }
+            PromptDetail = (PromptDetail != null ? PromptDetail + " " : "") + how + " 다시 누르면 번호가 빠진다.";
+            Selection = new CardSelection
+            {
+                Ordered = true, AlwaysConfirm = true, Min = count, Max = count, ConfirmLabel = "이 순서로 확정",
+                IsValid = chosen => chosen.Count == count,
+                Build = picked => DuelResponses.Sort(SortOrder(picked, count)),
+            };
+            for (int i = 0; i < count; i++)
+                Selection.Candidates.Add(new SelectionCandidate { Index = i, Card = r.Cards[i] });
+            Buttons.Add(new StripButton { Label = "그대로 두기", Response = DuelResponses.DefaultSort() });
+        }
+
+        /// <summary>누른 순서(picked[k] = k번째로 누른 카드)를 엔진 응답(order[i] = i번째 카드의 새 순번, 0이 맨 위·먼저)으로 바꾼다.</summary>
+        public static int[] SortOrder(IReadOnlyList<int> picked, int count)
+        {
+            var order = new int[count];
+            for (int position = 0; position < picked.Count; position++)
+                order[picked[position]] = position;
+            return order;
         }
 
         void Place(SelectPlaceRequest r, DuelText text)

@@ -21,6 +21,8 @@ namespace DuelRoguelike.Dev
 
         /// <summary>칸 고르기(MSG_SELECT_PLACE / MSG_SELECT_DISFIELD)를 조작 모델로 답한 횟수.</summary>
         public int PlacesAnswered { get; private set; }
+        /// <summary>순서 정하기(MSG_SORT_CARD / MSG_SORT_CHAIN)를 조작 모델로 답한 횟수.</summary>
+        public int SortsAnswered { get; private set; }
         int _turn = -1;
         int _actions;
 
@@ -40,7 +42,7 @@ namespace DuelRoguelike.Dev
 
         public byte[] Respond(DuelRequest request, DuelState state)
         {
-            // 화면도 ManualPlayer가 자동으로 답하는 요청(체인 확인 일부, 고를 것이 없는 칸 고르기, 순서 정하기)은 묻지 않는다.
+            // 화면도 ManualPlayer가 자동으로 답하는 요청(체인 확인 일부, 고를 것이 없는 칸 고르기, 한 장뿐인 순서 정하기)은 묻지 않는다.
             byte[] auto = _manual.Respond(request, state);
             if (auto != null)
                 return auto;
@@ -61,6 +63,8 @@ namespace DuelRoguelike.Dev
             Answered++;
             if (it.Places != null)
                 PlacesAnswered++;
+            if (request is SortCardRequest)
+                SortsAnswered++;
             return response;
         }
 
@@ -119,7 +123,40 @@ namespace DuelRoguelike.Dev
             }
             if (sel.CanConfirm)
                 return sel.Confirm();
+            // 차례로 누르기만 해서는 조건을 넘길 수 있다 (합 조건에서 남는 카드가 생기는 등).
+            // 사람처럼 고른 것을 되돌리고 다시 고른다: 조건에 맞는 조합을 찾아, 다른 카드만 다시 눌러 맞춘다.
+            var valid = FindValid(sel);
+            if (valid != null)
+            {
+                foreach (var c in sel.Candidates.Where(c => sel.Chosen.Contains(c.Index) != valid.Contains(c.Index)).ToList())
+                    sel.Click(c);
+                if (sel.CanConfirm)
+                    return sel.Confirm();
+            }
             return sel.CancelResponse;
+        }
+
+        const int MaxSearchCandidates = 16;
+
+        /// <summary>조건(Min~Max장, IsValid)에 맞는 후보 조합 하나를 무작위로 찾는다. 후보가 너무 많거나 없으면 null.</summary>
+        HashSet<int> FindValid(CardSelection sel)
+        {
+            int n = sel.Candidates.Count;
+            if (n == 0 || n > MaxSearchCandidates)
+                return null;
+            int total = 1 << n;
+            int start = _random.Next(total);
+            for (int step = 0; step < total; step++)
+            {
+                int mask = (start + step) % total;
+                var set = new HashSet<int>();
+                for (int i = 0; i < n; i++)
+                    if ((mask & (1 << i)) != 0)
+                        set.Add(sel.Candidates[i].Index);
+                if (set.Count >= sel.Min && set.Count <= sel.Max && sel.IsValid(set))
+                    return set;
+            }
+            return null;
         }
 
         /// <summary>화면처럼 강조된 칸을 무작위로 눌러 Count칸을 채운다. 여러 칸이면 확인을 누른다.</summary>

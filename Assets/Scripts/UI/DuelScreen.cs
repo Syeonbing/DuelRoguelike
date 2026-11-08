@@ -276,7 +276,7 @@ namespace DuelRoguelike.UI
             var places = _interaction.Places;
             string detail = _interaction.PromptDetail;
             if (sel != null && sel.NeedsConfirm)
-                detail = $"{sel.Chosen.Count}장 골랐다" + (detail != null ? $" · {detail}" : "");
+                detail = sel.Progress + (detail != null ? $" · {detail}" : "");
             if (places != null && places.NeedsConfirm)
                 detail = $"{places.Chosen.Count} / {places.Count}칸 골랐다" + (detail != null ? $" · {detail}" : "");
             _promptDetail.text = detail ?? "";
@@ -288,7 +288,7 @@ namespace DuelRoguelike.UI
             }
             if (sel != null && sel.NeedsConfirm)
             {
-                var confirm = AddStripButton("확인", () => Respond(sel.Confirm()), true);
+                var confirm = AddStripButton(sel.ConfirmLabel, () => Respond(sel.Confirm()), true);
                 confirm.SetEnabled(sel.CanConfirm);
             }
             if (places != null && places.NeedsConfirm)
@@ -398,20 +398,33 @@ namespace DuelRoguelike.UI
             if (sel != null)
             {
                 var candidate = sel.Find(key);
-                if (candidate == null)
-                    return;
-                byte[] response = sel.Click(candidate);
-                if (response != null)
-                    Respond(response);
-                else
-                {
-                    refresh?.Invoke();
-                    Render();
-                }
+                if (candidate != null)
+                    ClickCandidate(sel, candidate, refresh);
                 return;
             }
             if (_interaction.Actions.TryGetValue(key, out var actions))
                 OpenMenu(anchor, actions);
+        }
+
+        /// <summary>목록 창의 후보를 눌렀을 때. 자리가 아니라 후보로 고르므로 같은 카드가 두 번 나와도 구분된다 (체인 순서 정하기).</summary>
+        void OnCandidateClicked(SelectionCandidate candidate, CardInfo info, bool visible)
+        {
+            ShowCard(info, visible);
+            var sel = _interaction?.Selection;
+            if (sel != null && sel.Candidates.Contains(candidate))
+                ClickCandidate(sel, candidate, OpenSelectionWindow);
+        }
+
+        void ClickCandidate(CardSelection sel, SelectionCandidate candidate, Action refresh)
+        {
+            byte[] response = sel.Click(candidate);
+            if (response != null)
+                Respond(response);
+            else
+            {
+                refresh?.Invoke();
+                Render();
+            }
         }
 
         void OpenMenu(VisualElement anchor, List<CardAction> actions)
@@ -566,11 +579,15 @@ namespace DuelRoguelike.UI
             foreach (var candidate in sel.Candidates)
             {
                 var info = MakeInfo(candidate.Card);
-                bool visible = IsVisibleRequestCard(candidate.Card, info);
-                var cell = new CardCell(this, 112, 104, refresh: OpenSelectionWindow);
+                // 순서를 정할 카드는 엔진이 정하는 사람에게 보여 준 카드다 (상대 덱 위의 카드라도).
+                bool visible = sel.Ordered ? candidate.Card.Code != 0 : IsVisibleRequestCard(candidate.Card, info);
+                var cell = new CardCell(this, 112, 104);
+                cell.ClickOverride = () => OnCandidateClicked(candidate, info, visible);
                 cell.Set(info, visible, candidate.Extra);
                 cell.SetHighlight(sel.IsChosen(candidate) ? Chosen : Selectable);
                 cell.SetCaption(LocationCaption(candidate.Card.Location));
+                int number = sel.OrderOf(candidate);
+                cell.SetBadge(number > 0 ? number.ToString() : null);
                 grid.Add(cell.Root);
             }
             var row = UiStyle.Box(null, FlexDirection.Row);
@@ -578,8 +595,8 @@ namespace DuelRoguelike.UI
             row.style.marginTop = 10;
             if (sel.NeedsConfirm)
             {
-                row.Add(UiStyle.Label($"{sel.Chosen.Count}장 골랐다  ", 15, UiStyle.TextDim));
-                var confirm = UiStyle.Button("확인", () => Respond(sel.Confirm()));
+                row.Add(UiStyle.Label(sel.Progress + "  ", 15, UiStyle.TextDim));
+                var confirm = UiStyle.Button(sel.ConfirmLabel, () => Respond(sel.Confirm()));
                 confirm.SetEnabled(sel.CanConfirm);
                 row.Add(confirm);
             }
@@ -999,7 +1016,10 @@ namespace DuelRoguelike.UI
             readonly Label _name;
             readonly Label _stats;
             readonly Label _caption;
+            Label _badge;
             readonly DuelScreen _screen;
+            /// <summary>있으면 누를 때 OnCardClicked 대신 부른다 (목록 창의 후보).</summary>
+            public Action ClickOverride;
             CardInfo _card;
             bool _visible;
             string _emptyText = "";
@@ -1025,8 +1045,36 @@ namespace DuelRoguelike.UI
                 Root.Add(_name);
                 Root.Add(_caption);
                 Root.Add(_stats);
-                Root.RegisterCallback<ClickEvent>(_ => _screen.OnCardClicked(_card, _visible, Root, refresh, Zone));
+                Root.RegisterCallback<ClickEvent>(_ =>
+                {
+                    if (ClickOverride != null)
+                        ClickOverride();
+                    else
+                        _screen.OnCardClicked(_card, _visible, Root, refresh, Zone);
+                });
                 Set(null, false);
+            }
+
+            /// <summary>오른쪽 아래에 크게 띄우는 표시 (순서 정하기의 번호). null이나 빈 문자열이면 숨긴다.</summary>
+            public void SetBadge(string text)
+            {
+                if (_badge == null)
+                {
+                    if (string.IsNullOrEmpty(text))
+                        return;
+                    _badge = UiStyle.Label("", 20, UiStyle.Background, bold: true);
+                    _badge.style.position = Position.Absolute;
+                    _badge.style.right = 4;
+                    _badge.style.bottom = 4;
+                    _badge.style.backgroundColor = Chosen;
+                    _badge.style.paddingLeft = 7;
+                    _badge.style.paddingRight = 7;
+                    _badge.style.unityTextAlign = TextAnchor.MiddleCenter;
+                    UiStyle.Radius(_badge, 4);
+                    Root.Add(_badge);
+                }
+                _badge.text = text ?? "";
+                _badge.style.display = string.IsNullOrEmpty(text) ? DisplayStyle.None : DisplayStyle.Flex;
             }
 
             public void SetEmptyText(string text)
