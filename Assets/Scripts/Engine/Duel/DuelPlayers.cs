@@ -34,7 +34,7 @@ namespace DuelRoguelike.Engine.Duel
 
     /// <summary>
     /// 사람이 화면에서 답한다. 고를 것이 없거나 의미가 적은 요청만 자동으로 답한다:
-    /// 묻지 않아도 되는 체인 확인(ChainPrompt), 묻지 않아도 되는 칸 고르기(PlaceSelect, 첫 빈칸), 카드 순서 정하기(엔진 기본 순서).
+    /// 묻지 않아도 되는 체인 확인(ChainPrompt), 묻지 않아도 되는 칸 고르기(PlaceSelect, 첫 빈칸), 한 장뿐인 카드 순서 정하기.
     /// </summary>
     public sealed class ManualPlayer : IDuelPlayer
     {
@@ -82,8 +82,8 @@ namespace DuelRoguelike.Engine.Duel
                     return DuelResponses.NoChain();
                 case SelectPlaceRequest r when !ShouldAskPlace(r, PlaceSelect):
                     return SimpleAutoPlayer.FirstPlaces(r);
-                case SortCardRequest _:
-                    return DuelResponses.DefaultSort();
+                case SortCardRequest r when r.Cards.Count <= 1:
+                    return DuelResponses.DefaultSort(); // 한 장이면 순서가 하나뿐이다
                 default:
                     return null;
             }

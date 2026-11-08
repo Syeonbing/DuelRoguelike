@@ -41,6 +41,8 @@ namespace DuelRoguelike.Dev
             public int InteractionFallbacks;
             /// <summary>그중 칸 고르기(MSG_SELECT_PLACE / MSG_SELECT_DISFIELD)를 화면 조작 모델로 답한 수.</summary>
             public int InteractionPlaces;
+            /// <summary>그중 순서 정하기(MSG_SORT_CARD / MSG_SORT_CHAIN)를 화면 조작 모델로 답한 수.</summary>
+            public int InteractionSorts;
             public readonly Dictionary<string, int> FallbackReasons = new Dictionary<string, int>();
 
             /// <summary>WindBot: 직접 답한 수, 대신 답한 수, 필드 모델을 맞춘 칸 수, 메시지 처리 예외 수.</summary>
@@ -63,7 +65,7 @@ namespace DuelRoguelike.Dev
             public readonly Dictionary<string, int> RetryTypes = new Dictionary<string, int>();
 
             /// <summary>
-            /// 플레이어 0에게 온 요청 중 화면에서 사람이 고를 수 없는 것 (순서 정하기는 기본 순서, 카운터는 자동 분배, 카드 선언은 숫자 입력).
+            /// 플레이어 0에게 온 요청 중 화면에서 사람이 고를 수 없는 것 (카운터는 자동 분배, 카드 선언은 숫자 입력).
             /// 키는 "요청 종류: 마지막으로 발동한 카드". 통과 조건에는 넣지 않고 보고만 한다.
             /// </summary>
             public readonly Dictionary<string, int> ScreenlessChoices = new Dictionary<string, int>();
@@ -291,6 +293,7 @@ namespace DuelRoguelike.Dev
                     result.InteractionAnswered += interactionPlayer.Answered;
                     result.InteractionFallbacks += interactionPlayer.Fallbacks;
                     result.InteractionPlaces += interactionPlayer.PlacesAnswered;
+                    result.InteractionSorts += interactionPlayer.SortsAnswered;
                     foreach (string reason in interactionPlayer.FallbackReasons)
                         Count(result.FallbackReasons, reason);
                 }
@@ -311,7 +314,7 @@ namespace DuelRoguelike.Dev
 
         /// <summary>화면이 사람에게 실제 선택을 주지 않는 요청 (DuelInteraction·ManualPlayer 기준).</summary>
         static bool IsScreenless(DuelRequest request) =>
-            request is SortCardRequest || request is SelectCounterRequest || request is AnnounceCardRequest;
+            request is SelectCounterRequest || request is AnnounceCardRequest;
 
         IDuelPlayer CreatePlayer(HeadlessPlayerKind kind, byte team, int seed, bool hides, List<WindBotPlayer> windBots)
         {

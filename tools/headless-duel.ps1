@@ -173,7 +173,7 @@ foreach ($d0 in $decks0) {
             foreach ($problem in $r.WindBotProblems) { Write-Host "      $problem" -ForegroundColor Yellow }
         }
         if ($Player0 -eq 'Interaction') {
-            Write-Host "    화면 조작 모델: 답함 $($r.InteractionAnswered) (칸 고르기 $($r.InteractionPlaces)), 대신 답함 $($r.InteractionFallbacks) $(Format-Counts $r.FallbackReasons)"
+            Write-Host "    화면 조작 모델: 답함 $($r.InteractionAnswered) (칸 고르기 $($r.InteractionPlaces), 순서 정하기 $($r.InteractionSorts)), 대신 답함 $($r.InteractionFallbacks) $(Format-Counts $r.FallbackReasons)"
         }
         if ($r.ScreenlessChoices.Count -gt 0) { Write-Host "    화면 없이 정한 선택 (플레이어 0): $(Format-Counts $r.ScreenlessChoices)" -ForegroundColor Yellow }
         if ($r.UnparsedTypes.Count -gt 0) { Write-Host "    해석하지 않은 메시지: $(Format-Counts $r.UnparsedTypes)" -ForegroundColor Yellow }

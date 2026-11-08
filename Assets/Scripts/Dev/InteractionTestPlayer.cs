@@ -21,6 +21,8 @@ namespace DuelRoguelike.Dev
 
         /// <summary>칸 고르기(MSG_SELECT_PLACE / MSG_SELECT_DISFIELD)를 조작 모델로 답한 횟수.</summary>
         public int PlacesAnswered { get; private set; }
+        /// <summary>순서 정하기(MSG_SORT_CARD / MSG_SORT_CHAIN)를 조작 모델로 답한 횟수.</summary>
+        public int SortsAnswered { get; private set; }
         int _turn = -1;
         int _actions;
 
@@ -40,7 +42,7 @@ namespace DuelRoguelike.Dev
 
         public byte[] Respond(DuelRequest request, DuelState state)
         {
-            // 화면도 ManualPlayer가 자동으로 답하는 요청(체인 확인 일부, 고를 것이 없는 칸 고르기, 순서 정하기)은 묻지 않는다.
+            // 화면도 ManualPlayer가 자동으로 답하는 요청(체인 확인 일부, 고를 것이 없는 칸 고르기, 한 장뿐인 순서 정하기)은 묻지 않는다.
             byte[] auto = _manual.Respond(request, state);
             if (auto != null)
                 return auto;
@@ -61,6 +63,8 @@ namespace DuelRoguelike.Dev
             Answered++;
             if (it.Places != null)
                 PlacesAnswered++;
+            if (request is SortCardRequest)
+                SortsAnswered++;
             return response;
         }
 
