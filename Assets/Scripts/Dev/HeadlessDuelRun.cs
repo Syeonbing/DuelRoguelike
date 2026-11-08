@@ -90,6 +90,9 @@ namespace DuelRoguelike.Dev
         readonly CardScriptSource _scripts;
         readonly SystemStrings _strings;
         readonly Action<string> _log;
+        readonly DuelText _text;
+        readonly DuelLogFormatter _formatter;
+        readonly ManualPlayer _manual = new ManualPlayer();
 
         public HeadlessDuelRun(CardDataSet data, Action<string> log)
         {
@@ -97,7 +100,14 @@ namespace DuelRoguelike.Dev
             _scripts = data.Scripts;
             _strings = data.Strings;
             _log = log;
+            _text = new DuelText(_db, _strings);
+            _formatter = new DuelLogFormatter(_text);
         }
+
+        public CardDatabase Database => _db;
+
+        /// <summary>카드 코드 → 표시할 카드명.</summary>
+        public string CardName(uint code) => _text.CardName(code);
 
         /// <summary>
         /// 레시피가 덱 규칙(DeckRecipe.Validate)에 맞고, 일반 몬스터가 아닌 카드마다 카드 스크립트가 있는지 확인한다.
@@ -198,118 +208,147 @@ namespace DuelRoguelike.Dev
             var result = new Result { WindBotHidesInfo = windBotHidesInfo, Deck0 = deck0.Id, Deck1 = deck1.Id };
             var cards0 = deck0.ToCardList();
             var cards1 = deck1.ToCardList();
-            var text = new DuelText(_db, _strings);
-            var formatter = new DuelLogFormatter(text);
-            var manual = new ManualPlayer();
 
             for (int seed = firstSeed; seed < firstSeed + duels; seed++)
             {
-                result.Duels++;
-                bool print = seed == printLogSeed;
-                string tag = $"[{deck0.Id} 대 {deck1.Id}, 시드 {seed}]";
                 var options = new DuelSessionOptions
                 {
                     Seed = new ulong[] { (ulong)seed, 2, 3, 4 },
                     Decks = new IReadOnlyList<uint>[] { cards0, cards1 },
                     DeckShuffleSeed = seed * 100,
                 };
-                var interactionPlayer = player0 == HeadlessPlayerKind.Interaction ? new InteractionTestPlayer(text, seed) : null;
-                var windBots = new List<WindBotPlayer>();
-                IDuelPlayer p0 = (IDuelPlayer)interactionPlayer ?? CreatePlayer(player0, 0, seed, windBotHidesInfo, windBots);
-                IDuelPlayer p1 = CreatePlayer(player1, 1, seed + 7777, windBotHidesInfo, windBots);
-                if (print)
-                    foreach (var bot in windBots)
-                        bot.DebugLog += line => _log($"    [WindBot] {line}");
-                try
-                {
-                    using (var session = DuelSession.Create(options, _db, _scripts, p0, p1))
-                    {
-                        byte lastRequestPlayer = 0;
-                        OcgMessageType lastRequestType = OcgMessageType.Retry;
-                        uint lastChainCode = 0;
-                        session.EngineLog += (type, msg) =>
-                        {
-                            if (type == OcgLogType.Error) _log($"{tag} 엔진 오류: {msg}");
-                        };
-                        session.MessageReceived += message =>
-                        {
-                            if (message is RawMessage)
-                            {
-                                Count(result.UnparsedTypes, message.Type);
-                                if (result.UnparsedTypes[message.Type] <= 3)
-                                    _log($"{tag} 해석하지 않은 메시지: {message.Type}");
-                            }
-                            CountAction(result, message);
-                            if (message is ChainingMessage chaining)
-                                lastChainCode = chaining.Code;
-                            if (message.Type == OcgMessageType.Retry && lastRequestPlayer < 2)
-                            {
-                                result.Retries[lastRequestPlayer]++;
-                                string key = $"플레이어 {lastRequestPlayer} {lastRequestType}";
-                                Count(result.RetryTypes, key);
-                                if (result.RetryTypes[key] <= 3)
-                                    _log($"{tag} 엔진이 응답을 거절함: {key} (마지막 발동: {text.CardName(lastChainCode)})");
-                            }
-                            if (message is DuelRequest request)
-                            {
-                                lastRequestPlayer = request.Player;
-                                lastRequestType = request.Type;
-                                Count(result.RequestTypes, message.Type);
-                                if (request.Player == 0 && manual.Respond(request, session.State) == null)
-                                    Count(result.HumanPrompts, message.Type);
-                                if (request.Player == 0 && IsScreenless(request))
-                                    Count(result.ScreenlessChoices, $"{request.Type}: {text.CardName(lastChainCode)}");
-                            }
-                            if (print)
-                            {
-                                string line = formatter.Format(message, session.State);
-                                if (line != null) _log(line);
-                            }
-                            if (session.State.Turn > maxTurns)
-                                throw new TimeoutException($"{maxTurns}턴 안에 끝나지 않음");
-                        };
-                        session.Start();
-                        result.EngineErrors += session.EngineErrors;
-                        result.TotalTurns += session.State.Turn;
-                        if (session.State.IsFinished)
-                        {
-                            result.Finished++;
-                            string winner = session.State.Winner == OcgConstants.PlayerNone ? "무승부" : $"플레이어 {session.State.Winner}";
-                            Count(result.Winners, $"{winner} ({session.State.WinReason})");
-                        }
-                        else
-                        {
-                            _log($"{tag} 끝나지 않음: 대기 중인 요청 {session.PendingRequest?.Type}");
-                        }
-                    }
-                }
-                catch (Exception e)
-                {
-                    result.Exceptions++;
-                    _log($"{tag} 예외: {e.GetType().Name}: {e.Message}");
-                }
-                if (interactionPlayer != null)
-                {
-                    result.InteractionAnswered += interactionPlayer.Answered;
-                    result.InteractionFallbacks += interactionPlayer.Fallbacks;
-                    result.InteractionPlaces += interactionPlayer.PlacesAnswered;
-                    result.InteractionSorts += interactionPlayer.SortsAnswered;
-                    foreach (string reason in interactionPlayer.FallbackReasons)
-                        Count(result.FallbackReasons, reason);
-                }
-                foreach (var bot in windBots)
-                {
-                    result.WindBotAnswered += bot.Answered;
-                    result.WindBotFallbacks += bot.Fallbacks;
-                    result.WindBotResyncs += bot.ModelResyncs;
-                    result.WindBotMessageErrors += bot.MessageErrors;
-                    result.WindBotKnownSecrets += bot.KnownOpponentSecrets;
-                    foreach (string problem in bot.Problems)
-                        if (result.WindBotProblems.Count < MaxProblemsKept)
-                            result.WindBotProblems.Add($"{tag} {problem}");
-                }
+                PlayDuel(result, options, $"[{deck0.Id} 대 {deck1.Id}, 시드 {seed}]", seed, seed == printLogSeed, maxTurns,
+                    player0, player1, windBotHidesInfo);
             }
             return result;
+        }
+
+        /// <summary>듀얼 한 판의 결과 (런 시험이 쓴다).</summary>
+        public sealed class DuelOutcome
+        {
+            public bool Finished;
+            /// <summary>승자. OcgConstants.PlayerNone이면 무승부.</summary>
+            public byte Winner = OcgConstants.PlayerNone;
+            /// <summary>듀얼이 끝났을 때 플레이어별 LP.</summary>
+            public readonly int[] Lp = new int[2];
+            public int Turns;
+            /// <summary>끝난 듀얼의 상태 (끝나지 않았으면 null).</summary>
+            public DuelState State;
+        }
+
+        /// <summary>
+        /// 듀얼 한 판을 끝까지 돌리고 점검 수치를 result에 더한다 (판 수, 엔진 오류, 예외, 거절, 대체 응답 등).
+        /// playerSeed는 시험 플레이어의 난수 시드 (플레이어 1은 playerSeed + 7777).
+        /// </summary>
+        public DuelOutcome PlayDuel(Result result, DuelSessionOptions options, string tag, int playerSeed, bool print, int maxTurns,
+            HeadlessPlayerKind player0, HeadlessPlayerKind player1, bool windBotHidesInfo)
+        {
+            if (player1 == HeadlessPlayerKind.Interaction)
+                throw new ArgumentException("화면 조작 모델은 플레이어 0만 맡을 수 있습니다.", nameof(player1));
+            var outcome = new DuelOutcome();
+            result.Duels++;
+            var interactionPlayer = player0 == HeadlessPlayerKind.Interaction ? new InteractionTestPlayer(_text, playerSeed) : null;
+            var windBots = new List<WindBotPlayer>();
+            IDuelPlayer p0 = (IDuelPlayer)interactionPlayer ?? CreatePlayer(player0, 0, playerSeed, windBotHidesInfo, windBots);
+            IDuelPlayer p1 = CreatePlayer(player1, 1, playerSeed + 7777, windBotHidesInfo, windBots);
+            if (print)
+                foreach (var bot in windBots)
+                    bot.DebugLog += line => _log($"    [WindBot] {line}");
+            try
+            {
+                using (var session = DuelSession.Create(options, _db, _scripts, p0, p1))
+                {
+                    byte lastRequestPlayer = 0;
+                    OcgMessageType lastRequestType = OcgMessageType.Retry;
+                    uint lastChainCode = 0;
+                    session.EngineLog += (type, msg) =>
+                    {
+                        if (type == OcgLogType.Error) _log($"{tag} 엔진 오류: {msg}");
+                    };
+                    session.MessageReceived += message =>
+                    {
+                        if (message is RawMessage)
+                        {
+                            Count(result.UnparsedTypes, message.Type);
+                            if (result.UnparsedTypes[message.Type] <= 3)
+                                _log($"{tag} 해석하지 않은 메시지: {message.Type}");
+                        }
+                        CountAction(result, message);
+                        if (message is ChainingMessage chaining)
+                            lastChainCode = chaining.Code;
+                        if (message.Type == OcgMessageType.Retry && lastRequestPlayer < 2)
+                        {
+                            result.Retries[lastRequestPlayer]++;
+                            string key = $"플레이어 {lastRequestPlayer} {lastRequestType}";
+                            Count(result.RetryTypes, key);
+                            if (result.RetryTypes[key] <= 3)
+                                _log($"{tag} 엔진이 응답을 거절함: {key} (마지막 발동: {_text.CardName(lastChainCode)})");
+                        }
+                        if (message is DuelRequest request)
+                        {
+                            lastRequestPlayer = request.Player;
+                            lastRequestType = request.Type;
+                            Count(result.RequestTypes, message.Type);
+                            if (request.Player == 0 && _manual.Respond(request, session.State) == null)
+                                Count(result.HumanPrompts, message.Type);
+                            if (request.Player == 0 && IsScreenless(request))
+                                Count(result.ScreenlessChoices, $"{request.Type}: {_text.CardName(lastChainCode)}");
+                        }
+                        if (print)
+                        {
+                            string line = _formatter.Format(message, session.State);
+                            if (line != null) _log(line);
+                        }
+                        if (session.State.Turn > maxTurns)
+                            throw new TimeoutException($"{maxTurns}턴 안에 끝나지 않음");
+                    };
+                    session.Start();
+                    result.EngineErrors += session.EngineErrors;
+                    result.TotalTurns += session.State.Turn;
+                    outcome.Turns = session.State.Turn;
+                    if (session.State.IsFinished)
+                    {
+                        result.Finished++;
+                        string winner = session.State.Winner == OcgConstants.PlayerNone ? "무승부" : $"플레이어 {session.State.Winner}";
+                        Count(result.Winners, $"{winner} ({session.State.WinReason})");
+                        outcome.Finished = true;
+                        outcome.Winner = session.State.Winner;
+                        outcome.Lp[0] = session.State.Players[0].Lp;
+                        outcome.Lp[1] = session.State.Players[1].Lp;
+                        outcome.State = session.State;
+                    }
+                    else
+                    {
+                        _log($"{tag} 끝나지 않음: 대기 중인 요청 {session.PendingRequest?.Type}");
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                result.Exceptions++;
+                _log($"{tag} 예외: {e.GetType().Name}: {e.Message}");
+            }
+            if (interactionPlayer != null)
+            {
+                result.InteractionAnswered += interactionPlayer.Answered;
+                result.InteractionFallbacks += interactionPlayer.Fallbacks;
+                result.InteractionPlaces += interactionPlayer.PlacesAnswered;
+                result.InteractionSorts += interactionPlayer.SortsAnswered;
+                foreach (string reason in interactionPlayer.FallbackReasons)
+                    Count(result.FallbackReasons, reason);
+            }
+            foreach (var bot in windBots)
+            {
+                result.WindBotAnswered += bot.Answered;
+                result.WindBotFallbacks += bot.Fallbacks;
+                result.WindBotResyncs += bot.ModelResyncs;
+                result.WindBotMessageErrors += bot.MessageErrors;
+                result.WindBotKnownSecrets += bot.KnownOpponentSecrets;
+                foreach (string problem in bot.Problems)
+                    if (result.WindBotProblems.Count < MaxProblemsKept)
+                        result.WindBotProblems.Add($"{tag} {problem}");
+            }
+            return outcome;
         }
 
         /// <summary>화면이 사람에게 실제 선택을 주지 않는 요청 (DuelInteraction·ManualPlayer 기준).</summary>
