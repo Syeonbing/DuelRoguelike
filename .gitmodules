@@ -13,3 +13,7 @@
 	path = External/edopro-korean
 	url = https://github.com/Team-AllYGOPro/edopro-korean
 	shallow = true
+[submodule "External/windbot"]
+	path = External/windbot
+	url = https://github.com/ProjectIgnis/windbot
+	shallow = true

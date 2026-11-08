@@ -1,12 +1,14 @@
 // 최소 듀얼 화면 (UI Toolkit). 설계 문서의 화면 구성을 따른다:
 // 왼쪽 플레이어 정보(위 상대, 아래 나, 카드 효과문은 내 초상화 자리), 가운데 필드(점대칭, 엑스트라 몬스터 존 없음,
 // 패는 필드 위아래, 묘지 옆 필드 가운데 쪽에 원형 제외 칸), 오른쪽 로그.
-// 조작: 카드를 직접 눌러 행동을 고른다. 행동할 수 있는 카드·고를 수 있는 카드는 테두리로 강조한다.
+// 조작: 카드를 직접 눌러 행동을 고른다. 행동할 수 있는 카드·고를 수 있는 카드·고를 수 있는 칸은 테두리로 강조한다.
+// 칸 고르기(놓을 칸·무효로 할 칸)는 필드 칸(빈칸 포함)을 눌러서 고른다.
 // 센터 카드, 초상화 그림, 체인 박스 연출, 카드 크게 보기는 아직 없다.
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using DuelRoguelike.AI;
 using DuelRoguelike.Engine.Data;
 using DuelRoguelike.Engine.Duel;
 using DuelRoguelike.Engine.Ocg;
@@ -20,8 +22,20 @@ namespace DuelRoguelike.UI
         [SerializeField, Tooltip("듀얼 난수·덱 셔플 시드. 다시 시작할 때마다 1씩 늘어난다.")]
         int duelSeed = 1;
 
+        [SerializeField, Tooltip("내 덱 (스타터 덱)")]
+        StarterDeckId myDeck = StarterDeckId.Yugi;
+
+        [SerializeField, Tooltip("상대 덱 (스타터 덱)")]
+        StarterDeckId opponentDeck = StarterDeckId.Kaiba;
+
         [SerializeField, Tooltip("체인할지 묻는 방식")]
         ChainPromptMode chainPrompt = ChainPromptMode.Smart;
+
+        [SerializeField, Tooltip("카드를 놓을 칸·무효로 할 칸을 묻는 방식. Smart: 무효로 할 칸, 상대 쪽 칸, 몬스터 존과 마법·함정 존이 함께 후보일 때만 묻고, 나머지는 첫 빈칸")]
+        PlaceSelectMode placeSelect = PlaceSelectMode.Smart;
+
+        [SerializeField, Tooltip("상대 AI(WindBot)가 나의 비공개 정보(손패, 뒷면 카드, 덱)를 본다. 끄면 EDOPro 서버처럼 가린다.")]
+        bool opponentSeesHiddenInfo = false;
 
         const byte Me = 0;
         const byte Opp = 1;
@@ -38,6 +52,8 @@ namespace DuelRoguelike.UI
         DuelText _text;
         DuelLogFormatter _logFormatter;
         SimpleAutoPlayer _helper;
+        WindBotPlayer _opponentAi;
+        bool _resultLogged;
 
         DuelInteraction _interaction;
         int _interactionSerial = -1;
@@ -114,22 +130,26 @@ namespace DuelRoguelike.UI
             _log.Clear();
             CloseMenu();
             CloseModal();
-            var deck = TestDecks.Yugi;
+            var myRecipe = StarterDecks.Get(myDeck);
+            var opponentRecipe = StarterDecks.Get(opponentDeck);
             var options = new DuelSessionOptions
             {
                 Seed = new ulong[] { (ulong)duelSeed, 2, 3, 4 },
-                Decks = new IReadOnlyList<uint>[] { deck, deck },
+                Decks = new IReadOnlyList<uint>[] { myRecipe.ToCardList(), opponentRecipe.ToCardList() },
                 DeckShuffleSeed = duelSeed * 100,
             };
             _helper = new SimpleAutoPlayer(activateEffects: true, seed: duelSeed);
+            _opponentAi = new WindBotPlayer(Opp, _db, seed: duelSeed, hideOpponentInfo: !opponentSeesHiddenInfo);
+            _opponentAi.ProblemReported += text => Debug.LogWarning($"[WindBot] {text}");
             _session = DuelSession.Create(options, _db, _scripts,
-                new ManualPlayer { ChainPrompt = chainPrompt },
-                new SimpleAutoPlayer(activateEffects: false)); // 임시 상대 (AI는 개발 단계 6)
+                new ManualPlayer { ChainPrompt = chainPrompt, PlaceSelect = placeSelect },
+                _opponentAi);
             _session.MessageReceived += OnMessage;
             _session.EngineLog += OnEngineLog;
             foreach (var (type, text) in _session.StartupLog)
                 OnEngineLog(type, text);
-            AddLog($"듀얼 시작 (시드 {duelSeed}) — 테스트 덱 40장 대 40장, 나의 선공", UiStyle.Accent);
+            _resultLogged = false;
+            AddLog($"듀얼 시작 (시드 {duelSeed}) — 나: {myRecipe.Name}, 상대: {opponentRecipe.Name}, 나의 선공, 상대 AI: WindBot", UiStyle.Accent);
             _session.Start();
         }
 
@@ -233,6 +253,12 @@ namespace DuelRoguelike.UI
             _stripButtons.Clear();
             if (state.IsFinished)
             {
+                if (!_resultLogged && _opponentAi != null)
+                {
+                    _resultLogged = true;
+                    Debug.Log($"[WindBot] 듀얼 종료: 직접 답함 {_opponentAi.Answered}, 대신 답함 {_opponentAi.Fallbacks}, " +
+                              $"필드 모델 맞춤 {_opponentAi.ModelResyncs}칸, 메시지 처리 예외 {_opponentAi.MessageErrors}");
+                }
                 string result = state.Winner == OcgConstants.PlayerNone ? "무승부" : state.Winner == Me ? "승리!" : "패배";
                 _promptLabel.text = $"듀얼 종료: {result}";
                 _promptDetail.text = $"{state.Turn}턴, 나 LP {state.Players[Me].Lp} / 상대 LP {state.Players[Opp].Lp}";
@@ -247,9 +273,12 @@ namespace DuelRoguelike.UI
             }
             _promptLabel.text = _interaction.Prompt;
             var sel = _interaction.Selection;
+            var places = _interaction.Places;
             string detail = _interaction.PromptDetail;
             if (sel != null && sel.NeedsConfirm)
                 detail = $"{sel.Chosen.Count}장 골랐다" + (detail != null ? $" · {detail}" : "");
+            if (places != null && places.NeedsConfirm)
+                detail = $"{places.Chosen.Count} / {places.Count}칸 골랐다" + (detail != null ? $" · {detail}" : "");
             _promptDetail.text = detail ?? "";
 
             foreach (var b in _interaction.Buttons)
@@ -261,6 +290,11 @@ namespace DuelRoguelike.UI
             {
                 var confirm = AddStripButton("확인", () => Respond(sel.Confirm()), true);
                 confirm.SetEnabled(sel.CanConfirm);
+            }
+            if (places != null && places.NeedsConfirm)
+            {
+                var confirm = AddStripButton("확인", () => Respond(places.Confirm()), true);
+                confirm.SetEnabled(places.CanConfirm);
             }
             if (sel != null && sel.NeedsWindow && _windowHidden)
                 AddStripButton("카드 목록 열기", () => { _windowHidden = false; OpenSelectionWindow(); }, true);
@@ -298,6 +332,21 @@ namespace DuelRoguelike.UI
         {
             bool visible = visibleOverride ?? IsVisible(card);
             cell.Set(card, visible);
+            var places = _interaction?.Places;
+            if (places != null && cell.Zone.HasValue)
+            {
+                var zone = cell.Zone.Value;
+                if (!places.Contains(zone))
+                {
+                    cell.SetHighlight(null);
+                    return;
+                }
+                bool chosen = places.IsChosen(zone);
+                cell.SetHighlight(chosen ? Chosen : Selectable);
+                if (card == null)
+                    cell.ShowEmptyHint(chosen ? "고름" : places.IsDisableField ? "고르기" : "여기에 놓기", chosen ? Chosen : Selectable);
+                return;
+            }
             cell.SetHighlight(HighlightFor(card));
         }
 
@@ -323,12 +372,26 @@ namespace DuelRoguelike.UI
 
         // ================= 카드 누르기 =================
 
-        void OnCardClicked(CardInfo card, bool visible, VisualElement anchor, Action refresh)
+        void OnCardClicked(CardInfo card, bool visible, VisualElement anchor, Action refresh, CardKey? zone)
         {
-            if (card == null)
-                return;
-            ShowCard(card, visible);
+            if (card != null)
+                ShowCard(card, visible);
             if (_interaction == null)
+                return;
+            var places = _interaction.Places;
+            if (places != null)
+            {
+                // 칸 고르기 중에는 카드가 아니라 칸을 고른다 (무효로 할 칸은 카드가 있는 칸일 수도 있다).
+                if (zone == null || !places.Contains(zone.Value))
+                    return;
+                byte[] placeResponse = places.Click(zone.Value);
+                if (placeResponse != null)
+                    Respond(placeResponse);
+                else
+                    Render();
+                return;
+            }
+            if (card == null)
                 return;
             var key = new CardKey(card.Location);
             var sel = _interaction.Selection;
@@ -814,9 +877,9 @@ namespace DuelRoguelike.UI
         VisualElement FrontRow(byte p)
         {
             var row = FieldRow();
-            _fieldZone[p] = new CardCell(this, 104, 104);
+            _fieldZone[p] = new CardCell(this, 104, 104, zone: new CardKey(p, OcgLocation.SpellTrapZone, 5));
             for (int i = 0; i < MainZones; i++)
-                _monsters[p, i] = new CardCell(this, 104, 104);
+                _monsters[p, i] = new CardCell(this, 104, 104, zone: new CardKey(p, OcgLocation.MonsterZone, (uint)i));
             var gravePile = GraveStack(p);
             if (p == Me)
             {
@@ -839,7 +902,7 @@ namespace DuelRoguelike.UI
         {
             var row = FieldRow();
             for (int i = 0; i < MainZones; i++)
-                _spells[p, i] = new CardCell(this, 104, 92);
+                _spells[p, i] = new CardCell(this, 104, 92, zone: new CardKey(p, OcgLocation.SpellTrapZone, (uint)i));
             _deck[p] = new PileCell(104, 92, 6, () => OpenPileWindow(p, OcgLocation.Deck));
             _extra[p] = new PileCell(104, 92, 6, () => OpenPileWindow(p, OcgLocation.Extra));
             if (p == Me)
@@ -931,6 +994,8 @@ namespace DuelRoguelike.UI
         sealed class CardCell
         {
             public readonly VisualElement Root;
+            /// <summary>필드 칸이면 그 자리 (칸 고르기용). 패·창 안의 카드는 null.</summary>
+            public readonly CardKey? Zone;
             readonly Label _name;
             readonly Label _stats;
             readonly Label _caption;
@@ -941,9 +1006,10 @@ namespace DuelRoguelike.UI
             Color _border;
             float _borderWidth;
 
-            public CardCell(DuelScreen screen, float width, float height, Action refresh = null)
+            public CardCell(DuelScreen screen, float width, float height, Action refresh = null, CardKey? zone = null)
             {
                 _screen = screen;
+                Zone = zone;
                 Root = UiStyle.Box();
                 Root.style.width = width;
                 Root.style.height = height;
@@ -959,7 +1025,7 @@ namespace DuelRoguelike.UI
                 Root.Add(_name);
                 Root.Add(_caption);
                 Root.Add(_stats);
-                Root.RegisterCallback<ClickEvent>(_ => _screen.OnCardClicked(_card, _visible, Root, refresh));
+                Root.RegisterCallback<ClickEvent>(_ => _screen.OnCardClicked(_card, _visible, Root, refresh, Zone));
                 Set(null, false);
             }
 
@@ -967,6 +1033,14 @@ namespace DuelRoguelike.UI
             {
                 _emptyText = text;
                 if (_card == null) _name.text = text;
+            }
+
+            /// <summary>빈칸에 잠깐 띄우는 안내 (칸 고르기). 다음 Set에서 원래 문구로 돌아간다.</summary>
+            public void ShowEmptyHint(string text, Color color)
+            {
+                if (_card != null) return;
+                _name.text = text;
+                _name.style.color = color;
             }
 
             public void SetCaption(string text)
@@ -1059,37 +1133,5 @@ namespace DuelRoguelike.UI
                 UiStyle.BorderColor(Root, highlight ? Actionable : UiStyle.Border, highlight ? 4 : 1);
             }
         }
-    }
-
-    /// <summary>임시 테스트 덱. 정식 스타터 덱 4개는 개발 단계 5에서 정한다.</summary>
-    public static class TestDecks
-    {
-        /// <summary>
-        /// 스타터 덱 —유희 편— 카드 일부로 짠 40장.
-        /// 주석의 카드명은 EDOPro 한글 패치 DB(External/edopro-korean) 기준이고, 괄호 안은 BabelCDB 영문명이다.
-        /// </summary>
-        public static readonly (uint Code, int Count)[] YugiEntries =
-        {
-            (46986414, 2), // 블랙 매지션 (Dark Magician)
-            (70781052, 2), // 데몬 소환 (Summoned Skull)
-            (6368038, 2),  // 암흑 기사 가이아 (Gaia The Fierce Knight)
-            (28279543, 3), // 커스 오브 드래곤 (Curse of Dragon)
-            (91152256, 3), // 엘프 검사 (Celtic Guardian)
-            (15025844, 3), // 홀리 엘프 (Mystical Elf)
-            (41392891, 3), // 그렘린 (Feral Imp)
-            (13039848, 3), // 암석 거인 (Giant Soldier of Stone)
-            (32452818, 3), // 루이즈 (Beaver Warrior)
-            (90357090, 3), // 실버 팽 (Silver Fang)
-            (53129443, 1), // 블랙홀 (Dark Hole)
-            (83764718, 1), // 죽은 자의 소생 (Monster Reborn)
-            (72302403, 2), // 빛의 봉인검 (Swords of Revealing Light)
-            (84257639, 3), // 치료의 신 다이안 켓 (Dian Keto the Cure Master)
-            (66788016, 2), // 갈라진 대지 (Fissure)
-            (4206964, 2),  // 함정 속으로 (Trap Hole)
-            (50045299, 2), // 드래곤족 봉인항아리 (Dragon Capture Jar)
-        };
-
-        public static readonly IReadOnlyList<uint> Yugi =
-            YugiEntries.SelectMany(e => Enumerable.Repeat(e.Code, e.Count)).ToList();
     }
 }

@@ -1,0 +1,17 @@
+{
+    "name": "DuelRoguelike.AI",
+    "rootNamespace": "DuelRoguelike.AI",
+    "references": [
+        "DuelRoguelike.Engine",
+        "WindBot.Ignite"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": true
+}

@@ -12,6 +12,34 @@ namespace DuelRoguelike.Engine.Duel
         byte[] Respond(DuelRequest request, DuelState state);
     }
 
+    /// <summary>엔진 상태를 조회한다 (결과 형식은 OCG_DuelQueryLocation 그대로).</summary>
+    public interface IDuelQuery
+    {
+        byte[] QueryLocation(byte team, OcgLocation location, OcgQuery flags);
+    }
+
+    /// <summary>듀얼 시작 시점의 정보 (덱을 넣은 뒤, 첫 드로우 전).</summary>
+    public sealed class DuelStartInfo
+    {
+        public OcgDuelFlags Flags;
+        public readonly int[] StartingLp = new int[2];
+        public readonly int[] DeckCount = new int[2];
+        public readonly int[] ExtraCount = new int[2];
+    }
+
+    /// <summary>
+    /// 엔진 메시지를 해석하기 전 바이너리 그대로 받는 플레이어. 메시지로 자기 필드 모델을 만드는 AI(WindBot 어댑터)가 쓴다.
+    /// IDuelPlayer가 이것도 구현하면 DuelSession이 자동으로 부른다. 양쪽 플레이어의 메시지가 모두 순서대로 온다 (가리는 것은 받는 쪽이 한다).
+    /// </summary>
+    public interface IDuelMessageObserver
+    {
+        /// <summary>엔진의 첫 진행 직전에 한 번 부른다. query는 듀얼이 끝날 때까지 쓸 수 있다.</summary>
+        void OnDuelStart(DuelStartInfo info, IDuelQuery query);
+
+        /// <summary>엔진이 보낸 메시지 하나. 응답 요청 메시지도 온다 (그 응답은 Respond로 묻는다).</summary>
+        void OnEngineMessage(OcgMessage message);
+    }
+
     public sealed class DuelSessionOptions
     {
         public ulong[] Seed = { 1, 2, 3, 4 };
@@ -26,7 +54,7 @@ namespace DuelRoguelike.Engine.Duel
         public int DeckShuffleSeed = 1000;
     }
 
-    public sealed class DuelSession : IDisposable
+    public sealed class DuelSession : IDisposable, IDuelQuery
     {
         /// <summary>같은 요청에 자동 응답이 연달아 거절되면 멈춘다 (자동 응답 버그로 인한 무한 반복 방지).</summary>
         const int MaxAutoRetries = 3;
@@ -115,6 +143,18 @@ namespace DuelRoguelike.Engine.Duel
                 foreach (uint code in deck)
                     _duel.AddDeckCard(team, code);
             }
+
+            var info = new DuelStartInfo { Flags = _options.Flags };
+            info.StartingLp[0] = (int)_options.Team1.StartingLP;
+            info.StartingLp[1] = (int)_options.Team2.StartingLP;
+            for (byte team = 0; team < 2; team++)
+            {
+                info.DeckCount[team] = (int)_duel.QueryCount(team, OcgLocation.Deck);
+                info.ExtraCount[team] = (int)_duel.QueryCount(team, OcgLocation.Extra);
+            }
+            foreach (var observer in Observers())
+                observer.OnDuelStart(info, this);
+
             _duel.Start();
             Run();
         }
@@ -132,6 +172,9 @@ namespace DuelRoguelike.Engine.Duel
                 bool retried = false;
                 foreach (var raw in _duel.ReadMessages())
                 {
+                    foreach (var observer in Observers())
+                        observer.OnEngineMessage(raw);
+
                     DuelMessage message;
                     try
                     {
@@ -200,6 +243,18 @@ namespace DuelRoguelike.Engine.Duel
         }
 
         public void Dispose() => _duel.Dispose();
+
+        /// <summary>엔진의 한 영역을 지금 상태로 조회한다 (IDuelMessageObserver가 쓴다).</summary>
+        public byte[] QueryLocation(byte team, OcgLocation location, OcgQuery flags) =>
+            _duel.QueryLocation(team, location, flags);
+
+        IEnumerable<IDuelMessageObserver> Observers()
+        {
+            if (_players[0] is IDuelMessageObserver first)
+                yield return first;
+            if (_players[1] is IDuelMessageObserver second && !ReferenceEquals(_players[1], _players[0]))
+                yield return second;
+        }
 
         void OnEngineLog(OcgLogType type, string text)
         {
