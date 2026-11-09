@@ -53,6 +53,9 @@ namespace DuelRoguelike.Tests
         int _duels;
         bool _exchanged;
         bool _duelViewChecked;
+        int _playbackTries;
+        bool _playbackDone;
+        const int MaxPlaybackTries = 3;
 
         string SaveFile => Path.Combine(_saveDir, "save.txt");
 
@@ -364,6 +367,8 @@ namespace DuelRoguelike.Tests
             while (Find<Button>(DuelUi, "leave-duel") == null)
             {
                 Assert.Less(Time.realtimeSinceStartup, until, $"시드 {seed} 듀얼: {DuelTimeout}초 안에 끝나지 않았다");
+                if (!_playbackDone && _playbackTries < MaxPlaybackTries && TurnOf(Find<Label>(DuelUi, "turn-label")) >= 2)
+                    yield return CheckPlayback();
                 if (!_duelViewChecked && TurnOf(Find<Label>(DuelUi, "turn-label")) >= 6)
                     yield return CheckDuelView();
                 var auto = Find<Button>(DuelUi, "auto-to-end");
@@ -550,15 +555,22 @@ namespace DuelRoguelike.Tests
             yield return null;
             Assert.IsNull(Find<Button>(DuelUi, "modal-close"), "닫기를 눌렀는데 카드 목록 창이 남아 있다");
             Debug.Log($"[런 화면 시험] 듀얼 화면: {cell.name}에 마우스 올리기 → 카드 정보, 묘지 누르기 → 카드 목록 창");
-            yield return CheckPlayback();
         }
 
         /// <summary>
         /// 한 단계씩 보여 주기: "자동"(한 번)으로 답하면 멈추며 진행한다. 멈춘 단계(가운데 줄)가 보이는지 보고,
-        /// 상대의 공격 선언과 그 뒤 데미지 계산 단계를 찾아 찍는다 (그 사이 상대가 공격하지 않으면 찍지 않고 넘어간다).
+        /// 상대의 공격 선언과 그 뒤 데미지 계산 단계를 찾아 찍는다. 그 사이 상대가 공격하지 않으면 다음 듀얼에서 다시 해 본다
+        /// (MaxPlaybackTries번까지, 못 보면 실패로 하지 않고 기록만 남긴다).
         /// </summary>
         IEnumerator CheckPlayback()
         {
+            _playbackTries++;
+            var stop = Find<Button>(DuelUi, "auto-stop");
+            if (stop != null)
+            {
+                Click(stop);
+                yield return null;
+            }
             float until = Time.realtimeSinceStartup + PlaybackTimeout;
             int steps = 0;
             bool attack = false, battle = false;
@@ -591,8 +603,9 @@ namespace DuelRoguelike.Tests
                     Click(once);
                 yield return null;
             }
+            _playbackDone = battle;
             Assert.Greater(steps, 0, "자동(한 번)으로 답했는데 멈춰 보여 주는 단계가 없다");
-            Debug.Log($"[런 화면 시험] 한 단계씩 보여 주기: 멈춘 단계 {steps}개, 상대 공격 {(attack ? "봄" : "못 봄")}, 그 뒤 데미지 계산 {(battle ? "봄" : "못 봄")}");
+            Debug.Log($"[런 화면 시험] 한 단계씩 보여 주기 ({_playbackTries}번째): 멈춘 단계 {steps}개, 상대 공격 {(attack ? "봄" : "못 봄")}, 그 뒤 데미지 계산 {(battle ? "봄" : "못 봄")}");
         }
 
         /// <summary>"6턴 · …" → 6. 듀얼 준비 중이거나 없으면 0.</summary>
