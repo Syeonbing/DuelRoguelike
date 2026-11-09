@@ -4,6 +4,11 @@
 // 조작: 카드를 직접 눌러 행동을 고른다. 행동할 수 있는 카드·고를 수 있는 카드·고를 수 있는 칸은 테두리로 강조한다.
 // 칸 고르기(놓을 칸·무효로 할 칸)는 필드 칸(빈칸 포함)을 눌러서 고른다.
 // 센터 카드, 초상화 그림, 체인 박스 연출, 카드 크게 보기는 아직 없다.
+//
+// 두 가지로 쓴다:
+// - 혼자: Duel 씬. 인스펙터의 고정 덱으로 듀얼 하나를 하고, 끝나면 새 시드로 다시 시작한다 (화면 시험용).
+// - 런 화면(RunScreen)이 맡김: Run 씬. 런 화면이 덱·LP·시드를 정해 BeginExternalDuel로 듀얼을 맡기고,
+//   듀얼이 끝나 "결과 보기"를 누르면 끝난 듀얼 상태를 돌려준다. 런 규칙은 이 화면이 모른다.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -19,13 +24,13 @@ namespace DuelRoguelike.UI
 {
     public sealed class DuelScreen : MonoBehaviour
     {
-        [SerializeField, Tooltip("듀얼 난수·덱 셔플 시드. 다시 시작할 때마다 1씩 늘어난다.")]
+        [SerializeField, Tooltip("혼자 듀얼할 때: 듀얼 난수·덱 셔플 시드. 다시 시작할 때마다 1씩 늘어난다. (런에서는 런 시드로 정한다)")]
         int duelSeed = 1;
 
-        [SerializeField, Tooltip("내 덱 (스타터 덱)")]
+        [SerializeField, Tooltip("혼자 듀얼할 때: 내 덱 (스타터 덱)")]
         StarterDeckId myDeck = StarterDeckId.Yugi;
 
-        [SerializeField, Tooltip("상대 덱 (스타터 덱)")]
+        [SerializeField, Tooltip("혼자 듀얼할 때: 상대 덱 (스타터 덱)")]
         StarterDeckId opponentDeck = StarterDeckId.Kaiba;
 
         [SerializeField, Tooltip("체인할지 묻는 방식")]
@@ -36,6 +41,9 @@ namespace DuelRoguelike.UI
 
         [SerializeField, Tooltip("상대 AI(WindBot)가 나의 비공개 정보(손패, 뒷면 카드, 덱)를 본다. 끄면 EDOPro 서버처럼 가린다.")]
         bool opponentSeesHiddenInfo = false;
+
+        [SerializeField, Tooltip("개발용: 임시 자동 응답이 대신 답하는 \"자동\"(한 번)과 \"자동으로 끝까지\" 버튼을 보인다.")]
+        bool devAutoButtons = true;
 
         const byte Me = 0;
         const byte Opp = 1;
@@ -55,12 +63,22 @@ namespace DuelRoguelike.UI
         WindBotPlayer _opponentAi;
         bool _resultLogged;
 
+        // 런 화면이 맡긴 듀얼 (혼자 듀얼하면 _external이 false이고 _onLeave는 null)
+        bool _external;
+        Action<DuelState> _onLeave;
+        readonly string[] _playerNames = { "나", "상대" };
+
+        // "자동으로 끝까지": 듀얼이 끝날 때까지 프레임마다 임시 자동 응답이 대신 답한다 (개발용).
+        bool _autoPlay;
+        const float AutoPlaySecondsPerFrame = 0.02f;
+
         DuelInteraction _interaction;
         int _interactionSerial = -1;
         bool _windowHidden;
         bool _modalOpen;
 
-        VisualElement _root;
+        VisualElement _docRoot, _root;
+        readonly Label[] _playerName = new Label[2];
         readonly Label[] _lp = new Label[2];
         readonly Label[] _playerInfo = new Label[2];
         readonly CardCell[,] _monsters = new CardCell[2, MainZones];
@@ -80,6 +98,8 @@ namespace DuelRoguelike.UI
 
         void Start()
         {
+            if (_external)
+                return; // 런 화면이 Attach로 준비하고 BeginExternalDuel로 듀얼을 맡긴다
             CreateDocument();
             Exception loadError = null;
             try
@@ -102,10 +122,117 @@ namespace DuelRoguelike.UI
                         : loadError.Message);
                 return;
             }
-            RunSafely(StartDuel);
+            RunSafely(StartFreeDuel);
         }
 
         void OnDestroy() => _session?.Dispose();
+
+        void Update()
+        {
+            if (_autoPlay)
+                AutoPlayStep();
+        }
+
+        // ================= 런 화면이 맡기는 듀얼 =================
+
+        /// <summary>런 화면이 맡긴다고 표시한다. Start가 혼자 듀얼을 시작하지 않도록 Start보다 먼저(Awake에서) 부른다.</summary>
+        internal void UseExternalDuels() => _external = true;
+
+        /// <summary>런 화면이 읽은 카드 데이터로 화면을 만들고 숨겨 둔다.</summary>
+        internal void Attach(CardDataSet data)
+        {
+            _external = true;
+            if (_docRoot != null)
+                return;
+            CreateDocument();
+            _db = data.Database;
+            _scripts = data.Scripts;
+            _text = new DuelText(_db, data.Strings, Me);
+            _logFormatter = new DuelLogFormatter(_text);
+            BuildLayout();
+            SetVisible(false);
+        }
+
+        internal void SetVisible(bool visible)
+        {
+            if (_docRoot != null)
+                _docRoot.style.display = visible ? DisplayStyle.Flex : DisplayStyle.None;
+        }
+
+        /// <summary>
+        /// 런 화면의 듀얼 하나를 시작하고 화면을 보인다. 플레이어(나)는 팀 0이고 상대는 WindBot이다.
+        /// 듀얼이 끝나 "결과 보기"를 누르면 화면을 숨기고 onLeave(끝난 듀얼 상태)를 부른다.
+        /// </summary>
+        internal void BeginExternalDuel(DuelSessionOptions options, int helperSeed, int opponentSeed,
+            string myName, string opponentName, string startLine, Action<DuelState> onLeave)
+        {
+            _onLeave = onLeave;
+            _playerNames[Me] = myName;
+            _playerNames[Opp] = opponentName;
+            SetVisible(true);
+            RunSafely(() => StartSession(options, helperSeed, opponentSeed, startLine));
+        }
+
+        void LeaveDuel()
+        {
+            var state = _session?.State;
+            var onLeave = _onLeave;
+            if (state == null || !state.IsFinished || onLeave == null)
+                return;
+            _onLeave = null;
+            _autoPlay = false;
+            _session.Dispose();
+            _session = null;
+            _interaction = null;
+            _interactionSerial = -1;
+            CloseMenu();
+            CloseModal();
+            SetVisible(false);
+            onLeave(state);
+        }
+
+        // ================= 자동 진행 (개발용) =================
+
+        void AutoPlayStep()
+        {
+            if (_session == null || _session.State.IsFinished || _session.PendingRequest == null)
+            {
+                _autoPlay = false;
+                Render();
+                return;
+            }
+            float until = Time.realtimeSinceStartup + AutoPlaySecondsPerFrame;
+            try
+            {
+                do
+                {
+                    byte[] response = _helper.Respond(_session.PendingRequest, _session.State);
+                    if (response == null)
+                    {
+                        _autoPlay = false;
+                        break;
+                    }
+                    _session.Respond(response);
+                } while (_session.PendingRequest != null && !_session.State.IsFinished && Time.realtimeSinceStartup < until);
+            }
+            catch (Exception e)
+            {
+                _autoPlay = false;
+                Debug.LogException(e);
+                AddLog($"오류: {e.Message}", UiStyle.Opponent);
+            }
+            if (_session.State.IsFinished)
+                _autoPlay = false;
+            Render();
+        }
+
+        void SetAutoPlay(bool on)
+        {
+            _autoPlay = on;
+            CloseMenu();
+            CloseModal();
+            Render();
+        }
 
         // ================= 듀얼 =================
 
@@ -121,15 +248,9 @@ namespace DuelRoguelike.UI
             Debug.Log($"[듀얼] 카드 {data.CardCount}장, 한글 {data.LocalizedCount}장, 시스템 문구 {data.Strings.Count}개, 스크립트 {_scripts.Count}개");
         }
 
-        void StartDuel()
+        /// <summary>혼자 듀얼: 인스펙터의 고정 덱과 시드로 시작한다.</summary>
+        void StartFreeDuel()
         {
-            _session?.Dispose();
-            _session = null;
-            _interaction = null;
-            _interactionSerial = -1;
-            _log.Clear();
-            CloseMenu();
-            CloseModal();
             var myRecipe = StarterDecks.Get(myDeck);
             var opponentRecipe = StarterDecks.Get(opponentDeck);
             var options = new DuelSessionOptions
@@ -138,8 +259,25 @@ namespace DuelRoguelike.UI
                 Decks = new IReadOnlyList<uint>[] { myRecipe.ToCardList(), opponentRecipe.ToCardList() },
                 DeckShuffleSeed = duelSeed * 100,
             };
-            _helper = new SimpleAutoPlayer(activateEffects: true, seed: duelSeed);
-            _opponentAi = new WindBotPlayer(Opp, _db, seed: duelSeed, hideOpponentInfo: !opponentSeesHiddenInfo);
+            StartSession(options, duelSeed, duelSeed,
+                $"듀얼 시작 (시드 {duelSeed}) — 나: {myRecipe.Name}, 상대: {opponentRecipe.Name}, 나의 선공, 상대 AI: WindBot");
+        }
+
+        /// <summary>듀얼을 새로 시작한다. helperSeed: 임시 자동 응답("자동" 버튼)의 난수, opponentSeed: WindBot의 난수.</summary>
+        void StartSession(DuelSessionOptions options, int helperSeed, int opponentSeed, string startLine)
+        {
+            _session?.Dispose();
+            _session = null;
+            _interaction = null;
+            _interactionSerial = -1;
+            _autoPlay = false;
+            _log.Clear();
+            CloseMenu();
+            CloseModal();
+            for (int p = 0; p < 2; p++)
+                _playerName[p].text = _playerNames[p];
+            _helper = new SimpleAutoPlayer(activateEffects: true, seed: helperSeed);
+            _opponentAi = new WindBotPlayer(Opp, _db, seed: opponentSeed, hideOpponentInfo: !opponentSeesHiddenInfo);
             _opponentAi.ProblemReported += text => Debug.LogWarning($"[WindBot] {text}");
             _session = DuelSession.Create(options, _db, _scripts,
                 new ManualPlayer { ChainPrompt = chainPrompt, PlaceSelect = placeSelect },
@@ -149,7 +287,7 @@ namespace DuelRoguelike.UI
             foreach (var (type, text) in _session.StartupLog)
                 OnEngineLog(type, text);
             _resultLogged = false;
-            AddLog($"듀얼 시작 (시드 {duelSeed}) — 나: {myRecipe.Name}, 상대: {opponentRecipe.Name}, 나의 선공, 상대 AI: WindBot", UiStyle.Accent);
+            AddLog(startLine, UiStyle.Accent);
             _session.Start();
         }
 
@@ -170,6 +308,7 @@ namespace DuelRoguelike.UI
             }
             catch (Exception e)
             {
+                _autoPlay = false;
                 Debug.LogException(e);
                 AddLog($"오류: {e.Message}", UiStyle.Opponent);
             }
@@ -213,7 +352,9 @@ namespace DuelRoguelike.UI
                 _windowHidden = false;
                 CloseMenu();
                 CloseModal();
-                if (_interaction?.Dialog != null)
+                if (_autoPlay)
+                    _windowHidden = true; // 자동 진행 중에는 창을 띄우지 않는다 (멈추면 "선택 창 열기"로 연다)
+                else if (_interaction?.Dialog != null)
                     OpenDialog(_interaction.Dialog);
                 else if (_interaction?.Selection != null && _interaction.Selection.NeedsWindow)
                     OpenSelectionWindow();
@@ -262,7 +403,17 @@ namespace DuelRoguelike.UI
                 string result = state.Winner == OcgConstants.PlayerNone ? "무승부" : state.Winner == Me ? "승리!" : "패배";
                 _promptLabel.text = $"듀얼 종료: {result}";
                 _promptDetail.text = $"{state.Turn}턴, 나 LP {state.Players[Me].Lp} / 상대 LP {state.Players[Opp].Lp}";
-                AddStripButton("다시 시작 (새 시드)", () => { duelSeed++; RunSafely(StartDuel); }, true);
+                if (_onLeave != null)
+                    AddStripButton("결과 보기", LeaveDuel, true).name = "leave-duel";
+                else if (!_external)
+                    AddStripButton("다시 시작 (새 시드)", () => { duelSeed++; RunSafely(StartFreeDuel); }, true);
+                return;
+            }
+            if (_autoPlay)
+            {
+                _promptLabel.text = "자동 진행 중...";
+                _promptDetail.text = "임시 자동 응답이 듀얼이 끝날 때까지 대신 답한다 (개발용)";
+                AddStripButton("자동 멈추기", () => SetAutoPlay(false), true).name = "auto-stop";
                 return;
             }
             if (_interaction == null)
@@ -301,7 +452,11 @@ namespace DuelRoguelike.UI
             if (_interaction.Dialog != null && !_modalOpen)
                 AddStripButton("선택 창 열기", () => OpenDialog(_interaction.Dialog), true);
             // 개발용: 임시 자동 응답이 대신 고르게 한다.
-            AddStripButton("자동", () => Respond(_helper.Respond(_interaction.Request, _session.State)), false);
+            if (devAutoButtons)
+            {
+                AddStripButton("자동", () => Respond(_helper.Respond(_interaction.Request, _session.State)), false).name = "auto-once";
+                AddStripButton("자동으로 끝까지", () => SetAutoPlay(true), false).name = "auto-to-end";
+            }
         }
 
         Button AddStripButton(string label, Action onClick, bool primary)
@@ -758,29 +913,7 @@ namespace DuelRoguelike.UI
 
         void CreateDocument()
         {
-            var panel = ScriptableObject.CreateInstance<PanelSettings>();
-            panel.name = "DuelPanel";
-            panel.scaleMode = PanelScaleMode.ScaleWithScreenSize;
-            panel.referenceResolution = new Vector2Int(1920, 1080);
-            panel.screenMatchMode = PanelScreenMatchMode.MatchWidthOrHeight;
-            panel.match = 0.5f;
-            // 유니티 기본 런타임 테마 (Assets/UI/Resources/DuelTheme.tss). 없으면 버튼·스크롤바 기본 모양이 빠진다.
-            panel.themeStyleSheet = Resources.Load<ThemeStyleSheet>("DuelTheme");
-            if (panel.themeStyleSheet == null)
-                Debug.LogWarning("Assets/UI/Resources/DuelTheme.tss를 찾지 못했습니다.");
-
-            var go = new GameObject("DuelUI");
-            go.SetActive(false);
-            go.transform.SetParent(transform, false);
-            var document = go.AddComponent<UIDocument>();
-            document.panelSettings = panel;
-            go.SetActive(true);
-
-            var docRoot = document.rootVisualElement;
-            // 한글 글꼴: Windows 기본 글꼴(맑은 고딕)을 실행 중에 불러온다. 프로젝트에는 글꼴 파일을 넣지 않는다.
-            var font = Font.CreateDynamicFontFromOSFont(new[] { "Malgun Gothic", "맑은 고딕" }, 32);
-            docRoot.style.unityFontDefinition = FontDefinition.FromFont(font);
-            docRoot.style.color = UiStyle.Text;
+            var docRoot = _docRoot = UiStyle.CreateDocument(transform, "DuelUI");
 
             _root = UiStyle.Box("duel", FlexDirection.Row);
             _root.style.flexGrow = 1;
@@ -865,7 +998,7 @@ namespace DuelRoguelike.UI
         VisualElement PlayerPanel(byte p)
         {
             var panel = UiStyle.PanelBox();
-            var nameLabel = UiStyle.Label(p == Me ? "나" : "상대", 18, p == Me ? UiStyle.Mine : UiStyle.Opponent, bold: true);
+            var nameLabel = _playerName[p] = UiStyle.Label(_playerNames[p], 18, p == Me ? UiStyle.Mine : UiStyle.Opponent, bold: true);
             _lp[p] = UiStyle.Label("LP 8000", 38, bold: true);
             _playerInfo[p] = UiStyle.Label("", 15, UiStyle.TextDim);
             panel.Add(nameLabel);

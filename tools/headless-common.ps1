@@ -47,7 +47,7 @@ function Initialize-Headless([string]$UnityEditor) {
         @{ Name = 'WindBot.Ignite';       Dir = 'Assets\ThirdParty\WindBot'; Refs = @();                                                         Unity = $false },
         @{ Name = 'DuelRoguelike.AI';     Dir = 'Assets\Scripts\AI';         Refs = @('DuelRoguelike.Engine', 'WindBot.Ignite');                 Unity = $false },
         @{ Name = 'DuelRoguelike.Run';    Dir = 'Assets\Scripts\Run';        Refs = @('DuelRoguelike.Engine');                                   Unity = $false },
-        @{ Name = 'DuelRoguelike.UI';     Dir = 'Assets\Scripts\UI';         Refs = @('DuelRoguelike.Engine', 'DuelRoguelike.AI');               Unity = $true },
+        @{ Name = 'DuelRoguelike.UI';     Dir = 'Assets\Scripts\UI';         Refs = @('DuelRoguelike.Engine', 'DuelRoguelike.AI', 'DuelRoguelike.Run'); Unity = $true },
         @{ Name = 'DuelRoguelike.Dev';    Dir = 'Assets\Scripts\Dev';        Refs = @('DuelRoguelike.Engine', 'DuelRoguelike.AI', 'DuelRoguelike.UI', 'DuelRoguelike.Run'); Unity = $true }
     )
 
