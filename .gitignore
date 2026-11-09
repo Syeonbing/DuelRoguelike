@@ -114,3 +114,6 @@ InitTestScene*.unity*
 /[Aa]ssets/[Pp]lugins/x86_64/sqlite3.dll
 /[Aa]ssets/[Pp]lugins/x86_64/sqlite3.dll.meta
 /tools/.cache/
+
+# 플레이어가 직접 넣는 카드 그림 (CardImages\카드ID.png|jpg). 저장소에 넣지 않고 배포하지 않는다
+/[Cc]ard[Ii]mages/

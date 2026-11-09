@@ -6,7 +6,8 @@
 // - 듀얼 도중에 씬을 다시 불러도 그 듀얼을 시작하기 전으로 돌아가는지
 // - 런이 끝나면 진행 중인 런이 없어지고, 시작 사이드 덱은 다음 런에 그대로 채워지는지
 // - 진행 중인 런이 있을 때 새 런: 한 번 더 눌러야 포기하고, 취소할 수 있는지
-// 층 사이 화면의 교환(사이드 덱 → 덱, 덱 → 사이드 덱)도 한 번 해 본다. 보충 고르기를 한 번 이상 거칠 때까지 런을 더 한다.
+// 층 사이 화면의 교환(사이드 덱 → 덱, 덱 → 사이드 덱)도 버튼·두 번 누르기·끌어다 놓기로 한 번씩 해 본다 (포인터 이벤트를 직접 보낸다).
+// 런 로그 창 열고 닫기, 런 시작 화면의 거르기·끌어다 놓기·두 번 누르기도 본다. 보충 고르기를 한 번 이상 거칠 때까지 런을 더 한다.
 // 오류 로그(Debug.LogError·LogException)가 하나라도 나오면 실패한다.
 // 환경 변수 DUELROGUELIKE_SCREENSHOT_DIR에 폴더를 주면 화면마다 처음 한 번 1920×1080 PNG로 저장한다 (화면 모양 확인용).
 //
@@ -73,10 +74,10 @@ namespace DuelRoguelike.Tests
             var picked = new List<string>();
             for (int i = 0; i < SidePicks; i++)
             {
-                var row = Root(RunUi).Query<Button>().Where(b => b.name.StartsWith("pick-") && !picked.Contains(b.name.Substring(5))).First();
-                Assert.IsNotNull(row, "컬렉션 목록에 고를 카드가 없다");
-                string code = row.name.Substring("pick-".Length);
-                Click(row);
+                var card = Named("pick-").FirstOrDefault(b => !picked.Contains(b.name.Substring(5)));
+                Assert.IsNotNull(card, "컬렉션 목록에 고를 카드가 없다");
+                string code = card.name.Substring("pick-".Length);
+                Click(card);
                 yield return null;
                 Click(Find<Button>(RunUi, "side-add"));
                 yield return null;
@@ -84,25 +85,52 @@ namespace DuelRoguelike.Tests
             }
             Assert.AreEqual($"시작 사이드 덱 {SidePicks}/10장", Find<Label>(RunUi, "side-count").text);
             // 빼고 다시 넣기
-            Click(Find<Button>(RunUi, "side-" + picked[0]));
+            Click(Find<VisualElement>(RunUi, "side-" + picked[0]));
             yield return null;
             Click(Find<Button>(RunUi, "side-remove"));
             yield return null;
             Assert.AreEqual($"시작 사이드 덱 {SidePicks - 1}/10장", Find<Label>(RunUi, "side-count").text, "사이드 덱에서 빼기");
-            Assert.IsNull(Find<Button>(RunUi, "side-" + picked[0]), "뺀 카드가 사이드 덱 목록에 남아 있다");
-            Click(Find<Button>(RunUi, "pick-" + picked[0]));
+            Assert.IsNull(Find<VisualElement>(RunUi, "side-" + picked[0]), "뺀 카드가 사이드 덱 목록에 남아 있다");
+            Click(Find<VisualElement>(RunUi, "pick-" + picked[0]));
             yield return null;
             Click(Find<Button>(RunUi, "side-add"));
             yield return null;
             foreach (string code in picked)
-                Assert.IsNotNull(Find<Button>(RunUi, "side-" + code), $"고른 카드 {code}가 사이드 덱 목록에 없다");
+                Assert.IsNotNull(Find<VisualElement>(RunUi, "side-" + code), $"고른 카드 {code}가 사이드 덱 목록에 없다");
+            // 끌어다 놓아 넣고, 두 번 눌러 빼기
+            var extraPick = Named("pick-").FirstOrDefault(b => !picked.Contains(b.name.Substring(5)));
+            Assert.IsNotNull(extraPick, "컬렉션 목록에 끌어다 놓을 카드가 없다");
+            string dragged = extraPick.name.Substring("pick-".Length);
+            Drag(extraPick, Find<VisualElement>(RunUi, "start-side"));
+            yield return null;
+            Assert.AreEqual($"시작 사이드 덱 {SidePicks + 1}/10장", Find<Label>(RunUi, "side-count").text, "컬렉션 카드를 시작 사이드 덱으로 끌어다 놓기");
+            DoubleClick(Find<VisualElement>(RunUi, "side-" + dragged));
+            yield return null;
+            Assert.AreEqual($"시작 사이드 덱 {SidePicks}/10장", Find<Label>(RunUi, "side-count").text, "시작 사이드 덱 카드를 두 번 눌러 빼기");
+            Assert.IsNull(Find<VisualElement>(RunUi, "side-" + dragged), "두 번 눌러 뺀 카드가 사이드 덱 목록에 남아 있다");
+            Click(Find<Button>(RunUi, "filter-spell"));
+            yield return null;
+            Assert.IsTrue(Named("pick-").Count > 0, "마법 거르기에 카드가 없다");
+            Click(Find<Button>(RunUi, "filter-all"));
+            yield return null;
+            Click(Named("pick-").First()); // 화면 확인용: 카드 하나를 고른 상태
+            yield return null;
             yield return Shot(RunUi, "1-start");
 
             Click(Find<Button>(RunUi, "start-run"));
             yield return WaitFor(() => Find<Button>(RunUi, "next-duel") != null, 10, "층 사이 화면");
             foreach (string code in picked)
-                Assert.IsNotNull(Find<Button>(RunUi, "card-side-" + code), $"시작 사이드 덱 카드 {code}가 층 사이 화면 사이드 덱에 없다");
+                Assert.IsNotNull(Find<VisualElement>(RunUi, "card-side-" + code), $"시작 사이드 덱 카드 {code}가 층 사이 화면 사이드 덱에 없다");
             Assert.IsTrue(File.Exists(SaveFile), "런을 시작했는데 저장 파일이 없다");
+
+            // 런 로그 창
+            Click(Find<Button>(RunUi, "open-log"));
+            yield return null;
+            Assert.IsNotNull(Find<VisualElement>(RunUi, "run-events"), "런 로그 창이 열리지 않았다");
+            yield return Shot(RunUi, "9-log");
+            Click(Find<Button>(RunUi, "close-log"));
+            yield return null;
+            Assert.IsNull(Find<VisualElement>(RunUi, "run-events"), "런 로그 창이 닫히지 않았다");
 
             yield return Exchange();
             for (int i = 0; i < 2 && Find<Button>(RunUi, "new-run") == null; i++)
@@ -239,7 +267,7 @@ namespace DuelRoguelike.Tests
         {
             if (Find<VisualElement>(RunUi, "refill") != null)
             {
-                var candidate = Root(RunUi).Query<Button>().Where(b => b.name.StartsWith("refill-") && b.name != "refill-confirm").First();
+                var candidate = Named("refill-").FirstOrDefault(b => b.name != "refill-confirm" && b.name != "refill-detail");
                 Assert.IsNotNull(candidate, "보충 창에 고를 카드가 없다");
                 Click(candidate);
                 yield return null;
@@ -278,15 +306,24 @@ namespace DuelRoguelike.Tests
                 yield return Shot(RunUi, "4-hub");
         }
 
-        /// <summary>교환 (한 번만): 사이드 덱 카드를 덱에 넣고 다시 뺀다.</summary>
+        /// <summary>
+        /// 교환 (한 번만): 사이드 덱 카드를 덱에 넣고 다시 뺀다. 버튼으로 한 번, 두 번 누르기로 한 번, 끌어다 놓기로 한 번.
+        /// 그리고 메인 덱 카드 하나를 두 번 눌러 본다 (메인 덱이 최소 장수면 옮길 수 없다는 알림, 아니면 옮겼다가 되돌림).
+        /// </summary>
         IEnumerator Exchange()
         {
             if (_exchanged || Find<Button>(RunUi, "next-duel") == null)
                 yield break;
-            var side = Root(RunUi).Query<Button>().Where(b => b.name.StartsWith("card-side-")).First();
+            var side = Named("card-side-").FirstOrDefault();
             if (side == null)
                 yield break;
             string code = side.name.Substring("card-side-".Length);
+            int sideStart = SideCount(code), deckStart = DeckCount(code);
+            void AssertMoved(bool inDeck, string how)
+            {
+                Assert.AreEqual(inDeck ? sideStart - 1 : sideStart, SideCount(code), $"{how}: 사이드 덱 장수");
+                Assert.AreEqual(inDeck ? deckStart + 1 : deckStart, DeckCount(code), $"{how}: 메인·엑스트라 덱 장수");
+            }
             Click(side);
             yield return null;
             var toDeck = Find<Button>(RunUi, "move-to-deck");
@@ -294,15 +331,102 @@ namespace DuelRoguelike.Tests
                 yield break;
             Click(toDeck);
             yield return null;
-            Assert.IsTrue(Find<Button>(RunUi, "card-main-" + code) != null || Find<Button>(RunUi, "card-extra-" + code) != null,
-                "덱에 넣은 카드가 메인·엑스트라 덱 목록에 없다");
+            AssertMoved(true, "버튼으로 덱에 넣기");
+            string deckZone = Find<VisualElement>(RunUi, "card-main-" + code) != null ? "zone-main" : "zone-extra";
             var toSide = Find<Button>(RunUi, "move-to-side");
             Assert.IsNotNull(toSide, "덱에 넣은 카드에 사이드 덱으로 빼기 버튼이 없다");
             Click(toSide);
             yield return null;
-            Assert.IsNotNull(Find<Button>(RunUi, "card-side-" + code), "사이드 덱으로 뺀 카드가 사이드 덱 목록에 없다");
+            AssertMoved(false, "버튼으로 사이드 덱으로 빼기");
+
+            // 두 번 누르기
+            DoubleClick(Find<VisualElement>(RunUi, "card-side-" + code));
+            yield return null;
+            AssertMoved(true, "두 번 눌러 덱에 넣기");
+            StringAssert.Contains("→", Find<Label>(RunUi, "move-notice").text, "옮긴 결과 알림이 없다");
+            DoubleClick(InDeck(code));
+            yield return null;
+            AssertMoved(false, "두 번 눌러 사이드 덱으로 빼기");
+
+            // 끌어다 놓기
+            Drag(Find<VisualElement>(RunUi, "card-side-" + code), Find<VisualElement>(RunUi, deckZone));
+            yield return null;
+            AssertMoved(true, "덱 칸으로 끌어다 놓기");
+            Drag(InDeck(code), Find<VisualElement>(RunUi, "zone-side"));
+            yield return null;
+            AssertMoved(false, "사이드 덱 칸으로 끌어다 놓기");
+
+            // 메인 덱 카드 두 번 누르기: 옮길 수 없으면 알림, 옮겼으면 되돌린다
+            var main = Named("card-main-").FirstOrDefault();
+            string mainCode = main.name.Substring("card-main-".Length);
+            int mainSideBefore = SideCount(mainCode), mainDeckBefore = DeckCount(mainCode);
+            DoubleClick(main);
+            yield return null;
+            var notice = Find<Label>(RunUi, "move-notice");
+            Assert.AreEqual(DisplayStyle.Flex, notice.style.display.value, "옮기기 알림이 보이지 않는다");
+            if (SideCount(mainCode) > mainSideBefore)
+            {
+                DoubleClick(Find<VisualElement>(RunUi, "card-side-" + mainCode));
+                yield return null;
+                Assert.AreEqual(mainDeckBefore, DeckCount(mainCode), "사이드 덱으로 뺐다가 되돌린 메인 덱 카드 장수");
+            }
+            else
+            {
+                StringAssert.StartsWith("옮길 수 없습니다", notice.text, "옮기지 못했는데 까닭 알림이 없다");
+                Assert.AreEqual(mainDeckBefore, DeckCount(mainCode), "옮길 수 없다는데 메인 덱 장수가 바뀌었다");
+            }
+            Debug.Log($"[런 화면 시험] 메인 덱 카드 두 번 누르기: {notice.text}");
+            yield return Shot(RunUi, "4-hub-moved");
+
             _exchanged = true;
-            Debug.Log($"[런 화면 시험] 교환: {code} 사이드 덱 → 덱 → 사이드 덱");
+            Debug.Log($"[런 화면 시험] 교환: {code} 사이드 덱 → 덱 → 사이드 덱 (버튼, 두 번 누르기, 끌어다 놓기)");
+        }
+
+        static VisualElement InDeck(string code) =>
+            Find<VisualElement>(RunUi, "card-main-" + code) ?? Find<VisualElement>(RunUi, "card-extra-" + code);
+
+        /// <summary>층 사이 화면에서 이 이름인 카드 장수 (같은 카드도 한 장씩 따로 놓인다).</summary>
+        static int CountNamed(string name) => Named(name).Count(e => e.name == name);
+
+        static int SideCount(string code) => CountNamed("card-side-" + code);
+
+        static int DeckCount(string code) => CountNamed("card-main-" + code) + CountNamed("card-extra-" + code);
+
+        /// <summary>카드를 두 번 누른다 (포인터 이벤트를 직접 보낸다).</summary>
+        static void DoubleClick(VisualElement target)
+        {
+            Assert.IsNotNull(target, "두 번 누를 카드가 없다");
+            Vector2 at = target.worldBound.center;
+            for (int clicks = 1; clicks <= 2; clicks++)
+            {
+                SendPointer(target, EventType.MouseDown, at, clicks);
+                SendPointer(target, EventType.MouseUp, at, clicks);
+            }
+        }
+
+        /// <summary>카드를 끌어 to 위에 놓는다.</summary>
+        static void Drag(VisualElement card, VisualElement to)
+        {
+            Assert.IsNotNull(card, "끌 카드가 없다");
+            Assert.IsNotNull(to, "놓을 곳이 없다");
+            Vector2 from = card.worldBound.center, end = to.worldBound.center;
+            SendPointer(card, EventType.MouseDown, from, 1);
+            SendPointer(card, EventType.MouseDrag, Vector2.Lerp(from, end, 0.5f), 1);
+            SendPointer(card, EventType.MouseDrag, end, 1);
+            SendPointer(card, EventType.MouseUp, end, 1);
+        }
+
+        static void SendPointer(VisualElement target, EventType type, Vector2 position, int clicks)
+        {
+            var system = new Event { type = type, mousePosition = position, clickCount = clicks, button = 0 };
+            EventBase e = type == EventType.MouseDown ? PointerDownEvent.GetPooled(system)
+                : type == EventType.MouseUp ? (EventBase)PointerUpEvent.GetPooled(system)
+                : PointerMoveEvent.GetPooled(system);
+            using (e)
+            {
+                e.target = target;
+                target.SendEvent(e);
+            }
         }
 
         /// <summary>DUELROGUELIKE_SCREENSHOT_DIR이 있으면 화면(UIDocument) 하나를 텍스처에 그려 PNG로 저장한다. 같은 이름은 한 번만.</summary>
@@ -331,6 +455,10 @@ namespace DuelRoguelike.Tests
             yield return null;
         }
 
+        /// <summary>런 화면에서 이름이 prefix로 시작하는 요소들 (화면 순서). 화면이 숨겨져 있으면 빈 목록.</summary>
+        static List<VisualElement> Named(string prefix) =>
+            Root(RunUi)?.Query<VisualElement>().Where(e => e.name != null && e.name.StartsWith(prefix)).ToList() ?? new List<VisualElement>();
+
         static VisualElement Root(string documentName)
         {
             var go = GameObject.Find(documentName);
@@ -343,8 +471,8 @@ namespace DuelRoguelike.Tests
         /// <summary>보이는 화면(UIDocument)에서 이름으로 찾는다. 화면이 숨겨져 있으면 null.</summary>
         static T Find<T>(string documentName, string name) where T : VisualElement => Root(documentName)?.Q<T>(name);
 
-        /// <summary>버튼을 누른다 (제출 이벤트 = 클릭과 같은 동작). 꺼진 버튼이면 실패.</summary>
-        static void Click(Button button)
+        /// <summary>버튼이나 카드를 누른다 (제출 이벤트 = 클릭과 같은 동작). 꺼져 있으면 실패.</summary>
+        static void Click(VisualElement button)
         {
             Assert.IsNotNull(button, "누를 버튼이 없다");
             Assert.IsTrue(button.enabledInHierarchy, $"{button.name} 버튼이 꺼져 있다");
