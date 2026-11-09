@@ -9,14 +9,32 @@ namespace DuelRoguelike.UI
     public sealed class DuelLogFormatter
     {
         readonly DuelText _text;
+        bool _inBattle; // 데미지 계산(MSG_BATTLE) 뒤 데미지 스텝이 끝날 때까지: 이 사이의 데미지는 전투 데미지다
 
         public DuelLogFormatter(DuelText text) => _text = text;
+
+        /// <summary>
+        /// 바로 앞에 Format한 메시지의 행동을 한 플레이어 (로그 색·가운데 줄에 쓴다). 소환·발동·공격처럼 행동한 쪽이 분명하면 그쪽,
+        /// 이동·LP 변화·체인 처리처럼 분명하지 않으면 그 일을 일으킨 앞 행동의 쪽, 그것도 없으면 턴 플레이어.
+        /// </summary>
+        public byte LastActor { get; private set; } = OcgConstants.PlayerNone;
 
         /// <summary>로그에 남길 문장. 남기지 않을 메시지는 null.</summary>
         public string Format(DuelMessage message, DuelState state)
         {
+            UpdateActor(message, state);
             switch (message)
             {
+                case SimpleMessage m when m.Type == OcgMessageType.DamageStepStart:
+                    return "[데미지 스텝]";
+                case SimpleMessage m when m.Type == OcgMessageType.DamageStepEnd:
+                    _inBattle = false;
+                    return null;
+                case BattleMessage m:
+                    _inBattle = true;
+                    return FormatBattle(m, state);
+                case CardListMessage m when m.Type == OcgMessageType.BecomeTarget && m.Cards.Count > 0:
+                    return $"대상: {string.Join(", ", m.Cards.Select(c => CardAt(state.Find(c), c)))}";
                 case NewTurnMessage m:
                     return $"──── {state.Turn}턴: {_text.Player(m.Player)}의 턴 ────";
                 case NewPhaseMessage m:
@@ -34,7 +52,7 @@ namespace DuelRoguelike.UI
                 case MoveMessage m:
                     return FormatMove(m);
                 case ChainingMessage m:
-                    return $"체인 {m.ChainCount}: {_text.Player(m.Location.Controller)}의 {_text.Effect(m.Code, m.Description)} 발동";
+                    return $"체인 {m.ChainCount}: {_text.Player(m.Location.Controller)}의 {EffectName(m.Code, m.Description)} 발동";
                 case ChainEventMessage m when m.Type == OcgMessageType.ChainSolving:
                     return $"체인 {m.ChainCount} 처리";
                 case ChainEventMessage m when m.Type == OcgMessageType.ChainNegated:
@@ -84,6 +102,53 @@ namespace DuelRoguelike.UI
             }
         }
 
+        void UpdateActor(DuelMessage message, DuelState state)
+        {
+            switch (message)
+            {
+                case NewTurnMessage m: LastActor = m.Player; break;
+                case SummoningMessage m: LastActor = m.Location.Controller; break;
+                case SetMessage m: LastActor = m.Location.Controller; break;
+                case ChainingMessage m: LastActor = m.Location.Controller; break;
+                case AttackMessage m: LastActor = m.Attacker.Controller; break;
+                case BattleMessage m: LastActor = m.Attacker.Controller; break;
+                case DrawMessage m: LastActor = m.Player; break;
+                case TossMessage m: LastActor = m.Player; break;
+                case ChainEventMessage m when m.Type == OcgMessageType.ChainSolving && m.ChainCount >= 1 && m.ChainCount <= state.Chain.Count:
+                    LastActor = state.Chain[(int)m.ChainCount - 1].Location.Controller;
+                    break;
+                case SimpleMessage m when m.Type == OcgMessageType.ChainEnd:
+                    LastActor = state.TurnPlayer;
+                    break;
+                case NewPhaseMessage _:
+                    _inBattle = false;
+                    LastActor = state.TurnPlayer;
+                    break;
+            }
+            if (LastActor > 1)
+                LastActor = state.TurnPlayer;
+        }
+
+        string FormatBattle(BattleMessage m, DuelState state)
+        {
+            string attacker = $"{CardAt(state.Find(m.Attacker), m.Attacker)} 공격력 {m.AttackerAttack}";
+            if (m.Target.IsEmpty)
+                return $"데미지 계산: {attacker} → 직접 공격";
+            bool defense = (m.Target.Position & OcgPosition.Defense) != 0;
+            string target = CardAt(state.Find(m.Target), m.Target);
+            return defense
+                ? $"데미지 계산: {attacker} vs {target} 수비력 {m.TargetDefense}"
+                : $"데미지 계산: {attacker} vs {target} 공격력 {m.TargetAttack}";
+        }
+
+        /// <summary>발동한 카드 이름 (효과 설명이 따로 있으면 괄호로 붙인다).</summary>
+        string EffectName(uint code, ulong description)
+        {
+            string name = _text.CardName(code);
+            string desc = _text.Description(description);
+            return string.IsNullOrEmpty(desc) || desc.StartsWith(name) ? $"「{name}」" : $"「{name}」({desc})";
+        }
+
         static string SummonWord(SummonKind kind)
         {
             switch (kind)
@@ -110,7 +175,7 @@ namespace DuelRoguelike.UI
 
             byte owner = m.From.Location != OcgLocation.None ? m.From.Controller : m.To.Controller;
             bool visible = IsVisible(m.Code, m.To) || IsVisible(m.Code, m.From);
-            string name = visible ? _text.CardName(m.Code) : "카드 1장";
+            string name = visible ? $"「{_text.CardName(m.Code)}」" : "카드 1장";
             string reason = DuelText.Reason(m.Reason);
             string suffix = string.IsNullOrEmpty(reason) ? "" : $" ({reason})";
             return $"{_text.Player(owner)}: {name} {DuelText.Location(m.From)} → {DuelText.Location(m.To)}{suffix}";
@@ -122,6 +187,7 @@ namespace DuelRoguelike.UI
             int lp = m.Player < 2 ? state.Players[m.Player].Lp : 0;
             switch (m.Kind)
             {
+                case LpChangeKind.Damage when _inBattle: return $"{who}: 전투 데미지 {m.Amount} (LP {lp})";
                 case LpChangeKind.Damage: return $"{who}: {m.Amount} 데미지 (LP {lp})";
                 case LpChangeKind.Recover: return $"{who}: LP {m.Amount} 회복 (LP {lp})";
                 case LpChangeKind.PayCost: return $"{who}: LP {m.Amount} 지불 (LP {lp})";
@@ -162,14 +228,14 @@ namespace DuelRoguelike.UI
         string VisibleName(uint code, CardLocation loc, bool faceUp = true)
         {
             if (code != 0 && (loc.Controller == _text.LocalPlayer || faceUp))
-                return _text.CardName(code);
+                return $"「{_text.CardName(code)}」";
             return "카드 1장";
         }
 
         string CardAt(uint code, CardLocation loc, OcgPosition position)
         {
             var withPos = new CardLocation(loc.Controller, loc.Location, loc.Sequence, position);
-            return IsVisible(code, withPos) || IsVisible(code, loc) ? _text.CardName(code) : "뒷면 카드";
+            return IsVisible(code, withPos) || IsVisible(code, loc) ? $"「{_text.CardName(code)}」" : "뒷면 카드";
         }
 
         string CardAt(CardInfo card, CardLocation loc)
@@ -177,7 +243,7 @@ namespace DuelRoguelike.UI
             if (card == null)
                 return DuelText.Location(loc);
             if (card.Location.Controller == _text.LocalPlayer || card.IsPublic || card.IsFaceUp)
-                return _text.CardName(card.Code);
+                return $"「{_text.CardName(card.Code)}」";
             return "뒷면 카드";
         }
     }

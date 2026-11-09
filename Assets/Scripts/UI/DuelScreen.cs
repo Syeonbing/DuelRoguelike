@@ -3,6 +3,8 @@
 // 패는 필드 위아래), 오른쪽 로그. 필드·손패·카드 더미·카드 정보는 DuelScreen.Field.cs에 있다.
 // 조작: 카드를 직접 눌러 행동을 고른다. 행동할 수 있는 카드·고를 수 있는 카드·고를 수 있는 칸은 테두리로 강조한다.
 // 칸 고르기(놓을 칸·무효로 할 칸)는 필드 칸(빈칸 포함)을 눌러서 고른다.
+// 진행: 엔진 메시지를 한 단계씩 보여 준다. 발동·공격·데미지 계산·LP·파괴 등에서는 잠깐 멈추고, 그 카드에 테두리를 치고,
+// 가운데 줄에 그 단계를 띄운다 (속도: 빠름·보통·느림, 필드를 누르면 다음 입력까지 건너뜀).
 // 센터 카드, 초상화 그림, 체인 박스 연출은 아직 없다.
 //
 // 두 가지로 쓴다:
@@ -73,6 +75,24 @@ namespace DuelRoguelike.UI
         bool _autoPlay;
         const float AutoPlaySecondsPerFrame = 0.02f;
 
+        // 한 단계씩 보여 주기: 엔진 메시지를 하나씩 반영하고(DuelSession.Step), 중요한 메시지(발동·공격·데미지 계산·LP·파괴 등)에서는
+        // 잠깐 멈춰 그 단계의 필드와 가운데 줄을 보여 준다. 멈추는 시간은 이 화면이 정한다. 필드를 누르면 다음 입력까지 건너뛴다.
+        // "자동으로 끝까지"는 멈추지 않는다 (DuelSession.Respond로 한 번에 진행한다).
+        enum PlaybackSpeed { Fast, Normal, Slow }
+        const string SpeedPrefKey = "duel.playback-speed";
+        const float PlaybackSecondsPerFrame = 0.02f;
+        static readonly Color FocusActor = UiStyle.Hex(0xff9a3c);
+        static readonly Color FocusTarget = UiStyle.Hex(0xff5a5a);
+        static readonly Color OpponentLine = UiStyle.Hex(0xf2a58e);
+        PlaybackSpeed _speed = PlaybackSpeed.Normal;
+        bool _pacing;              // Step으로 한 단계씩 진행하는 중 (OnMessage가 멈출 단계를 고른다)
+        bool _skipping;            // 필드를 눌러 다음 입력까지 건너뛰는 중
+        bool _stalled;             // 진행 중 오류가 나서 멈췄다
+        PlaybackFocus _focus;      // 지금 멈춰 보여 주는 단계 (있는 동안은 다음 입력을 묻지 않는다)
+        PlaybackFocus _nextFocus;  // 방금 Step에서 OnMessage가 고른 단계
+        float _holdUntil;
+        CardLocation? _lastChaining;
+
         DuelInteraction _interaction;
         int _interactionSerial = -1;
         bool _windowHidden;
@@ -127,12 +147,16 @@ namespace DuelRoguelike.UI
             RunSafely(StartFreeDuel);
         }
 
+        void Awake() => _speed = (PlaybackSpeed)Mathf.Clamp(PlayerPrefs.GetInt(SpeedPrefKey, (int)PlaybackSpeed.Normal), 0, 2);
+
         void OnDestroy() => _session?.Dispose();
 
         void Update()
         {
             if (_autoPlay)
                 AutoPlayStep();
+            else
+                AdvancePlayback();
         }
 
         // ================= 런 화면이 맡기는 듀얼 =================
@@ -185,6 +209,7 @@ namespace DuelRoguelike.UI
                 return;
             _onLeave = null;
             _autoPlay = false;
+            ResetPlayback();
             _session.Dispose();
             _session = null;
             _interaction = null;
@@ -238,6 +263,196 @@ namespace DuelRoguelike.UI
             Render();
         }
 
+        // ================= 한 단계씩 보여 주기 =================
+
+        /// <summary>멈춰 보여 주는 단계 하나: 가운데 줄, 행동한 쪽, 테두리를 칠 카드(칸), LP가 바뀐 쪽, 멈추는 시간.</summary>
+        sealed class PlaybackFocus
+        {
+            public string Line;
+            public byte Actor;
+            public float Seconds;
+            public byte LpPlayer = OcgConstants.PlayerNone;
+            public readonly List<(CardKey Key, Color Color)> Cards = new List<(CardKey, Color)>();
+
+            public void Add(CardLocation loc, Color color)
+            {
+                if (loc.Controller < 2 && !loc.IsOverlay && loc.Location != OcgLocation.None)
+                    Cards.Add((new CardKey(loc), color));
+            }
+
+            public Color? ColorAt(CardKey? key)
+            {
+                if (!key.HasValue)
+                    return null;
+                foreach (var (k, color) in Cards)
+                    if (k.Equals(key.Value))
+                        return color;
+                return null;
+            }
+
+            public bool Touches(byte p, OcgLocation location) => Cards.Any(c => c.Key.Controller == p && c.Key.Location == location);
+        }
+
+        void ResetPlayback()
+        {
+            _focus = _nextFocus = null;
+            _skipping = _stalled = _pacing = false;
+            _lastChaining = null;
+        }
+
+        /// <summary>멈춘 단계가 끝났으면 다음 중요한 메시지까지 진행한다. 한 프레임에 너무 오래 붙잡지 않는다.</summary>
+        void AdvancePlayback()
+        {
+            if (_session == null || _stalled)
+                return;
+            if (_focus != null)
+            {
+                if (!_skipping && Time.realtimeSinceStartup < _holdUntil)
+                    return;
+                _focus = null;
+                if (!_session.CanStep)
+                {
+                    _skipping = false;
+                    Render(); // 멈춰 둔 입력을 이제 묻는다
+                    return;
+                }
+            }
+            if (!_session.CanStep)
+                return;
+
+            float budget = Time.realtimeSinceStartup + PlaybackSecondsPerFrame;
+            _pacing = true;
+            try
+            {
+                while (_session.CanStep)
+                {
+                    _nextFocus = null;
+                    _session.Step();
+                    if (_nextFocus != null && !_skipping)
+                    {
+                        _focus = _nextFocus;
+                        _holdUntil = Time.realtimeSinceStartup + _focus.Seconds;
+                        break;
+                    }
+                    if (Time.realtimeSinceStartup > budget)
+                        break;
+                }
+            }
+            catch (Exception e)
+            {
+                _stalled = true;
+                _focus = null;
+                Debug.LogException(e);
+                AddLog($"오류: {e.Message}", UiStyle.Opponent);
+            }
+            finally
+            {
+                _pacing = false;
+                _nextFocus = null;
+            }
+            if (_focus == null && !_session.CanStep)
+                _skipping = false;
+            Render();
+        }
+
+        float SpeedFactor => _speed == PlaybackSpeed.Fast ? 0.35f : _speed == PlaybackSpeed.Slow ? 1.8f : 1f;
+
+        static string SpeedName(PlaybackSpeed speed) =>
+            speed == PlaybackSpeed.Fast ? "빠름" : speed == PlaybackSpeed.Slow ? "느림" : "보통";
+
+        void CycleSpeed()
+        {
+            _speed = _speed == PlaybackSpeed.Fast ? PlaybackSpeed.Normal : _speed == PlaybackSpeed.Normal ? PlaybackSpeed.Slow : PlaybackSpeed.Fast;
+            PlayerPrefs.SetInt(SpeedPrefKey, (int)_speed);
+            Render();
+        }
+
+        /// <summary>필드를 누르면 다음 입력까지 남은 연출을 건너뛴다 (속도 버튼은 빼고).</summary>
+        void OnFieldPointerDown(PointerDownEvent evt)
+        {
+            if (_autoPlay || _session == null || (evt.target as VisualElement)?.name == "playback-speed")
+                return;
+            if (_focus != null || _session.CanStep)
+                _skipping = true;
+        }
+
+        /// <summary>이 메시지에서 멈출지와 무엇을 강조할지. 멈추지 않으면 null.</summary>
+        PlaybackFocus BuildFocus(DuelMessage message, string line)
+        {
+            var f = new PlaybackFocus { Line = line, Actor = _logFormatter.LastActor };
+            var state = _session.State;
+            float seconds;
+            switch (message)
+            {
+                case ChainingMessage m:
+                    seconds = 1.0f;
+                    f.Add(m.Location, FocusActor);
+                    _lastChaining = m.Location;
+                    break;
+                case CardListMessage m when m.Type == OcgMessageType.BecomeTarget:
+                    seconds = 0.7f;
+                    if (_lastChaining.HasValue)
+                        f.Add(_lastChaining.Value, FocusActor);
+                    foreach (var c in m.Cards)
+                        f.Add(c, FocusTarget);
+                    break;
+                case ChainEventMessage m when m.Type == OcgMessageType.ChainSolving:
+                    seconds = 0.45f;
+                    if (m.ChainCount >= 1 && m.ChainCount <= state.Chain.Count)
+                        f.Add(state.Chain[m.ChainCount - 1].Location, FocusActor);
+                    break;
+                case ChainEventMessage _:
+                case SimpleMessage _ when message.Type == OcgMessageType.AttackDisabled:
+                    seconds = 0.8f;
+                    break;
+                case AttackMessage m:
+                    seconds = 1.0f;
+                    f.Add(m.Attacker, FocusActor);
+                    if (!m.IsDirect)
+                        f.Add(m.Target, FocusTarget);
+                    break;
+                case BattleMessage m:
+                    seconds = 1.1f;
+                    f.Add(m.Attacker, FocusActor);
+                    if (!m.Target.IsEmpty)
+                        f.Add(m.Target, FocusTarget);
+                    break;
+                case LpChangeMessage m:
+                    seconds = 0.8f;
+                    f.LpPlayer = m.Player;
+                    break;
+                case MoveMessage m:
+                    seconds = 0.6f;
+                    f.Add(m.To, FocusTarget);
+                    break;
+                case SummoningMessage m:
+                    seconds = 0.6f;
+                    f.Add(m.Location, FocusActor);
+                    break;
+                case SetMessage m:
+                    seconds = 0.5f;
+                    f.Add(m.Location, FocusActor);
+                    break;
+                case PositionChangeMessage m:
+                    seconds = 0.5f;
+                    f.Add(m.Location, FocusActor);
+                    break;
+                case CardPairMessage m when m.Type == OcgMessageType.Equip:
+                    seconds = 0.5f;
+                    f.Add(m.Card, FocusActor);
+                    f.Add(m.Target, FocusTarget);
+                    break;
+                case TossMessage _:
+                case NewTurnMessage _:
+                    seconds = 0.7f;
+                    break;
+                default:
+                    return null;
+            }
+            f.Seconds = seconds * SpeedFactor;
+            return f;
+        }
+
         // ================= 듀얼 =================
 
         void LoadData()
@@ -275,6 +490,7 @@ namespace DuelRoguelike.UI
             _interaction = null;
             _interactionSerial = -1;
             _autoPlay = false;
+            ResetPlayback();
             _log.Clear();
             CloseMenu();
             CloseModal();
@@ -293,7 +509,7 @@ namespace DuelRoguelike.UI
                 OnEngineLog(type, text);
             _resultLogged = false;
             AddLog(startLine, UiStyle.Accent);
-            _session.Start();
+            _session.Start(runToFirstRequest: false); // 진행은 Update가 한 단계씩 한다
         }
 
         void Respond(byte[] response)
@@ -302,7 +518,8 @@ namespace DuelRoguelike.UI
                 return;
             CloseMenu();
             CloseModal();
-            RunSafely(() => _session.Respond(response));
+            RunSafely(() => _session.Answer(response));
+            AdvancePlayback(); // 나머지는 Update가 한 단계씩 진행한다
         }
 
         void RunSafely(Action action)
@@ -325,8 +542,12 @@ namespace DuelRoguelike.UI
             string line = _logFormatter.Format(message, _session.State);
             if (line == null)
                 return;
+            if (_pacing)
+                _nextFocus = BuildFocus(message, line);
+            // 상대 행동 줄은 색을 달리한다.
             Color color = message is NewTurnMessage || message is WinMessage ? UiStyle.Accent
-                : message is NewPhaseMessage ? UiStyle.TextDim : UiStyle.Text;
+                : message is NewPhaseMessage || message.Type == OcgMessageType.DamageStepStart ? UiStyle.TextDim
+                : _logFormatter.LastActor == Opp ? OpponentLine : UiStyle.Text;
             AddLog(line, color);
         }
 
@@ -348,7 +569,8 @@ namespace DuelRoguelike.UI
             var state = _session.State;
 
             // 새로 물을 때만 조작 방법을 다시 만든다 (같은 질문이면 고르던 카드를 그대로 둔다).
-            int serial = _session.PendingRequest == null ? -1 : _session.PendingSerial;
+            // 멈춰 보여 주는 단계가 있으면 그 단계가 끝난 뒤에 묻는다.
+            int serial = _session.PendingRequest == null || _focus != null ? -1 : _session.PendingSerial;
             if (serial != _interactionSerial)
             {
                 _interactionSerial = serial;
@@ -369,6 +591,7 @@ namespace DuelRoguelike.UI
             {
                 var player = state.Players[p];
                 _lp[p].text = $"LP {player.Lp}";
+                _lp[p].style.color = _focus != null && _focus.LpPlayer == p ? FocusTarget : UiStyle.Text;
                 _playerInfo[p].text = $"패 {player.Hand.Count} · 덱 {player.DeckCount} · 묘지 {player.Grave.Count}";
                 for (int i = 0; i < MainZones; i++)
                 {
@@ -394,6 +617,7 @@ namespace DuelRoguelike.UI
         void RenderStrip(DuelState state)
         {
             _stripButtons.Clear();
+            _promptLabel.style.color = UiStyle.Accent;
             if (state.IsFinished)
             {
                 if (!_resultLogged && _opponentAi != null)
@@ -420,8 +644,13 @@ namespace DuelRoguelike.UI
             }
             if (_interaction == null)
             {
-                _promptLabel.text = "진행 중...";
-                _promptDetail.text = "";
+                // 진행 중: 지금 보여 주는 단계를 가운데에 한 줄로 띄운다.
+                _promptLabel.text = _focus?.Line ?? "진행 중...";
+                _promptLabel.style.color = _focus == null ? UiStyle.Accent : _focus.Actor == Opp ? OpponentLine : UiStyle.Text;
+                _promptDetail.text = _stalled ? "" : "필드를 누르면 다음 입력까지 건너뛴다";
+                if (!_stalled && (_focus != null || _session.CanStep))
+                    AddStripButton("건너뛰기", () => _skipping = true, false).name = "skip-playback";
+                AddSpeedButton();
                 return;
             }
             _promptLabel.text = _interaction.Prompt;
@@ -459,7 +688,11 @@ namespace DuelRoguelike.UI
                 AddStripButton("자동", () => Respond(_helper.Respond(_interaction.Request, _session.State)), false).name = "auto-once";
                 AddStripButton("자동으로 끝까지", () => SetAutoPlay(true), false).name = "auto-to-end";
             }
+            AddSpeedButton();
         }
+
+        void AddSpeedButton() =>
+            AddStripButton($"속도: {SpeedName(_speed)}", CycleSpeed, false).name = "playback-speed";
 
         Button AddStripButton(string label, Action onClick, bool primary)
         {
@@ -475,6 +708,12 @@ namespace DuelRoguelike.UI
         {
             bool visible = visibleOverride ?? IsVisible(card);
             cell.Set(card, visible);
+            if (_focus != null)
+            {
+                // 멈춰 보여 주는 단계: 발동한 카드·공격하는 몬스터는 주황, 대상·공격받는 쪽은 빨강 테두리 (빈칸이면 칸에).
+                cell.SetHighlight(_focus.ColorAt(card != null ? new CardKey(card.Location) : cell.Zone));
+                return;
+            }
             var places = _interaction?.Places;
             if (places != null && cell.Zone.HasValue)
             {
@@ -508,7 +747,8 @@ namespace DuelRoguelike.UI
             return _interaction.HasAction(key) ? Actionable : (Color?)null;
         }
 
-        bool Touches(byte p, OcgLocation location) => _interaction != null && _interaction.Touches(p, location);
+        bool Touches(byte p, OcgLocation location) =>
+            _focus != null ? _focus.Touches(p, location) : _interaction != null && _interaction.Touches(p, location);
 
         bool IsVisible(CardInfo card) =>
             card != null && (card.Location.Controller == Me || card.IsFaceUp || card.IsPublic);

@@ -43,6 +43,7 @@ namespace DuelRoguelike.Tests
         const int MaxDuelsPerRun = 300;
         const float LoadTimeout = 120;
         const float DuelTimeout = 300;
+        const float PlaybackTimeout = 100;
 
         readonly HashSet<string> _shots = new HashSet<string>();
         string _saveDir;
@@ -549,6 +550,49 @@ namespace DuelRoguelike.Tests
             yield return null;
             Assert.IsNull(Find<Button>(DuelUi, "modal-close"), "닫기를 눌렀는데 카드 목록 창이 남아 있다");
             Debug.Log($"[런 화면 시험] 듀얼 화면: {cell.name}에 마우스 올리기 → 카드 정보, 묘지 누르기 → 카드 목록 창");
+            yield return CheckPlayback();
+        }
+
+        /// <summary>
+        /// 한 단계씩 보여 주기: "자동"(한 번)으로 답하면 멈추며 진행한다. 멈춘 단계(가운데 줄)가 보이는지 보고,
+        /// 상대의 공격 선언과 그 뒤 데미지 계산 단계를 찾아 찍는다 (그 사이 상대가 공격하지 않으면 찍지 않고 넘어간다).
+        /// </summary>
+        IEnumerator CheckPlayback()
+        {
+            float until = Time.realtimeSinceStartup + PlaybackTimeout;
+            int steps = 0;
+            bool attack = false, battle = false;
+            string last = null;
+            while (!battle && Time.realtimeSinceStartup < until && Find<Button>(DuelUi, "leave-duel") == null)
+            {
+                if (Find<Button>(DuelUi, "skip-playback") != null)
+                {
+                    string line = Find<Label>(DuelUi, "prompt-label")?.text ?? "";
+                    if (line != "진행 중..." && line != last)
+                    {
+                        last = line;
+                        steps++;
+                        if (steps == 1)
+                            yield return Shot(DuelUi, "2d-duel-step");
+                        if (!attack && line.StartsWith("상대:") && line.Contains("공격"))
+                        {
+                            attack = true;
+                            yield return Shot(DuelUi, "2e-duel-attack");
+                        }
+                        else if (attack && line.StartsWith("데미지 계산"))
+                        {
+                            battle = true;
+                            yield return Shot(DuelUi, "2f-duel-battle");
+                        }
+                    }
+                }
+                var once = Find<Button>(DuelUi, "auto-once");
+                if (once != null)
+                    Click(once);
+                yield return null;
+            }
+            Assert.Greater(steps, 0, "자동(한 번)으로 답했는데 멈춰 보여 주는 단계가 없다");
+            Debug.Log($"[런 화면 시험] 한 단계씩 보여 주기: 멈춘 단계 {steps}개, 상대 공격 {(attack ? "봄" : "못 봄")}, 그 뒤 데미지 계산 {(battle ? "봄" : "못 봄")}");
         }
 
         /// <summary>"6턴 · …" → 6. 듀얼 준비 중이거나 없으면 0.</summary>

@@ -197,6 +197,7 @@ namespace DuelRoguelike.UI
 
             // ---- 가운데: 필드 ----
             var center = UiStyle.Box("field");
+            center.RegisterCallback<PointerDownEvent>(OnFieldPointerDown, TrickleDown.TrickleDown);
             center.style.flexGrow = 1;
             center.style.flexShrink = 0;
             center.style.minWidth = HalfWidth;
@@ -333,6 +334,7 @@ namespace DuelRoguelike.UI
             var texts = UiStyle.Box();
             texts.style.flexShrink = 1;
             _promptLabel = UiStyle.Label("", 17, UiStyle.Accent, bold: true);
+            _promptLabel.name = "prompt-label";
             _promptDetail = UiStyle.Label("", 14, UiStyle.TextDim);
             texts.Add(_promptLabel);
             texts.Add(_promptDetail);
