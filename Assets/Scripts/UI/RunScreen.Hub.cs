@@ -1,5 +1,5 @@
-// 런 화면: 층 사이 화면과 보충 고르기 창. RunScreen.cs의 머리말 참고.
-// 배치: 위 상태 줄(run-status) / 왼쪽 카드 정보(run-card-detail) / 가운데 덱(run-decks): 메인 덱·엑스트라 덱·사이드 덱·기절.
+// 런 화면: 층 사이 화면과 보충 고르기 창 (승리 보상 고르기 창은 RunScreen.Reward.cs). RunScreen.cs의 머리말 참고.
+// 배치: 위 상태 줄(run-status) / 왼쪽 카드 정보(run-card-detail) / 가운데 덱(run-decks): 메인 덱·엑스트라 덱·사이드 덱·봉인.
 // 덱의 카드는 같은 카드도 한 장씩 따로 놓는다 (몬스터 레벨 높은 순 → 마법 → 함정, 그 안에서 카드명 순).
 // 옮기기: 덱 ↔ 사이드 덱 칸으로 끌어다 놓기, 두 번 누르기, 카드 정보의 버튼. 옮길 수 없으면 그 까닭을 move-notice에 적는다.
 using System;
@@ -13,7 +13,7 @@ namespace DuelRoguelike.UI
 {
     public sealed partial class RunScreen
     {
-        static readonly Pile[] HubPiles = { Pile.Main, Pile.Extra, Pile.Side, Pile.Fainted };
+        static readonly Pile[] HubPiles = { Pile.Main, Pile.Extra, Pile.Side, Pile.Sealed };
 
         uint _refillSelected;
         ScrollView _deckScroll;
@@ -59,7 +59,9 @@ namespace DuelRoguelike.UI
             _renderDetail = RenderHubDetail;
             ShowDetail(_selectedPile, _selectedCode, pinned: true);
 
-            if (_run.Phase == RunPhase.NeedsRefill)
+            if (_run.Phase == RunPhase.ChoosingReward)
+                OpenReward();
+            else if (_run.Phase == RunPhase.NeedsRefill)
                 OpenRefill();
         }
 
@@ -113,18 +115,24 @@ namespace DuelRoguelike.UI
             next.SetEnabled(_run.Phase == RunPhase.Ready);
             buttons.Add(next);
             right.Add(buttons);
-            string note = boss && _run.Lp < RunRules.FullLp
-                ? $"보스 층: 듀얼을 시작하기 직전에 LP를 {RunRules.FullLp}로 회복합니다."
+            string note = boss && _run.Lp != RunRules.FullLp
+                ? $"보스 층: 듀얼을 시작하기 직전에 LP를 {RunRules.FullLp}로 맞춥니다."
                 : "상대는 듀얼을 시작할 때 스타터 덱 4개 중에서 무작위로 정해집니다.";
             right.Add(Text(note, 14, UiStyle.TextDim, top: 4));
-            right.Add(Text("듀얼 사이 상태는 저절로 저장됩니다. 듀얼 도중에 끄면 그 듀얼을 시작하기 전으로 돌아갑니다.", 13, UiStyle.TextDim, top: 2));
+            right.Add(Text("저절로 저장됩니다. 듀얼 도중에 게임을 끄면 그 듀얼은 패배로 처리됩니다.", 13, UiStyle.TextDim, top: 2));
+            if (_forfeitNotice != null)
+            {
+                var forfeit = Text(_forfeitNotice, 14, UiStyle.Opponent, top: 2);
+                forfeit.name = "forfeit-notice";
+                right.Add(forfeit);
+            }
             if (_saveNotice != null)
                 right.Add(Text(_saveNotice, 14, UiStyle.Opponent, top: 2));
             bar.Add(right);
             return bar;
         }
 
-        /// <summary>직전 듀얼 한 줄: 결과 · 보상 · 기절 … (런 로그의 그 듀얼 부분을 이어 붙인 것).</summary>
+        /// <summary>직전 듀얼 한 줄: 결과 · 보상 · 봉인 … (런 로그의 그 듀얼 부분을 이어 붙인 것).</summary>
         string LastDuelLine()
         {
             if (_run.DuelsPlayed == 0)
@@ -166,16 +174,16 @@ namespace DuelRoguelike.UI
                 $"메인 덱 {main.Count}장 · {KindCounts(main)}", $"{RunRules.MinMainDeck}~{RunRules.MaxMainDeck}장");
             var extraZone = AddPileSection(Pile.Extra, $"엑스트라 덱 {_run.ExtraDeck.Count}장", $"최대 {RunRules.MaxExtraDeck}장");
             var sideZone = AddPileSection(Pile.Side, $"사이드 덱 {_run.SideDeck.Count}장", "승리 보상이 들어온다");
-            int fainted = _run.FaintedMain.Count + _run.FaintedExtra.Count;
-            if (fainted > 0)
-                AddPileSection(Pile.Fainted, $"기절 {fainted}장", "이번 런에서는 쓸 수 없음");
+            int sealedCount = _run.SealedMain.Count + _run.SealedExtra.Count;
+            if (sealedCount > 0)
+                AddPileSection(Pile.Sealed, $"봉인 {sealedCount}장", "이번 런에서는 쓸 수 없음");
             AddDropZone(mainZone, (pile, code) => TryMove(pile, code, toDeck: true));
             AddDropZone(extraZone, (pile, code) => TryMove(pile, code, toDeck: true));
             AddDropZone(sideZone, (pile, code) => TryMove(pile, code, toDeck: false));
 
             var hint = Text("카드에 마우스를 올리면 왼쪽에 크게 보이고, 누르면 그 카드를 고릅니다. " +
                             "두 번 누르거나 덱 칸과 사이드 덱 칸 사이로 끌어다 놓으면 옮깁니다. " +
-                            $"같은 카드는 덱에 {RunRules.MaxCopies}장까지입니다.", 13, UiStyle.TextDim, top: 10);
+                            $"같은 카드명은 덱에 {RunRules.MaxCopies}장까지입니다.", 13, UiStyle.TextDim, top: 10);
             hint.style.whiteSpace = WhiteSpace.Normal;
             _deckScroll.Add(hint);
 
@@ -226,9 +234,9 @@ namespace DuelRoguelike.UI
                     tag = "새 카드";
                     fresh[c] = left - 1;
                 }
-                bool fainted = pile == Pile.Fainted;
-                Action onDouble = fainted ? (Action)null : () => TryMove(pile, c, toDeck: pile == Pile.Side);
-                grid.Add(CardSlot(pile, c, CardFaceSize.Small, tag: tag, dim: fainted, onDoubleClick: onDouble, draggable: !fainted));
+                bool isSealed = pile == Pile.Sealed;
+                Action onDouble = isSealed ? (Action)null : () => TryMove(pile, c, toDeck: pile == Pile.Side);
+                grid.Add(CardSlot(pile, c, CardFaceSize.Small, tag: tag, dim: isSealed, onDoubleClick: onDouble, draggable: !isSealed));
             }
             zone.Add(grid);
             _deckScroll.Add(zone);
@@ -242,12 +250,12 @@ namespace DuelRoguelike.UI
                 case Pile.Main: return _run.MainDeck;
                 case Pile.Extra: return _run.ExtraDeck;
                 case Pile.Side: return _run.SideDeck;
-                case Pile.Fainted: return _run.FaintedMain.Concat(_run.FaintedExtra).ToList();
+                case Pile.Sealed: return _run.SealedMain.Concat(_run.SealedExtra).ToList();
                 default: return Array.Empty<uint>();
             }
         }
 
-        /// <summary>고른 카드가 그 목록에서 사라졌으면 (기절, 교환) 그 카드가 있는 다른 목록을 고른다. 아무 데도 없으면 고르지 않은 상태.</summary>
+        /// <summary>고른 카드가 그 목록에서 사라졌으면 (봉인, 교환) 그 카드가 있는 다른 목록을 고른다. 아무 데도 없으면 고르지 않은 상태.</summary>
         void FixSelection()
         {
             if (_selectedCode == 0 || (HubPiles.Contains(_selectedPile) && Cards(_selectedPile).Contains(_selectedCode)))
@@ -270,13 +278,13 @@ namespace DuelRoguelike.UI
                 panel.Add(Text("카드에 마우스를 올리면 여기에 크게 보이고, 누르면 정보와 옮기기 버튼이 여기에 나옵니다.", 17, UiStyle.TextDim));
                 panel.Add(Text("듀얼 사이에는 사이드 덱과 메인·엑스트라 덱의 카드를 바꿀 수 있습니다. " +
                                $"메인 덱 {RunRules.MinMainDeck}~{RunRules.MaxMainDeck}장, 엑스트라 덱 {RunRules.MaxExtraDeck}장 이하, " +
-                               $"같은 카드는 덱에 {RunRules.MaxCopies}장까지입니다.", 15, UiStyle.TextDim, top: 10));
+                               $"같은 카드명은 덱에 {RunRules.MaxCopies}장까지입니다.", 15, UiStyle.TextDim, top: 10));
                 return;
             }
             AddCardDetail(panel, code, pinned);
             int side = _run.SideDeck.Count(c => c == code);
-            int fainted = _run.FaintedMain.Count(c => c == code) + _run.FaintedExtra.Count(c => c == code);
-            panel.Add(Text($"덱 {_run.DeckCopies(code)}장 · 사이드 덱 {side}장 · 기절 {fainted}장 · 컬렉션 {_collection.Count(code)}장",
+            int sealedCount = _run.SealedMain.Count(c => c == code) + _run.SealedExtra.Count(c => c == code);
+            panel.Add(Text($"덱 {_run.DeckCopies(code)}장(같은 카드명) · 사이드 덱 {side}장 · 봉인 {sealedCount}장 · 컬렉션 {_collection.Count(code)}장",
                 14, UiStyle.TextDim, top: 6));
             if (!pinned)
                 return;
@@ -310,7 +318,7 @@ namespace DuelRoguelike.UI
                     break;
                 }
                 default:
-                    actions.Add(Text("기절한 카드는 이번 런에서 쓸 수 없습니다. 다음 런에서는 다시 쓸 수 있습니다.", 15, UiStyle.TextDim));
+                    actions.Add(Text("봉인된 카드는 이번 런에서 쓸 수 없습니다. 다음 런에서는 다시 쓸 수 있습니다.", 15, UiStyle.TextDim));
                     break;
             }
             panel.Add(actions);
@@ -322,7 +330,7 @@ namespace DuelRoguelike.UI
             if (_run == null || _run.Phase != RunPhase.Ready)
                 return;
             if (toDeck ? from != Pile.Side : from != Pile.Main && from != Pile.Extra)
-                return; // 같은 칸에 놓았거나 기절한 카드
+                return; // 같은 칸에 놓았거나 봉인된 카드
             string name = _text.CardName(code);
             bool ok = toDeck ? _run.CanMoveToDeck(code, out string reason) : _run.CanMoveToSide(code, out reason);
             if (!ok)
@@ -374,12 +382,12 @@ namespace DuelRoguelike.UI
             panel.style.height = Length.Percent(88);
             panel.Add(UiStyle.Label($"보충: 메인 덱 {_run.MainDeck.Count}장 → {RunRules.MinMainDeck}장", 28, UiStyle.Accent, bold: true));
             panel.Add(Text($"메인 덱이 {RunRules.MinMainDeck}장보다 적어졌습니다. 사이드 덱에서 메인 덱 카드 {_run.RefillNeeded}장을 더 골라 넣으세요. " +
-                           $"두 번 누르면 바로 넣습니다. 같은 카드는 덱에 {RunRules.MaxCopies}장까지 넣을 수 있고, 다 채우면 이 창이 닫힙니다.",
+                           $"두 번 누르면 바로 넣습니다. 같은 카드명은 덱에 {RunRules.MaxCopies}장까지 넣을 수 있고, 다 채우면 이 창이 닫힙니다.",
                 16, UiStyle.TextDim, top: 6));
-            var fainted = _run.Events.Where(e => e.DuelNumber == _run.DuelsPlayed && e.Kind == RunEventKind.CardFainted)
+            var sealedNames = _run.Events.Where(e => e.DuelNumber == _run.DuelsPlayed && e.Kind == RunEventKind.CardSealed)
                 .Select(e => _text.CardName(e.Code)).ToList();
-            if (fainted.Count > 0)
-                panel.Add(Text("이번 패배로 기절한 카드: " + string.Join(", ", fainted), 15, UiStyle.Opponent, top: 6));
+            if (sealedNames.Count > 0)
+                panel.Add(Text("이번 패배로 봉인된 카드: " + string.Join(", ", sealedNames), 15, UiStyle.Opponent, top: 6));
 
             var body = Row();
             body.style.flexGrow = 1;

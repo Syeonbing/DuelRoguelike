@@ -1,11 +1,12 @@
 // 화면 없이 로그라이크 런을 처음부터 끝까지 돌린다 (tools/headless-run.ps1).
-// 플레이어 0(시험 플레이어)이 런을 하고, 층마다 WindBot이 상대 덱을 맡는다. 보충할 카드는 사이드 덱에서 무작위로 고른다.
+// 플레이어 0(시험 플레이어)이 런을 하고, 층마다 WindBot이 상대 덱을 맡는다. 승리 보상(후보·빈 자리)과 보충할 카드는 무작위로 고른다.
 // 확인하는 것:
 // - 듀얼마다 화면 밖 듀얼 시험과 같은 점검 (엔진 오류·예외·대체 응답·거절된 응답·해석하지 않은 메시지 0)
-// - 단계마다 런 규칙 점검 (RunRuleChecker: 획득·기절·LP·보충·종료)
+// - 단계마다 런 규칙 점검 (RunRuleChecker: 보상 후보·골드·봉인·LP·보충·종료)
 // - 같은 시드와 같은 듀얼 결과로 런 규칙만 다시 돌리면 이벤트가 똑같은지 (재현)
 // - 런의 첫 듀얼을 엔진으로 다시 돌리면 결과가 같은지 (엔진·플레이어까지 포함한 재현)
-// - 저장: 단계마다 저장 파일로 쓰고 읽어 다시 쓴 글이 같은지, 걸음마다 저장 파일을 읽은 런으로 이어 가도 원래 런과 같은지
+// - 저장: 단계마다 저장 파일로 쓰고 읽어 다시 쓴 글이 같은지, 걸음마다 저장 파일을 읽은 런으로 이어 가도 원래 런과 같은지,
+//   듀얼 중에 쓴 저장 파일을 읽으면 그 듀얼이 패배로 처리되는지
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -50,11 +51,14 @@ namespace DuelRoguelike.Dev
             public int SaveRoundTripMismatches;
             /// <summary>걸음마다 저장 파일을 읽은 런으로 이어 간 재현이 원래 런과 달랐던 런.</summary>
             public int SaveReplayMismatches;
+            /// <summary>듀얼 중에 쓴 저장 파일을 읽어 그 듀얼을 패배로 처리한 횟수와, 결과가 이상했던 횟수.</summary>
+            public int ForfeitChecks;
+            public int ForfeitMismatches;
             public readonly List<string> Problems = new List<string>();
 
             public bool Ok => Runs > 0 && Duel.Ok && (ReplayDuel.Duels == 0 || ReplayDuel.Ok) && Rules.ViolationCount == 0
                               && Capped == 0 && Aborted == 0 && RuleReplayMismatches == 0 && EngineReplayMismatches == 0
-                              && SaveRoundTripMismatches == 0 && SaveReplayMismatches == 0 && Ended == Runs;
+                              && SaveRoundTripMismatches == 0 && SaveReplayMismatches == 0 && ForfeitMismatches == 0 && Ended == Runs;
         }
 
         readonly HeadlessDuelRun _duels;
@@ -94,10 +98,22 @@ namespace DuelRoguelike.Dev
             var picks = RunRandom.For((ulong)seed, 0, RunRandomPurpose.External);
             var outcomes = new List<(DuelResult Result, int Lp)>();
             var refills = new List<uint>();
+            var rewardSlots = new List<int>();
             (DuelSessionOptions Options, int PlayerSeed, HeadlessDuelRun.DuelOutcome Outcome)? first = null;
 
             while (run.Phase != RunPhase.Ended)
             {
+                if (run.Phase == RunPhase.ChoosingReward)
+                {
+                    // 자리 3개 중 무작위 (후보가 모자라면 빈 자리 = 골드도 고른다)
+                    int slot = picks.Next(RunRules.RewardChoices);
+                    checker.BeforeStep();
+                    run.ChooseReward(slot);
+                    checker.AfterChooseReward(slot);
+                    rewardSlots.Add(slot);
+                    CheckSaveRoundTrip(report, save, runTag);
+                    continue;
+                }
                 if (run.Phase == RunPhase.NeedsRefill)
                 {
                     var candidates = run.RefillCandidates();
@@ -122,10 +138,12 @@ namespace DuelRoguelike.Dev
                     break;
                 }
 
+                string beforeDuel = save.Write();
                 checker.BeforeStep();
                 var duel = run.BeginDuel();
                 var options = duel.CreateSessionOptions();
                 checker.AfterBeginDuel(duel, options);
+                CheckForfeitOnLoad(report, save, beforeDuel, runTag);
 
                 int playerSeed = RunRandom.For((ulong)seed, duel.DuelNumber, RunRandomPurpose.External).NextSeed();
                 string tag = $"{runTag} {duel.Floor}층 듀얼 {duel.DuelNumber} 대 {duel.Opponent.Id}";
@@ -166,26 +184,32 @@ namespace DuelRoguelike.Dev
             byDeck[3] += run.Floor;
 
             _log($"    {runTag} {run.Floor}층, 듀얼 {run.DuelsPlayed} (승 {run.Wins} 패 {run.Losses + run.Draws}), " +
-                 $"사이드 {run.SideDeck.Count}장, 기절 {run.FaintedMain.Count}+{run.FaintedExtra.Count}장, " +
+                 $"사이드 {run.SideDeck.Count}장, 봉인 {run.SealedMain.Count}+{run.SealedExtra.Count}장, 골드 {run.Gold}, " +
                  $"보충 {refills.Count}장, {(run.Phase == RunPhase.Ended ? "런 종료" : $"멈춤 ({run.Phase})")}");
             if (print)
                 foreach (var e in run.Events)
                     _log($"      #{e.DuelNumber,-3} {e.Describe(_duels.CardName)}");
 
-            CheckRuleReplay(report, setup, run, outcomes, refills, runTag);
-            CheckSaveReplay(report, setup, save, outcomes, refills, runTag);
+            CheckRuleReplay(report, setup, run, outcomes, refills, rewardSlots, runTag);
+            CheckSaveReplay(report, setup, save, outcomes, refills, rewardSlots, runTag);
             if (first.HasValue)
                 CheckEngineReplay(report, first.Value.Options, first.Value.PlayerSeed, first.Value.Outcome, runTag, player, maxTurns, hides);
         }
 
-        /// <summary>같은 시드·같은 듀얼 결과·같은 보충 선택으로 런 규칙만 다시 돌려, 이벤트가 모두 같은지 본다.</summary>
+        /// <summary>같은 시드·같은 듀얼 결과·같은 보상·보충 선택으로 런 규칙만 다시 돌려, 이벤트가 모두 같은지 본다.</summary>
         void CheckRuleReplay(Report report, RunSetup setup, RunState original, List<(DuelResult Result, int Lp)> outcomes,
-            List<uint> refills, string runTag)
+            List<uint> refills, List<int> rewardSlots, string runTag)
         {
             var replay = RunState.Start(setup, _db, _rarities, CardCollection.FromRecipes(StarterDecks.All));
-            int nextOutcome = 0, nextRefill = 0;
+            int nextOutcome = 0, nextRefill = 0, nextReward = 0;
             while (replay.Phase != RunPhase.Ended)
             {
+                if (replay.Phase == RunPhase.ChoosingReward)
+                {
+                    if (nextReward >= rewardSlots.Count) break;
+                    replay.ChooseReward(rewardSlots[nextReward++]);
+                    continue;
+                }
                 if (replay.Phase == RunPhase.NeedsRefill)
                 {
                     if (nextRefill >= refills.Count) break;
@@ -230,21 +254,64 @@ namespace DuelRoguelike.Dev
         }
 
         /// <summary>
-        /// 같은 결과·같은 보충 선택으로 런 규칙만 다시 돌리되, 걸음(듀얼·보충)마다 저장 파일을 읽은 런으로 이어 간다.
+        /// 듀얼을 시작한 직후(듀얼 중)의 저장 파일을 읽으면 그 듀얼이 패배로 처리되는지 본다:
+        /// 듀얼 직전 저장으로 같은 듀얼을 시작해 LP 0으로 진 것과 같아야 한다 (DuelForfeited 이벤트 하나만 더).
+        /// </summary>
+        void CheckForfeitOnLoad(Report report, GameSave save, string beforeDuel, string runTag)
+        {
+            report.ForfeitChecks++;
+            var run = save.Run;
+            int duelNumber = run.CurrentDuel.DuelNumber;
+            string problem;
+            try
+            {
+                var loaded = GameSave.Parse(save.Write(), _db, _rarities, "시험");
+                var expected = GameSave.Parse(beforeDuel, _db, _rarities, "시험");
+                expected.Run.BeginDuel();
+                expected.Run.FinishDuel(DuelResult.Loss, 0);
+                var forfeited = loaded.Run.Events.Where(e => e.Kind == RunEventKind.DuelForfeited).ToList();
+                string withoutForfeit = string.Join("\n", loaded.Write().Split('\n').Where(l => !l.StartsWith("event DuelForfeited ", StringComparison.Ordinal)));
+                problem = loaded.ForfeitedDuel != duelNumber ? $"패배로 처리한 듀얼 {loaded.ForfeitedDuel} (기대 {duelNumber})"
+                    : loaded.Run.Phase == RunPhase.InDuel || loaded.Run.CurrentDuel != null ? $"읽은 뒤에도 듀얼 중 ({loaded.Run.Phase})"
+                    : forfeited.Count != 1 || forfeited[0].DuelNumber != duelNumber ? $"DuelForfeited 이벤트 {forfeited.Count}개"
+                    : loaded.Run.Lp != 8000 ? $"패배로 처리한 뒤 LP {loaded.Run.Lp}"
+                    : withoutForfeit != expected.Write() ? "LP 0으로 진 것과 다름: " + FirstDifference(expected.Write(), withoutForfeit)
+                    : null;
+            }
+            catch (Exception e) when (e is FormatException || e is InvalidOperationException)
+            {
+                problem = "읽기 실패: " + e.Message;
+            }
+            if (problem != null)
+            {
+                report.ForfeitMismatches++;
+                if (report.ForfeitMismatches <= 3)
+                    report.Problems.Add($"{runTag} 듀얼 {duelNumber} 중 저장을 읽어 패배로 처리: {problem}");
+            }
+        }
+
+        /// <summary>
+        /// 같은 결과·같은 보상·보충 선택으로 런 규칙만 다시 돌리되, 걸음(듀얼·보상·보충)마다 저장 파일을 읽은 런으로 이어 간다.
         /// 끝난 뒤의 저장 글(컬렉션·런 상태·이벤트 전부)이 원래 런과 같아야 한다.
         /// </summary>
         void CheckSaveReplay(Report report, RunSetup setup, GameSave original, List<(DuelResult Result, int Lp)> outcomes,
-            List<uint> refills, string runTag)
+            List<uint> refills, List<int> rewardSlots, string runTag)
         {
             if (original.Run.Phase == RunPhase.InDuel)
                 return; // 듀얼이 끝나지 않아 멈춘 런 (따로 중단으로 센다)
             var save = GameSave.NewGame();
             save.StartRun(setup, _db, _rarities);
-            int nextOutcome = 0, nextRefill = 0;
+            int nextOutcome = 0, nextRefill = 0, nextReward = 0;
             while (save.Run.Phase != RunPhase.Ended)
             {
                 save = GameSave.Parse(save.Write(), _db, _rarities, "시험");
                 var run = save.Run;
+                if (run.Phase == RunPhase.ChoosingReward)
+                {
+                    if (nextReward >= rewardSlots.Count) break;
+                    run.ChooseReward(rewardSlots[nextReward++]);
+                    continue;
+                }
                 if (run.Phase == RunPhase.NeedsRefill)
                 {
                     if (nextRefill >= refills.Count) break;

@@ -13,10 +13,10 @@ namespace DuelRoguelike.Run
         Opponent = 1,
         /// <summary>엔진 듀얼 시드 (ocgcore 시드 4개, 덱 섞기)</summary>
         Duel = 2,
-        /// <summary>승리 보상 (등급 뽑기, 카드 고르기)</summary>
+        /// <summary>승리 보상 (등급 뽑기, 후보 카드 고르기)</summary>
         Reward = 3,
-        /// <summary>패배 시 기절할 카드 고르기</summary>
-        Faint = 4,
+        /// <summary>패배 시 봉인할 카드 고르기</summary>
+        Seal = 4,
         /// <summary>런 규칙 밖에서 쓰는 난수 (시험용 자동 플레이어 등)</summary>
         External = 5,
     }

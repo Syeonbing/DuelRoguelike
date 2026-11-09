@@ -55,8 +55,10 @@ namespace DuelRoguelike.UI
             var title = Row();
             title.style.alignItems = Align.FlexEnd;
             title.Add(UiStyle.Label("로그라이크 런", 40, UiStyle.Accent, bold: true));
-            var rules = Text("한 층은 단판 듀얼 하나. 이기면 다음 층과 상대 덱의 카드 1장(사이드 덱으로), 지면 같은 층을 다시 하고 메인 덱의 카드가 기절합니다. " +
-                             $"LP는 이어지고, 지거나 보스 층({RunRules.BossFloorInterval}층마다) 직전에 회복합니다. 메인 덱을 {RunRules.MinMainDeck}장으로 채울 수 없으면 런이 끝납니다.",
+            var rules = Text("한 층은 단판 듀얼 하나. 이기면 다음 층으로 가고 LP +" + RunRules.WinLpBonus +
+                             $", 상대 덱에서 나온 후보 {RunRules.RewardChoices}장 중 1장을 사이드 덱에 넣습니다. 지면 같은 층을 다시 하고 메인 덱의 카드가 봉인됩니다. " +
+                             $"LP는 이어지고({RunRules.FullLp}을 넘을 수 있음), 지면 {RunRules.FullLp}으로 회복합니다. 보스 층({RunRules.BossFloorInterval}층마다)은 {RunRules.FullLp}으로 시작하고, 이기면 {RunRules.FullLp}이 됩니다. " +
+                             $"메인 덱을 {RunRules.MinMainDeck}장으로 채울 수 없으면 런이 끝납니다.",
                 15, UiStyle.TextDim);
             rules.style.marginLeft = 18;
             rules.style.marginBottom = 6;
@@ -70,6 +72,12 @@ namespace DuelRoguelike.UI
                 var notice = Text(_saveNotice, 16, UiStyle.Opponent, top: 8);
                 notice.name = "save-notice";
                 _root.Add(notice);
+            }
+            if (_forfeitNotice != null)
+            {
+                var forfeit = Text(_forfeitNotice, 16, UiStyle.Opponent, top: 8);
+                forfeit.name = "forfeit-notice";
+                _root.Add(forfeit);
             }
             if (_save.Run != null)
                 _root.Add(ContinuePanel(_save.Run));
@@ -107,11 +115,11 @@ namespace DuelRoguelike.UI
             var texts = UiStyle.Box();
             texts.Add(UiStyle.Label("진행 중인 런", 18, UiStyle.Accent, bold: true));
             string record = $"{run.Wins}승 {run.Losses}패" + (run.Draws > 0 ? $" {run.Draws}무" : "");
-            string state = run.Phase == RunPhase.NeedsRefill ? " · 보충 고르는 중" : "";
+            string state = run.Phase == RunPhase.NeedsRefill ? " · 보충 고르는 중" : run.Phase == RunPhase.ChoosingReward ? " · 승리 보상 고르는 중" : "";
             var summary = Text($"{DeckName(run.StartDeckId)} · {run.Floor}층 · LP {run.Lp} · {record} · 끝낸 듀얼 {run.DuelsPlayed} · 시드 {run.Seed}{state}", 20, top: 4);
             summary.name = "continue-summary";
             texts.Add(summary);
-            texts.Add(Text("듀얼 도중에 게임을 껐다면 그 듀얼을 시작하기 전으로 돌아갑니다.", 14, UiStyle.TextDim, top: 2));
+            texts.Add(Text("듀얼 도중에 게임을 끄면 그 듀얼은 패배로 처리됩니다.", 14, UiStyle.TextDim, top: 2));
             panel.Add(texts);
             var resume = UiStyle.Button("이어하기", ContinueRun, 24);
             resume.name = "continue-run";
@@ -187,7 +195,7 @@ namespace DuelRoguelike.UI
             reroll.style.marginLeft = 8;
             seedRow.Add(reroll);
             panel.Add(seedRow);
-            var seedNote = Text("같은 시드에서 듀얼 결과가 같으면 상대·보상·기절도 모두 같습니다.", 13, UiStyle.TextDim, top: 4);
+            var seedNote = Text("같은 시드에서 듀얼 결과가 같으면 상대·보상 후보·봉인도 모두 같습니다.", 13, UiStyle.TextDim, top: 4);
             seedNote.style.whiteSpace = WhiteSpace.Normal;
             panel.Add(seedNote);
 
@@ -195,10 +203,7 @@ namespace DuelRoguelike.UI
             spacer.style.flexGrow = 1;
             panel.Add(spacer);
 
-            var points = Enumerable.Range(0, RarityTable.RarityCount).Where(i => _save.Points[i] > 0)
-                .Select(i => $"{(Rarity)i} {_save.Points[i]}회").ToList();
-            var owned = Text($"컬렉션 {_collection.Cards.Count}종 {_collection.TotalCount}장" +
-                             (points.Count > 0 ? " · 포인트 대체 누적 " + string.Join(" · ", points) + " (지급량 미정)" : ""), 14, UiStyle.TextDim);
+            var owned = Text($"컬렉션 {_collection.Cards.Count}종 {_collection.TotalCount}장 · 골드 {_save.Gold} (끝난 런의 골드를 더한 것)", 14, UiStyle.TextDim);
             owned.style.whiteSpace = WhiteSpace.Normal;
             panel.Add(owned);
             var path = Text("저장: " + GameSaveFile.FilePath(_saveDir), 12, UiStyle.TextDim, top: 2);
@@ -262,7 +267,7 @@ namespace DuelRoguelike.UI
             ShowStart();
         }
 
-        /// <summary>시작 사이드 덱을 정한다. 컬렉션에서 쓸 수 있는 장수와 10장 제한 안의 카드만 남긴다.</summary>
+        /// <summary>시작 사이드 덱을 정한다. 컬렉션에서 쓸 수 있는 장수, 장수 제한, 같은 카드명 제한 안의 카드만 남긴다.</summary>
         void SetStartSide(IEnumerable<uint> cards)
         {
             var wanted = cards.ToList();
@@ -272,9 +277,23 @@ namespace DuelRoguelike.UI
                     _startSide.Add(code);
         }
 
-        /// <summary>시작 사이드 덱에 더 넣을 수 있는 장수 = 컬렉션 − 시작 덱 − 이미 고른 사이드 덱.</summary>
-        int Available(uint code) =>
+        /// <summary>
+        /// 시작 사이드 덱에 더 넣을 수 있는 장수: 컬렉션 − 시작 덱 − 이미 고른 사이드 덱 (같은 ID),
+        /// 그리고 시작 덱과 사이드 덱을 합쳐 같은 카드명 RunRules.MaxCopies장까지 중 작은 쪽.
+        /// </summary>
+        int Available(uint code) => Math.Min(OwnedLeft(code), RunRules.MaxCopies - NameCopies(code));
+
+        /// <summary>컬렉션 − 시작 덱 − 이미 고른 사이드 덱 (같은 ID).</summary>
+        int OwnedLeft(uint code) =>
             _collection.Count(code) - _startDeck.Entries.Where(e => e.Code == code).Sum(e => e.Count) - _startSide.Count(c => c == code);
+
+        /// <summary>시작 덱과 시작 사이드 덱을 합친 같은 카드명의 장수 (일러스트·에라타 ID를 함께 센다).</summary>
+        int NameCopies(uint code)
+        {
+            var db = _data.Database;
+            uint name = db.NameCode(code);
+            return _startDeck.Entries.Where(e => db.NameCode(e.Code) == name).Sum(e => e.Count) + _startSide.Count(c => db.NameCode(c) == name);
+        }
 
         string DeckSummary(DeckRecipe recipe)
         {
@@ -310,6 +329,7 @@ namespace DuelRoguelike.UI
                 _save.AbandonRun();
             }
             _run = _save.StartRun(setup, _data.Database, _rarities);
+            _forfeitNotice = null;
             Persist();
             ResetRunView();
             Debug.Log($"[런] 시작: {_startDeck.Name}, 시드 {seed}, 시작 사이드 덱 {_startSide.Count}장");
@@ -354,8 +374,8 @@ namespace DuelRoguelike.UI
             }
             head.Add(filters);
             panel.Add(head);
-            var note = Text($"×n은 시작 덱에 든 장수를 뺀, 더 넣을 수 있는 장수입니다. 두 번 누르거나 아래 시작 사이드 덱으로 끌어다 놓으면 넣습니다. " +
-                            $"런 중에 같은 카드는 덱에 {RunRules.MaxCopies}장까지 넣을 수 있습니다.", 13, UiStyle.TextDim, top: 2);
+            var note = Text($"×n은 더 넣을 수 있는 장수입니다 (시작 덱에 든 장수를 빼고, 시작 덱과 사이드 덱을 합쳐 같은 카드명 {RunRules.MaxCopies}장까지). " +
+                            $"두 번 누르거나 아래 시작 사이드 덱으로 끌어다 놓으면 넣습니다. 런 중에도 같은 카드명은 덱에 {RunRules.MaxCopies}장까지입니다.", 13, UiStyle.TextDim, top: 2);
             note.style.whiteSpace = WhiteSpace.Normal;
             panel.Add(note);
 
@@ -419,7 +439,7 @@ namespace DuelRoguelike.UI
             var count = UiStyle.Label($"시작 사이드 덱 {_startSide.Count}/{RunRules.StartingSideDeckMax}장", 18, UiStyle.TextDim, bold: true);
             count.name = "side-count";
             head.Add(count);
-            var note = Text("런 중에 메인·엑스트라 덱과 바꾸거나, 기절로 모자란 메인 덱을 채울 때 씁니다.", 13, UiStyle.TextDim);
+            var note = Text("런 중에 메인·엑스트라 덱과 바꾸거나, 봉인으로 모자란 메인 덱을 채울 때 씁니다.", 13, UiStyle.TextDim);
             note.style.marginLeft = 12;
             note.style.flexGrow = 1;
             note.style.flexShrink = 1;
@@ -463,8 +483,9 @@ namespace DuelRoguelike.UI
 
         /// <summary>시작 사이드 덱에 넣을 수 없는 까닭. 넣을 수 있으면 null.</summary>
         string AddReason(uint code) =>
-            _startSide.Count >= RunRules.StartingSideDeckMax ? $"사이드 덱이 {RunRules.StartingSideDeckMax}장으로 가득 참"
-            : Available(code) <= 0 ? "더 넣을 장수가 없음 (컬렉션 장수를 모두 씀)"
+            _startSide.Count >= RunRules.StartingSideDeckMax ? $"시작 사이드 덱은 {RunRules.StartingSideDeckMax}장까지"
+            : NameCopies(code) >= RunRules.MaxCopies ? $"시작 덱과 사이드 덱을 합쳐 같은 카드명은 {RunRules.MaxCopies}장까지"
+            : OwnedLeft(code) <= 0 ? "더 넣을 장수가 없음 (컬렉션 장수를 모두 씀)"
             : null;
 
         void AddToStartSide(uint code)
@@ -504,8 +525,8 @@ namespace DuelRoguelike.UI
             }
             AddCardDetail(panel, code, pinned);
             int inDeck = _startDeck.Entries.Where(e => e.Code == code).Sum(e => e.Count);
-            panel.Add(Text($"컬렉션 {_collection.Count(code)}장 · 시작 덱 {inDeck}장 · 사이드 덱 {_startSide.Count(c => c == code)}장",
-                14, UiStyle.TextDim, top: 6));
+            panel.Add(Text($"컬렉션 {_collection.Count(code)}장 · 시작 덱 {inDeck}장 · 사이드 덱 {_startSide.Count(c => c == code)}장 · " +
+                           $"같은 카드명 {NameCopies(code)}/{RunRules.MaxCopies}장", 14, UiStyle.TextDim, top: 6));
             if (!pinned)
                 return;
             var actions = UiStyle.Box();

@@ -1,9 +1,12 @@
-// 저장 (설계 문서 "로그라이크 진행": 진행 상황은 층 단위로 저장). 파일 하나에 다음을 담는다:
+// 저장 (규칙 결정 문서 "저장·무작위 결과"). 파일 하나에 다음을 담는다:
 // - 컬렉션: 한 번이라도 얻은 카드와 장수 (영구). 처음에는 스타터 덱 4개를 지급한 것으로 시작한다.
-// - 포인트: 끝난 런들의 포인트 대체 횟수를 등급별로 더한 것 (지급량은 미정이라 횟수만).
+// - 골드: 영구 재화. 끝난 런들에서 얻은 골드를 더한 것 (쓰는 곳은 아직 없다).
 // - 마지막 시작 설정: 마지막으로 고른 시작 덱, 시작 덱별로 마지막에 고른 시작 사이드 덱.
-// - 진행 중인 런 (있으면). 듀얼 사이 상태만 저장한다 (RunStateSave.cs).
+// - 진행 중인 런 (있으면, RunStateSave.cs). 듀얼 중에 저장된 런을 읽으면 그 듀얼을 패배로 처리한다 (ForfeitedDuel).
+// 화면은 층을 오를 때, 듀얼을 시작할 때, 보상 후보를 뽑았을 때(듀얼 결과), 보상을 골랐을 때(컬렉션), 교환·보충마다 저장한다.
+// 그래서 무작위 결과(상대, 보상 후보, 봉인할 카드)를 다시 켜서 다시 뽑을 수 없다.
 // 파일 형식은 SaveText.cs (줄 단위 텍스트). 파일 위치는 부르는 쪽이 정한다 (게임: 유니티 persistentDataPath).
+// 형식 1(포인트 대체 횟수, 기절)도 읽는다: 포인트는 골드 환산표로 골드로 바꾸고, 기절은 봉인으로 옮긴다.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -16,23 +19,29 @@ namespace DuelRoguelike.Run
     public sealed class GameSave
     {
         /// <summary>저장 파일 형식 버전. 형식을 바꾸면 올리고, 이전 버전 파일을 읽는 길을 남긴다.</summary>
-        public const int FormatVersion = 1;
+        public const int FormatVersion = 2;
 
-        static readonly string[] ProfileKeys = { "format", "points", "last-start-deck" };
+        static readonly string[] ProfileKeys = { "format", "gold", "last-start-deck" };
+        static readonly string[] ProfileKeysV1 = { "format", "points", "last-start-deck" };
         static readonly string[] RepeatableProfileKeys = { "card", "last-side-deck" };
 
-        readonly int[] _points = new int[RarityTable.RarityCount];
         readonly Dictionary<string, List<uint>> _lastSideDecks = new Dictionary<string, List<uint>>(StringComparer.Ordinal);
 
         GameSave(CardCollection collection) => Collection = collection;
 
         public CardCollection Collection { get; }
 
-        /// <summary>등급별 포인트 대체 누적 횟수 (끝난 런의 SubstitutedRewards를 더한 것).</summary>
-        public IReadOnlyList<int> Points => _points;
+        /// <summary>골드 누적 (끝난 런의 Gold를 더한 것). 진행 중인 런의 골드는 런이 끝날 때 더한다.</summary>
+        public int Gold { get; private set; }
 
         /// <summary>진행 중인 런. 없으면 null. 끝난 런은 CloseEndedRun으로 정리한다.</summary>
         public RunState Run { get; private set; }
+
+        /// <summary>
+        /// 읽은 저장 파일의 런이 듀얼 중이라(듀얼 도중에 게임이 꺼짐) 그 듀얼을 패배로 처리했으면 그 듀얼 번호, 아니면 0.
+        /// 화면은 이것을 알리고 곧바로 다시 저장한다.
+        /// </summary>
+        public int ForfeitedDuel { get; private set; }
 
         /// <summary>마지막으로 런을 시작한 시작 덱 Id (없으면 null).</summary>
         public string LastStartDeckId { get; private set; }
@@ -65,26 +74,25 @@ namespace DuelRoguelike.Run
             CloseEndedRun();
         }
 
-        /// <summary>런이 끝났으면 포인트를 누적에 더하고 진행 중인 런을 비운다. 정리했으면 true.</summary>
+        /// <summary>런이 끝났으면 그 런의 골드를 누적에 더하고 진행 중인 런을 비운다. 정리했으면 true.</summary>
         public bool CloseEndedRun()
         {
             if (Run == null || Run.Phase != RunPhase.Ended)
                 return false;
-            for (int i = 0; i < _points.Length; i++)
-                _points[i] += Run.SubstitutedRewards[i];
+            Gold += Run.Gold;
             Run = null;
             return true;
         }
 
         // ---------------- 쓰기 ----------------
 
-        /// <summary>저장 파일 내용. 듀얼 중인 런이 있으면 InvalidOperationException.</summary>
+        /// <summary>저장 파일 내용. 듀얼 중인 런도 쓴다 (읽으면 그 듀얼은 패배로 처리된다).</summary>
         public string Write()
         {
             var w = new SaveWriter();
             w.Comment("DuelRoguelike 저장 파일. 게임이 저절로 쓴다 (직접 고치면 읽지 못할 수 있음).");
             w.Line("format", FormatVersion);
-            w.Line("points", _points.Cast<object>());
+            w.Line("gold", Gold);
             if (LastStartDeckId != null)
                 w.Line("last-start-deck", LastStartDeckId);
             foreach (var pair in _lastSideDecks.OrderBy(p => p.Key, StringComparer.Ordinal))
@@ -94,7 +102,7 @@ namespace DuelRoguelike.Run
                 w.Line("card", pair.Key, pair.Value);
             if (Run != null)
             {
-                w.Comment("진행 중인 런 (듀얼 사이 상태)");
+                w.Comment(Run.Phase == RunPhase.InDuel ? "진행 중인 런 (듀얼 중: 이대로 읽으면 그 듀얼은 패배)" : "진행 중인 런");
                 w.Line("run");
                 Run.WriteTo(w);
                 w.Line("end-run");
@@ -151,7 +159,7 @@ namespace DuelRoguelike.Run
             if (inRun)
                 throw r.Error(runStart, "end-run이 없음");
 
-            var map = r.Unique(profile, ProfileKeys, RepeatableProfileKeys);
+            var map = r.Unique(profile, version < 2 ? ProfileKeysV1 : ProfileKeys, RepeatableProfileKeys);
             var collection = new CardCollection();
             foreach (var line in profile.Where(l => l.Key == "card"))
             {
@@ -165,9 +173,15 @@ namespace DuelRoguelike.Run
             var save = new GameSave(collection);
             if (map.TryGetValue("points", out var points))
             {
+                // 형식 1: 등급별 포인트 대체 횟수 → 골드 환산표로 골드
                 r.ExpectCount(points, RarityTable.RarityCount);
                 for (int i = 0; i < RarityTable.RarityCount; i++)
-                    save._points[i] = r.Int(points, points.Values[i], 0);
+                    save.Gold += r.Int(points, points.Values[i], 0) * RunRules.GoldFor((Rarity)i);
+            }
+            if (map.TryGetValue("gold", out var gold))
+            {
+                r.ExpectCount(gold, 1);
+                save.Gold = r.Int(gold, gold.Values[0], 0);
             }
             if (map.TryGetValue("last-start-deck", out var lastDeck))
             {
@@ -183,7 +197,13 @@ namespace DuelRoguelike.Run
                 save._lastSideDecks[id] = r.Codes(line, 1);
             }
             if (runLines != null)
-                save.Run = RunState.ReadFrom(runLines, r, database, rarities, collection);
+                save.Run = RunState.ReadFrom(runLines, r, database, rarities, collection, version);
+            if (save.Run != null && save.Run.Phase == RunPhase.InDuel)
+            {
+                // 듀얼 도중에 게임이 꺼졌다: 그 듀얼은 패배 (규칙 결정 문서 "저장·무작위 결과").
+                save.ForfeitedDuel = save.Run.CurrentDuel.DuelNumber;
+                save.Run.ForfeitDuel();
+            }
             return save;
         }
     }
