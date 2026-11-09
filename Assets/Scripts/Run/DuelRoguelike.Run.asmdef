@@ -1,0 +1,16 @@
+{
+    "name": "DuelRoguelike.Run",
+    "rootNamespace": "DuelRoguelike.Run",
+    "references": [
+        "DuelRoguelike.Engine"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": true
+}

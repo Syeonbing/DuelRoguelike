@@ -31,6 +31,9 @@ namespace DuelRoguelike.Engine.Data
 
         const OcgCardType ExtraDeckTypes = OcgCardType.Fusion | OcgCardType.Synchro | OcgCardType.Xyz | OcgCardType.Link;
 
+        /// <summary>엑스트라 덱에 들어가는 카드 종류인지 (융합·싱크로·엑시즈·링크).</summary>
+        public static bool IsExtraDeckType(OcgCardType type) => (type & ExtraDeckTypes) != 0;
+
         /// <summary>코드에서 쓰는 이름 (예: Yugi). 화면 밖 시험의 덱 파라미터와 같다.</summary>
         public string Id { get; }
 
@@ -71,7 +74,7 @@ namespace DuelRoguelike.Engine.Data
                 }
                 if (record.Data.Alias != 0)
                     problems.Add($"{code} {record.Name}: 기본 카드가 아님 (alias {record.Data.Alias})");
-                if ((record.Type & ExtraDeckTypes) != 0)
+                if (IsExtraDeckType(record.Type))
                     extra += count;
                 else
                     main += count;
