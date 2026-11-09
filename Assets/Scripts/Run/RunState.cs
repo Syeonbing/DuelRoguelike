@@ -41,6 +41,8 @@ namespace DuelRoguelike.Run
         None,
         /// <summary>메인 덱이 40장 미만인데 사이드 덱에서 보충할 카드가 모자람</summary>
         DeckBelowMinimum,
+        /// <summary>플레이어가 런을 포기함 (진행 중인 런이 있을 때 새 런을 시작)</summary>
+        Abandoned,
     }
 
     /// <summary>런을 시작할 때 정하는 것.</summary>
@@ -117,7 +119,8 @@ namespace DuelRoguelike.Run
         }
     }
 
-    public sealed class RunState
+    /// <summary>런 하나. 저장 파일 읽기·쓰기는 RunStateSave.cs (GameSave가 부른다).</summary>
+    public sealed partial class RunState
     {
         readonly CardDatabase _database;
         readonly RarityTable _rarities;
@@ -174,10 +177,16 @@ namespace DuelRoguelike.Run
         public int RefillNeeded => Phase == RunPhase.NeedsRefill ? RunRules.MinMainDeck - _main.Count : 0;
 
         RunState(RunSetup setup, CardDatabase database, RarityTable rarities, CardCollection collection)
+            : this(setup.Seed, setup.StartDeck.Id, setup.Opponents.ToArray(), database, rarities, collection)
         {
-            Seed = setup.Seed;
-            StartDeckId = setup.StartDeck.Id;
-            Opponents = setup.Opponents.ToArray();
+        }
+
+        RunState(ulong seed, string startDeckId, IReadOnlyList<DeckRecipe> opponents, CardDatabase database, RarityTable rarities,
+            CardCollection collection)
+        {
+            Seed = seed;
+            StartDeckId = startDeckId;
+            Opponents = opponents;
             _database = database;
             _rarities = rarities;
             Collection = collection;
@@ -367,6 +376,19 @@ namespace DuelRoguelike.Run
                 e.Code = code;
                 e.Pile = fromMain ? RunPile.Main : RunPile.Extra;
             });
+        }
+
+        /// <summary>
+        /// 런을 포기한다 (듀얼 사이에만: Ready, NeedsRefill). 런 종료로 처리한다:
+        /// 이미 얻은 카드는 컬렉션에 남고, 포인트 대체는 GameSave가 누적에 더한다.
+        /// </summary>
+        public void Abandon()
+        {
+            if (Phase != RunPhase.Ready && Phase != RunPhase.NeedsRefill)
+                throw new InvalidOperationException($"런을 포기할 수 없습니다: 지금 상태는 {Phase} (듀얼 사이에만 포기할 수 있음)");
+            Phase = RunPhase.Ended;
+            EndReason = RunEndReason.Abandoned;
+            AddEvent(RunEventKind.RunEnded, DuelsPlayed, e => e.EndReason = EndReason);
         }
 
         /// <summary>보충할 때 고를 수 있는 사이드 덱 카드 (같은 카드는 한 번, 사이드 덱 순서). NeedsRefill이 아니면 빈 목록.</summary>

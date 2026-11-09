@@ -102,7 +102,8 @@ namespace DuelRoguelike.Run
                 case RunEventKind.MovedToSide:
                     return $"교환: {cardName(Code)} {PileName(Pile)} → 사이드 덱";
                 case RunEventKind.RunEnded:
-                    return $"런 종료: 메인 덱을 {RunRules.MinMainDeck}장으로 채울 수 없음";
+                    return EndReason == RunEndReason.Abandoned ? "런 종료: 포기"
+                        : $"런 종료: 메인 덱을 {RunRules.MinMainDeck}장으로 채울 수 없음";
                 default:
                     return Kind.ToString();
             }

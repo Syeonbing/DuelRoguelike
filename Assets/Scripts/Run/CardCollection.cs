@@ -1,5 +1,5 @@
 // 컬렉션: 한 번이라도 얻은 카드와 장수. 영구히 유지되고, 얻은 장수만큼 시작 덱(메인·엑스트라·사이드 합)에 넣을 수 있다.
-// 저장은 아직 없어서 메모리에만 둔다. 카드 코드와 장수만 들고 등급은 들지 않는다 (등급은 바뀔 수 있다).
+// 저장은 GameSave가 한다. 카드 코드와 장수만 들고 등급은 들지 않는다 (등급은 바뀔 수 있다).
 using System.Collections.Generic;
 using System.Linq;
 using DuelRoguelike.Engine.Data;
