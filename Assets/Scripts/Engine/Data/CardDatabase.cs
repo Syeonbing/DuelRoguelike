@@ -107,6 +107,27 @@ namespace DuelRoguelike.Engine.Data
         public string GetName(uint code) =>
             _cards.TryGetValue(code, out var record) && !string.IsNullOrEmpty(record.Name) ? record.Name : code.ToString();
 
+        /// <summary>
+        /// 같은 카드명으로 치는 기준 코드: alias가 있으면 alias, 없으면 자기 코드. 덱의 "같은 카드명 3장" 제한은 이 값으로 센다.
+        /// alias는 일러스트만 다른 카드, 에라타 전 버전, "카드명을 늘 「…」로 취급"하는 카드(예: 「전설의 도시 아틀란티스」 → 「바다」)에 들어 있다.
+        /// DB에 없는 코드는 자기 코드.
+        /// </summary>
+        public uint NameCode(uint code) => _cards.TryGetValue(code, out var record) && record.Data.Alias != 0 ? record.Data.Alias : code;
+
+        /// <summary>
+        /// 일러스트만 다른 카드인지 (alias와 코드 차이가 ArtworkOffset 미만). EDOPro의 CardDataC::IsAlternative와 같은 기준이다.
+        /// 에라타 전 버전이나 카드명 취급 카드는 코드가 멀리 떨어져 있어 여기에 들지 않는다.
+        /// </summary>
+        public bool IsAlternativeArt(uint code)
+        {
+            if (!_cards.TryGetValue(code, out var record) || record.Data.Alias == 0)
+                return false;
+            uint alias = record.Data.Alias;
+            return alias < code + ArtworkOffset && code < alias + ArtworkOffset;
+        }
+
+        const uint ArtworkOffset = 20;
+
         static CardRecord ReadRow(SqliteRow row)
         {
             var data = new OcgCardData

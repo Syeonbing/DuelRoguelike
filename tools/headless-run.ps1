@@ -1,21 +1,22 @@
 ﻿<#
 .SYNOPSIS
-유니티 에디터 없이 로그라이크 런을 여러 개 처음부터 끝까지 돌려, 런 규칙(획득·기절·LP·보충·종료)과 듀얼이 문제없는지 확인한다.
+유니티 에디터 없이 로그라이크 런을 여러 개 처음부터 끝까지 돌려, 런 규칙(보상 후보·골드·봉인·LP·보충·종료)과 듀얼이 문제없는지 확인한다.
 
 .DESCRIPTION
 1. 어셈블리를 컴파일하고 불러온다 (tools/headless-common.ps1, headless-duel.ps1과 같다).
 2. 등급 표(Assets/StreamingAssets/Data/rarity.txt)를 읽고 확인한다: 상대 덱의 모든 카드에 등급이 있는지, 덱마다 SR·UR이 있는지.
 3. 엔진 없이 런 규칙 시험(RunRuleSelfTest)을 돌린다: 정해 둔 승패로 런을 진행해 기대값과 비교한다.
 4. 런을 돌린다 (HeadlessRunTest). 플레이어 0(-Player)이 시작 덱(-StartDeck)으로 런을 하고, 층마다 WindBot이 무작위 상대 덱을 맡는다.
-   시작 덱마다 시드 FirstSeed ~ FirstSeed+Runs-1의 런을 하나씩 돌린다. 보충할 카드는 사이드 덱에서 무작위로 고른다.
+   시작 덱마다 시드 FirstSeed ~ FirstSeed+Runs-1의 런을 하나씩 돌린다. 승리 보상(후보 3자리)과 보충할 카드는 무작위로 고른다.
 통과 조건 (종료 코드 0):
 - 등급 표 문제 0, 규칙 시험 실패 0
 - 모든 런이 런 종료 조건(메인 덱을 40장으로 채울 수 없음)으로 끝남 (듀얼 수 상한에 걸리지 않음)
 - 모든 듀얼이 끝나고 엔진 오류·예외·대체 응답·거절된 응답·해석하지 않은 메시지 0
 - 단계마다 다시 계산한 런 규칙 점검 위반 0
 - 같은 시드·같은 결과로 런 규칙만 다시 돌린 이벤트가 같음, 런의 첫 듀얼을 엔진으로 다시 돌린 결과가 같음
-- 저장: 단계마다 저장 파일로 쓰고 읽어 다시 쓴 글이 같음, 걸음마다 저장 파일을 읽은 런으로 이어 가도 끝 상태가 같음
-보상 등급 분포, 기절 장수, 듀얼 시작 LP별 승률 등은 보고만 한다.
+- 저장: 단계마다 저장 파일로 쓰고 읽어 다시 쓴 글이 같음, 걸음마다 저장 파일을 읽은 런으로 이어 가도 끝 상태가 같음,
+  듀얼 중에 쓴 저장 파일을 읽으면 그 듀얼이 LP 0 패배로 처리됨
+보상 등급 분포, 골드, 봉인 장수, 듀얼 시작 LP별 승률 등은 보고만 한다.
 
 PowerShell 7(pwsh)에서 실행한다.
 
@@ -137,23 +138,24 @@ foreach ($p in $d.WindBotProblems) { Write-Host "      $p" -ForegroundColor Yell
 $s = $r.Rules
 Write-Host "    런 규칙 점검: 위반 $($s.ViolationCount)건"
 foreach ($v in $s.Violations) { Write-Host "      $v" -ForegroundColor Red }
-Write-Host '    승리 보상 (뽑힌 등급: 실제 / 확률표 기대값, 얻음, 포인트 대체)'
+Write-Host '    승리 보상 (뽑힌 등급: 실제 / 확률표 기대값, 카드를 고름, 빈 자리(골드)를 고름, 후보가 3장보다 적음, 등급 대체(골드))'
 for ($i = 0; $i -lt 5; $i++) {
-    Write-Host ("      {0,-2}: {1} / {2:F1}, 얻음 {3}, 대체 {4}" -f $rarityNames[$i], $s.Rolls[$i], $s.ExpectedRolls[$i], $s.Gained[$i], $s.Substituted[$i])
+    Write-Host ("      {0,-2}: {1} / {2:F1}, 카드 {3}, 빈 자리 {4}, 후보 부족 {5}, 대체 {6}" -f $rarityNames[$i], $s.Rolls[$i], $s.ExpectedRolls[$i], $s.Gained[$i], $s.GoldChosen[$i], $s.ShortOffers[$i], $s.Substituted[$i])
 }
-Write-Host "    기절: 메인 덱 $($s.MainFainted)장, 엑스트라 덱 $($s.ExtraFainted)장"
+Write-Host "    골드: 모든 런 합 $($s.Gold) (런 평균 $([math]::Round($s.Gold / [math]::Max(1, $r.Runs), 1)))"
+Write-Host "    봉인: 메인 덱 $($s.MainSealed)장, 엑스트라 덱 $($s.ExtraSealed)장"
 $chainTotal = ($s.ExtraChain | Measure-Object -Sum).Sum
 if ($chainTotal -gt 0) {
     Write-Host "      엑스트라 덱이 2장 이상일 때 패배 $chainTotal 번: 0장 $($s.ExtraChain[0]), 1장 $($s.ExtraChain[1]), 2장 $($s.ExtraChain[2]), 3장 이상 $($s.ExtraChain[3]) (1장 이상 $(Percent ($chainTotal - $s.ExtraChain[0]) $chainTotal), 기대 20%)"
 }
-Write-Host "    LP 회복: 보스 층 직전 $($s.BossHeals)번, 패배 $($s.LossHeals)번"
+Write-Host "    LP: 보스 층 직전 8000으로 맞춤 $($s.BossFloorAdjusts)번, 보스 격파 $($s.BossClears)번, 패배 회복 $($s.LossHeals)번, 8000보다 높은 LP로 시작한 듀얼 $($s.DuelsAboveFullLp)판"
 Write-Host "    보충: $($s.RefillsRequired)번, $($s.RefillCards)장 / 런 종료 기록 $($s.RunsEnded)번"
 Write-Host '    듀얼 시작 LP별 승률'
 for ($i = 0; $i -lt 5; $i++) {
     Write-Host ("      {0,-10}: 듀얼 {1}, 승률 {2}" -f [DuelRoguelike.Dev.RunRuleStats]::LpBucketNames[$i], $s.LpBucketDuels[$i], (Percent $s.LpBucketWins[$i] $s.LpBucketDuels[$i]))
 }
 Write-Host "    재현: 런 규칙 다시 돌리기 불일치 $($r.RuleReplayMismatches), 첫 듀얼 다시 돌리기 불일치 $($r.EngineReplayMismatches) (다시 돌린 듀얼 $($r.ReplayDuel.Duels)판, 점검 통과 $($r.ReplayDuel.Ok))"
-Write-Host "    저장: 쓰고 읽어 다시 쓰기 $($r.SaveRoundTrips)번 중 불일치 $($r.SaveRoundTripMismatches), 걸음마다 저장을 읽어 이어 간 런 불일치 $($r.SaveReplayMismatches)"
+Write-Host "    저장: 쓰고 읽어 다시 쓰기 $($r.SaveRoundTrips)번 중 불일치 $($r.SaveRoundTripMismatches), 걸음마다 저장을 읽어 이어 간 런 불일치 $($r.SaveReplayMismatches), 듀얼 중 저장을 읽어 패배 처리 $($r.ForfeitChecks)번 중 불일치 $($r.ForfeitMismatches)"
 foreach ($p in $r.Problems) { Write-Host "      $p" -ForegroundColor Red }
 
 if ($failed -or -not $r.Ok) { Write-Host '==> 실패' -ForegroundColor Red; exit 1 }

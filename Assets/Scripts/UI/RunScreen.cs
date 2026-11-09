@@ -1,15 +1,16 @@
 // 로그라이크 런 화면 (UI Toolkit). 설계 문서 "로그라이크 진행".
 // 화면: 런 시작 → 층 사이 화면 ⇄ 듀얼 화면(DuelScreen) → … → 런 종료 → 런 시작.
 // - 런 시작 (RunScreen.Start.cs): 진행 중인 런이 있으면 "이어하기". 새 런은 시작 덱(스타터 덱 4개), 시드,
-//   시작 사이드 덱(컬렉션에서 10장까지)을 고른다. 진행 중인 런이 있을 때 새 런을 시작하려면 한 번 더 눌러 포기를 확인한다.
-// - 층 사이 화면 (RunScreen.Hub.cs): 위 상태 줄(층·LP·전적·직전 듀얼), 왼쪽 카드 정보, 가운데 메인·엑스트라·사이드 덱과 기절한 카드를
+//   시작 사이드 덱(컬렉션에서 3장까지, 시작 덱과 합쳐 같은 카드명 3장까지)을 고른다. 진행 중인 런이 있을 때 새 런을 시작하려면 한 번 더 눌러 포기를 확인한다.
+// - 층 사이 화면 (RunScreen.Hub.cs): 위 상태 줄(층·LP·전적·직전 듀얼), 왼쪽 카드 정보, 가운데 메인·엑스트라·사이드 덱과 봉인된 카드를
 //   카드 모양으로 늘어놓는다. 덱과 사이드 덱 사이는 끌어다 놓기, 두 번 누르기, 카드 정보의 버튼으로 옮긴다. 런 로그는 따로 여는 창.
 //   "다음 듀얼 시작"을 누르면 RunState.BeginDuel로 상대·덱·LP·시드를 정해 듀얼 화면에 맡긴다. "처음 화면으로"는 저장된 채로 런 시작 화면으로.
+// - 승리 보상 고르기 (RunScreen.Reward.cs): 이기면(ChoosingReward) 층 사이 화면 위에 뜨는 창. 후보 카드 3장(모자라면 빈 자리는 골드) 중 하나를 고른다.
 // - 보충 고르기: 메인 덱이 40장 미만(NeedsRefill)이면 층 사이 화면 위에 뜨는 창. 닫을 수 없고, 다 채우면 저절로 닫힌다.
-// - 런 종료: 도달한 층, 전적, 얻은 카드, 런 로그.
+// - 런 종료: 도달한 층, 전적, 얻은 카드·골드, 런 로그.
 // 카드는 모두 CardFaces(텍스트 카드 템플릿)로 그린다. 마우스를 올리면 카드 정보 칸에 크게 보이고, 누르면 그 카드에 고정된다.
-// 저장(GameSave): 런 시작, 듀얼 결과, 교환·보충마다 저장 파일에 쓴다. 듀얼 도중에는 쓰지 않아서, 듀얼 중에 게임을 끄면
-// 다시 켰을 때 그 듀얼을 시작하기 전으로 돌아간다. 저장 폴더는 환경 변수 DUELROGUELIKE_SAVE_DIR(시험용), 없으면 persistentDataPath.
+// 저장(GameSave): 런 시작, 듀얼 시작, 듀얼 결과(보상 후보·봉인), 보상 고르기, 교환·보충마다 저장 파일에 쓴다.
+// 듀얼 도중에 게임을 끄면 다시 켰을 때 그 듀얼은 패배로 처리된다 (GameSave.ForfeitedDuel, 알림을 띄우고 바로 저장). 저장 폴더는 환경 변수 DUELROGUELIKE_SAVE_DIR(시험용), 없으면 persistentDataPath.
 // 런 규칙은 모두 RunState(Run 어셈블리)에 있고, 이 화면은 그것을 부르고 보여 주기만 한다.
 using System;
 using System.Collections.Generic;
@@ -35,7 +36,9 @@ namespace DuelRoguelike.UI
             Main,
             Extra,
             Side,
-            Fainted,
+            Sealed,
+            /// <summary>승리 보상 고르기 창의 후보</summary>
+            Reward,
             /// <summary>런 시작 화면의 컬렉션</summary>
             Collection,
             /// <summary>런 시작 화면의 시작 사이드 덱</summary>
@@ -55,6 +58,8 @@ namespace DuelRoguelike.UI
         string _saveDir;
         /// <summary>저장 파일 문제 알림 (런 시작 화면 맨 위). 없으면 null.</summary>
         string _saveNotice;
+        /// <summary>듀얼 도중에 꺼진 듀얼을 패배로 처리했다는 알림 (다음 듀얼을 시작하면 지운다). 없으면 null.</summary>
+        string _forfeitNotice;
         RunState _run;
 
         CardCollection _collection => _save.Collection;
@@ -126,6 +131,13 @@ namespace DuelRoguelike.UI
             _save = GameSaveFile.Load(_saveDir, _data.Database, _rarities, out _saveNotice);
             if (_saveNotice != null)
                 Debug.LogWarning("[런] " + _saveNotice);
+            if (_save.ForfeitedDuel > 0)
+            {
+                // 듀얼 도중에 게임이 꺼졌다: 읽을 때 그 듀얼을 패배로 처리했으니, 알리고 곧바로 저장한다.
+                _forfeitNotice = $"지난번에 듀얼 {_save.ForfeitedDuel} 도중에 게임이 꺼져서 그 듀얼을 패배로 처리했습니다.";
+                Debug.Log("[런] " + _forfeitNotice);
+                Persist();
+            }
             _startDeck = StarterDecks.Find(_save.LastStartDeckId ?? "") ?? StarterDecks.Yugi;
             SetStartSide(_save.LastSideDeck(_startDeck.Id));
             Debug.Log($"[런] 카드 {_data.CardCount}장, 한글 {_data.LocalizedCount}장, 등급 표 {_rarities.Count}장, " +
@@ -134,7 +146,7 @@ namespace DuelRoguelike.UI
                       (_save.Run != null ? $"진행 중인 런 {_save.Run.Floor}층 (듀얼 {_save.Run.DuelsPlayed}판)" : "진행 중인 런 없음"));
         }
 
-        /// <summary>저장한다. 끝난 런은 먼저 정리한다 (포인트 누적, 진행 중인 런에서 뺌).</summary>
+        /// <summary>저장한다. 끝난 런은 먼저 정리한다 (골드 누적, 진행 중인 런에서 뺌).</summary>
         void Persist()
         {
             _save.CloseEndedRun();
@@ -171,10 +183,13 @@ namespace DuelRoguelike.UI
                 ShowHub();
                 return;
             }
+            // 듀얼 중 상태로 저장한다: 이대로 게임이 꺼지면 다시 켰을 때 이 듀얼은 패배로 처리된다.
+            Persist();
             // 임시 자동 응답·WindBot 난수는 화면 밖 런 시험(HeadlessRunTest)과 같은 식으로 정한다.
             int helperSeed = RunRandom.For(_run.Seed, duel.DuelNumber, RunRandomPurpose.External).NextSeed();
             string floor = $"{duel.Floor}층" + (duel.IsBossFloor ? " (보스 층)" : "");
             _moveNotice = null;
+            _forfeitNotice = null;
             CloseModal();
             SetVisible(false);
             Debug.Log($"[런] {floor} 듀얼 {duel.DuelNumber}: 상대 {duel.Opponent.Name}, 나의 LP {duel.PlayerLp}");
@@ -194,7 +209,7 @@ namespace DuelRoguelike.UI
             {
                 Debug.LogException(e);
             }
-            Persist(); // 런이 끝났으면 여기서 정리된다 (포인트 누적, 진행 중인 런에서 뺌)
+            Persist(); // 보상 후보·봉인이 정해진 상태로 저장. 런이 끝났으면 여기서 정리된다 (골드 누적, 진행 중인 런에서 뺌)
             var lastResult = _run.Events.LastOrDefault(e => e.Kind == RunEventKind.DuelWon || e.Kind == RunEventKind.DuelLost);
             Debug.Log($"[런] 듀얼 {_run.DuelsPlayed} 끝: {lastResult?.Describe(_text.CardName)} → {_run.Phase}, {_run.Floor}층, LP {_run.Lp}");
             SetVisible(true);
@@ -227,7 +242,8 @@ namespace DuelRoguelike.UI
             stats.Add(Stat("끝낸 듀얼", $"{_run.DuelsPlayed}판"));
             stats.Add(Stat("전적", $"{_run.Wins}승 {_run.Losses}패" + (_run.Draws > 0 ? $" {_run.Draws}무" : "")));
             stats.Add(Stat("얻은 카드", $"{rewards.Count}장"));
-            stats.Add(Stat("기절", $"메인 {_run.FaintedMain.Count} · 엑스트라 {_run.FaintedExtra.Count}"));
+            stats.Add(Stat("얻은 골드", $"{_run.Gold}"));
+            stats.Add(Stat("봉인", $"메인 {_run.SealedMain.Count} · 엑스트라 {_run.SealedExtra.Count}"));
             panel.Add(stats);
 
             var body = Row();
@@ -251,14 +267,8 @@ namespace DuelRoguelike.UI
                 grid.Add(face);
             }
             left.Add(list);
-            var substituted = Enumerable.Range(0, RarityTable.RarityCount).Where(i => _run.SubstitutedRewards[i] > 0)
-                .Select(i => $"{(Rarity)i} {_run.SubstitutedRewards[i]}회").ToList();
-            if (substituted.Count > 0)
-                left.Add(Text("포인트 대체: " + string.Join(" · ", substituted) + " (지급량은 아직 정하지 않음)", 14, UiStyle.TextDim, top: 6));
-            var total = Enumerable.Range(0, RarityTable.RarityCount).Where(i => _save.Points[i] > 0)
-                .Select(i => $"{(Rarity)i} {_save.Points[i]}회").ToList();
-            if (total.Count > 0)
-                left.Add(Text("포인트 대체 누적 (다음 런부터): " + string.Join(" · ", total), 14, UiStyle.TextDim, top: 2));
+            left.Add(Text($"이번 런의 골드 {_run.Gold} (보상 빈 자리·등급 대체)을 더해 골드 누적 {_save.Gold}. 골드를 쓰는 곳은 아직 없습니다.",
+                14, UiStyle.TextDim, top: 6));
             body.Add(left);
 
             var right = UiStyle.PanelBox();
@@ -319,12 +329,15 @@ namespace DuelRoguelike.UI
                 case RunEventKind.DuelStarted:
                 case RunEventKind.RefillRequired:
                 case RunEventKind.RunEnded:
+                case RunEventKind.RewardOffered:
                     return UiStyle.Accent;
                 case RunEventKind.DuelWon:
                 case RunEventKind.RewardGained:
+                case RunEventKind.RewardGold:
                     return Positive;
                 case RunEventKind.DuelLost:
-                case RunEventKind.CardFainted:
+                case RunEventKind.DuelForfeited:
+                case RunEventKind.CardSealed:
                     return UiStyle.Opponent;
                 case RunEventKind.MovedToDeck:
                 case RunEventKind.MovedToSide:
@@ -356,6 +369,7 @@ namespace DuelRoguelike.UI
                 case Pile.Collection: return "pick-" + code;
                 case Pile.StartSide: return "side-" + code;
                 case Pile.Refill: return "refill-" + code;
+                case Pile.Reward: return "reward-card-" + code;
                 default: return $"card-{pile.ToString().ToLowerInvariant()}-{code}";
             }
         }
@@ -390,14 +404,18 @@ namespace DuelRoguelike.UI
             return slot;
         }
 
-        /// <summary>보충 창의 후보는 층 사이 화면과 따로 고른다 (_refillSelected).</summary>
+        /// <summary>보충 창·보상 창의 후보는 층 사이 화면과 따로 고른다 (_refillSelected, _rewardSlot).</summary>
         bool IsSelected(Pile pile, uint code) =>
-            code != 0 && (pile == Pile.Refill ? code == _refillSelected : pile == _selectedPile && code == _selectedCode);
+            code != 0 && (pile == Pile.Refill ? code == _refillSelected
+                : pile == Pile.Reward ? code == RewardSelectedCode()
+                : pile == _selectedPile && code == _selectedCode);
 
         void ShowPinnedDetail(Pile hovered)
         {
             if (hovered == Pile.Refill)
                 ShowDetail(Pile.Refill, _refillSelected, pinned: true);
+            else if (hovered == Pile.Reward)
+                ShowDetail(Pile.Reward, RewardSelectedCode(), pinned: true);
             else
                 ShowDetail(_selectedPile, _selectedCode, pinned: true);
         }
@@ -421,6 +439,11 @@ namespace DuelRoguelike.UI
         {
             if (pile == Pile.Refill)
                 _refillSelected = code;
+            else if (pile == Pile.Reward)
+            {
+                SelectRewardSlot(RewardSlotOf(code));
+                return;
+            }
             else
             {
                 _selectedPile = pile;
@@ -439,12 +462,20 @@ namespace DuelRoguelike.UI
             _renderDetail(_detail, pile, code, pinned);
         }
 
-        /// <summary>카드 정보 칸의 공통 부분: 큰 카드, 종류 한 줄, 효과문. 아래에 붙일 것은 부르는 쪽이 더한다.</summary>
-        void AddCardDetail(VisualElement into, uint code, bool pinned)
+        /// <summary>
+        /// 카드 정보 칸의 공통 부분: 큰 카드, 종류 한 줄, 효과문. 아래에 붙일 것은 부르는 쪽이 더한다.
+        /// showFace가 false면 큰 카드 없이 카드명부터 (후보가 이미 큰 카드로 보이는 보상 창).
+        /// </summary>
+        void AddCardDetail(VisualElement into, uint code, bool pinned, bool showFace = true)
         {
-            var face = _faces.Build(code, CardFaceSize.Large);
-            face.style.alignSelf = Align.Center;
-            into.Add(face);
+            if (showFace)
+            {
+                var face = _faces.Build(code, CardFaceSize.Large);
+                face.style.alignSelf = Align.Center;
+                into.Add(face);
+            }
+            else
+                into.Add(UiStyle.Label(_text.CardName(code), 20, bold: true));
             var record = _text.Record(code);
             if (record != null)
             {

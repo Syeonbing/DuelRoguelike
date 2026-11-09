@@ -55,8 +55,8 @@ namespace DuelRoguelike.Engine.Data
         public List<uint> ToCardList() => Entries.SelectMany(e => Enumerable.Repeat(e.Code, e.Count)).ToList();
 
         /// <summary>
-        /// 덱 규칙을 확인한다: 모든 카드가 DB에 기본 카드(alias 없음)로 있는지, 메인 40~60장, 엑스트라 15장 이하, 같은 카드 3장 이하.
-        /// 문제가 없으면 빈 목록.
+        /// 덱 규칙을 확인한다: 모든 카드가 DB에 있고 일러스트만 다른 ID가 아닌지, 메인 40~60장, 엑스트라 15장 이하,
+        /// 같은 카드명 3장 이하 (메인·엑스트라 덱 합쳐, 카드 DB의 alias 기준: 에라타 전·후 버전도 합쳐 센다). 문제가 없으면 빈 목록.
         /// </summary>
         public List<string> Validate(CardDatabase database)
         {
@@ -72,20 +72,21 @@ namespace DuelRoguelike.Engine.Data
                     problems.Add($"{code}: 카드 DB에 없음");
                     continue;
                 }
-                if (record.Data.Alias != 0)
-                    problems.Add($"{code} {record.Name}: 기본 카드가 아님 (alias {record.Data.Alias})");
+                if (database.IsAlternativeArt(code))
+                    problems.Add($"{code} {record.Name}: 일러스트만 다른 ID (기본 ID {record.Data.Alias}를 쓴다)");
                 if (IsExtraDeckType(record.Type))
                     extra += count;
                 else
                     main += count;
-                copies[code] = copies.TryGetValue(code, out int n) ? n + count : count;
+                uint name = database.NameCode(code);
+                copies[name] = copies.TryGetValue(name, out int n) ? n + count : count;
             }
             if (main < MinMainDeck || main > MaxMainDeck)
                 problems.Add($"메인 덱 {main}장 ({MinMainDeck}~{MaxMainDeck}장이어야 함)");
             if (extra > MaxExtraDeck)
                 problems.Add($"엑스트라 덱 {extra}장 ({MaxExtraDeck}장 이하여야 함)");
             foreach (var pair in copies.Where(p => p.Value > MaxCopies))
-                problems.Add($"{pair.Key} {database.GetName(pair.Key)}: {pair.Value}장 ({MaxCopies}장 이하여야 함)");
+                problems.Add($"{database.GetName(pair.Key)}: 같은 카드명 {pair.Value}장 ({MaxCopies}장 이하여야 함)");
             return problems;
         }
 

@@ -1,13 +1,18 @@
-// 런 하나의 상태와 진행 규칙 (설계 문서 "로그라이크 진행"). 듀얼을 직접 돌리지 않는다:
+// 런 하나의 상태와 진행 규칙 (규칙 결정 문서 2026-11-10 "런 진행", "LP 규칙", "승리 보상", "봉인"). 듀얼을 직접 돌리지 않는다:
 // BeginDuel로 다음 듀얼의 설정(덱, LP, 시드)을 내주고, 화면이나 시험이 듀얼을 끝낸 뒤 FinishDuel로 결과를 받는다.
 //
-// 한 층 = 단판 듀얼 하나. 이기면 다음 층으로, 지면(무승부 포함) 같은 층을 새로 뽑은 상대와 다시 한다.
-// - 승리: 연패 0, 층별 확률표로 등급을 뽑아 상대 덱의 그 등급 카드 1장을 사이드 덱에 넣는다 (컬렉션에도 +1).
-//         그 등급 카드가 상대 덱에 없으면 포인트로 대체한다 (지금은 등급별 횟수만 센다). LP는 남은 LP로 이어 간다.
-// - 패배: 연패 +1, 메인 덱에서 "연패 횟수 + 층÷10"장, 엑스트라 덱에서 20% 연쇄로 기절. LP는 전부 회복한다.
+// 한 층 = 단판 듀얼 하나 (탑 구조의 비전투 층은 아직 없다). 이기면 다음 층으로, 지면(무승부 포함) 같은 층을 새로 뽑은 상대와 다시 한다.
+// - 승리: 연패 0. LP는 남은 LP + 1000 (8000을 넘을 수 있다), 보스 층(10층마다)을 이기면 8000으로 맞춘다.
+//         층별 확률표로 등급을 뽑고, 상대 덱의 그 등급 카드 중 서로 다른 카드 3장까지를 후보로 보여 준다 (ChoosingReward).
+//         플레이어가 ChooseReward로 1장을 고르면 사이드 덱과 컬렉션에 들어간다. 후보가 3장보다 적으면 빈 자리는 골드다.
+//         그 등급 카드가 상대 덱에 없으면 골드로 대신 준다 (고르기 없음).
+// - 패배: 연패 +1, 메인 덱에서 "연패 횟수 + 층÷10"장, 엑스트라 덱에서 20% 연쇄로 봉인. LP는 전부 회복한다.
 //         메인 덱이 40장 미만이면 사이드 덱에서 보충해야 하고(NeedsRefill), 보충할 카드가 모자라면 런이 끝난다.
-// - 보스 층(10층마다) 듀얼 직전에 LP를 전부 회복한다.
-// - 듀얼 사이에는 사이드 덱과 메인·엑스트라 덱의 카드를 옮길 수 있다 (덱 규칙 유지, 기절한 카드는 쓸 수 없다).
+// - 보스 층 듀얼 직전에 LP를 8000으로 맞춘다 (9층 휴식이 생길 때까지의 임시 규칙, RunRules.BossFloorInterval).
+// - 듀얼 사이에는 사이드 덱과 메인·엑스트라 덱의 카드를 옮길 수 있다. 같은 카드명은 메인·엑스트라 덱에 3장까지 (카드 DB의 alias 기준),
+//   사이드 덱에는 제한이 없다. 봉인된 카드는 쓸 수 없다.
+// - 듀얼 중에 저장된 런을 읽으면 그 듀얼은 패배로 처리한다 (ForfeitDuel, GameSave.Parse가 부른다).
+// 골드는 영구 재화다. 런 안에서 얻은 골드(Gold)는 런이 끝나면 GameSave가 누적에 더한다.
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -23,6 +28,8 @@ namespace DuelRoguelike.Run
         Ready,
         /// <summary>BeginDuel 뒤, FinishDuel 전.</summary>
         InDuel,
+        /// <summary>승리 보상 후보 중 하나를 골라야 한다 (ChooseReward).</summary>
+        ChoosingReward,
         /// <summary>메인 덱이 40장 미만이라 사이드 덱에서 보충해야 한다 (MoveToDeck).</summary>
         NeedsRefill,
         Ended,
@@ -48,13 +55,13 @@ namespace DuelRoguelike.Run
     /// <summary>런을 시작할 때 정하는 것.</summary>
     public sealed class RunSetup
     {
-        /// <summary>런 시드. 같은 시드와 같은 듀얼 결과면 상대·보상·기절이 모두 같다.</summary>
+        /// <summary>런 시드. 같은 시드와 같은 듀얼 결과·같은 선택이면 상대·보상 후보·봉인이 모두 같다.</summary>
         public ulong Seed = 1;
 
         /// <summary>시작 덱 (메인 + 엑스트라).</summary>
         public DeckRecipe StartDeck;
 
-        /// <summary>시작 사이드 덱 (최대 RunRules.StartingSideDeckMax장).</summary>
+        /// <summary>시작 사이드 덱 (최대 RunRules.StartingSideDeckMax장, 시작 덱과 합쳐 같은 카드명 3장까지).</summary>
         public IReadOnlyList<uint> SideDeck = Array.Empty<uint>();
 
         /// <summary>층마다 무작위로 고를 상대 덱. 첫 버전은 스타터 덱 4개.</summary>
@@ -119,6 +126,35 @@ namespace DuelRoguelike.Run
         }
     }
 
+    /// <summary>승리 보상 후보 (ChoosingReward일 때). 자리는 RunRules.RewardChoices개: 앞은 카드, 남는 자리는 골드.</summary>
+    public sealed class RewardOffer
+    {
+        /// <summary>이긴 듀얼 번호와 층.</summary>
+        public int DuelNumber { get; }
+        public int Floor { get; }
+        public Rarity Rarity { get; }
+
+        /// <summary>후보 카드 (서로 다른 카드, 1장 이상 RewardChoices장 이하). 자리 0부터 차례로.</summary>
+        public IReadOnlyList<uint> Cards { get; }
+
+        /// <summary>빈 자리 하나를 고르면 받는 골드.</summary>
+        public int Gold { get; }
+
+        public int EmptySlots => RunRules.RewardChoices - Cards.Count;
+
+        internal RewardOffer(int duelNumber, int floor, Rarity rarity, IReadOnlyList<uint> cards, int gold)
+        {
+            DuelNumber = duelNumber;
+            Floor = floor;
+            Rarity = rarity;
+            Cards = cards;
+            Gold = gold;
+        }
+
+        /// <summary>이 자리가 카드인지 (아니면 골드).</summary>
+        public bool IsCard(int slot) => slot >= 0 && slot < Cards.Count;
+    }
+
     /// <summary>런 하나. 저장 파일 읽기·쓰기는 RunStateSave.cs (GameSave가 부른다).</summary>
     public sealed partial class RunState
     {
@@ -127,10 +163,9 @@ namespace DuelRoguelike.Run
         readonly List<uint> _main = new List<uint>();
         readonly List<uint> _extra = new List<uint>();
         readonly List<uint> _side = new List<uint>();
-        readonly List<uint> _faintedMain = new List<uint>();
-        readonly List<uint> _faintedExtra = new List<uint>();
+        readonly List<uint> _sealedMain = new List<uint>();
+        readonly List<uint> _sealedExtra = new List<uint>();
         readonly List<RunEvent> _events = new List<RunEvent>();
-        readonly int[] _substituted = new int[RarityTable.RarityCount];
 
         public ulong Seed { get; }
         public string StartDeckId { get; }
@@ -152,24 +187,27 @@ namespace DuelRoguelike.Run
 
         public int LosingStreak { get; private set; }
 
-        /// <summary>다음 듀얼에 가져갈 LP (보스 층이면 BeginDuel에서 회복한다).</summary>
+        /// <summary>다음 듀얼에 가져갈 LP (보스 층이면 BeginDuel에서 8000으로 맞춘다).</summary>
         public int Lp { get; private set; } = RunRules.FullLp;
 
         public int Wins { get; private set; }
         public int Losses { get; private set; }
         public int Draws { get; private set; }
 
+        /// <summary>이 런에서 얻은 골드 (보상 빈 자리, 등급 대체). 런이 끝나면 GameSave가 누적에 더한다.</summary>
+        public int Gold { get; private set; }
+
         /// <summary>진행 중인 듀얼 (InDuel일 때만).</summary>
         public RunDuel CurrentDuel { get; private set; }
+
+        /// <summary>고르는 중인 승리 보상 (ChoosingReward일 때만).</summary>
+        public RewardOffer PendingReward { get; private set; }
 
         public IReadOnlyList<uint> MainDeck => _main;
         public IReadOnlyList<uint> ExtraDeck => _extra;
         public IReadOnlyList<uint> SideDeck => _side;
-        public IReadOnlyList<uint> FaintedMain => _faintedMain;
-        public IReadOnlyList<uint> FaintedExtra => _faintedExtra;
-
-        /// <summary>등급별 포인트 대체 횟수 (지급량은 미정).</summary>
-        public IReadOnlyList<int> SubstitutedRewards => _substituted;
+        public IReadOnlyList<uint> SealedMain => _sealedMain;
+        public IReadOnlyList<uint> SealedExtra => _sealedExtra;
 
         public IReadOnlyList<RunEvent> Events => _events;
 
@@ -208,6 +246,11 @@ namespace DuelRoguelike.Run
             foreach (uint code in side.Distinct())
                 if (!database.TryGet(code, out _))
                     problems.Add($"사이드 덱의 {code}: 카드 DB에 없음");
+            // 런을 시작할 때는 시작 덱과 사이드 덱을 합쳐 같은 카드명 3장까지 (덱만으로 넘친 것은 Validate가 이미 적었다).
+            var sideNames = new HashSet<uint>(side.Select(database.NameCode));
+            foreach (var group in setup.StartDeck.ToCardList().Concat(side).GroupBy(database.NameCode))
+                if (sideNames.Contains(group.Key) && group.Count() > RunRules.MaxCopies)
+                    problems.Add($"{database.GetName(group.Key)}: 시작 덱과 사이드 덱을 합쳐 같은 카드명 {group.Count()}장 ({RunRules.MaxCopies}장까지)");
             if (setup.Opponents == null || setup.Opponents.Count == 0)
                 problems.Add("상대 덱 목록이 비어 있음");
             if (collection != null)
@@ -236,16 +279,28 @@ namespace DuelRoguelike.Run
         }
 
         /// <summary>
-        /// 지금 층의 듀얼을 시작한다 (Ready에서만). 보스 층이면 먼저 LP를 회복하고, 상대 덱과 엔진 시드를 정한다.
+        /// 지금 층의 듀얼을 시작한다 (Ready에서만). 보스 층이면 먼저 LP를 8000으로 맞추고, 상대 덱과 엔진 시드를 정한다.
         /// 듀얼이 끝나면 FinishDuel을 부른다.
         /// </summary>
         public RunDuel BeginDuel()
         {
             RequirePhase(RunPhase.Ready, "듀얼을 시작할");
             int number = DuelsPlayed + 1;
-            if (RunRules.IsBossFloor(Floor) && Lp < RunRules.FullLp)
-                RestoreLp(RunRules.FullLp, LpRestoreReason.BossFloor, number);
+            if (RunRules.IsBossFloor(Floor) && Lp != RunRules.FullLp)
+                ChangeLp(RunRules.FullLp, LpRestoreReason.BossFloor, number);
+            CurrentDuel = CreateDuel(number);
+            Phase = RunPhase.InDuel;
+            AddEvent(RunEventKind.DuelStarted, number, e =>
+            {
+                e.DeckId = CurrentDuel.Opponent.Id;
+                e.Lp = Lp;
+            });
+            return CurrentDuel;
+        }
 
+        /// <summary>듀얼 번호로 상대와 엔진 시드를 정한다 (같은 런 시드·번호면 늘 같다). 저장 파일의 "듀얼 중" 런을 읽을 때도 쓴다.</summary>
+        RunDuel CreateDuel(int number)
+        {
             var opponent = Opponents[RunRandom.For(Seed, number, RunRandomPurpose.Opponent).Next(Opponents.Count)];
             var random = RunRandom.For(Seed, number, RunRandomPurpose.Duel);
             var engineSeed = new ulong[4];
@@ -254,15 +309,7 @@ namespace DuelRoguelike.Run
             if (engineSeed.All(s => s == 0))
                 engineSeed[0] = 1; // 엔진은 시드가 모두 0이면 듀얼을 만들지 못한다
             int shuffleSeed = random.NextSeed();
-
-            CurrentDuel = new RunDuel(number, Floor, opponent, Lp, _main.Concat(_extra).ToArray(), engineSeed, shuffleSeed);
-            Phase = RunPhase.InDuel;
-            AddEvent(RunEventKind.DuelStarted, number, e =>
-            {
-                e.DeckId = opponent.Id;
-                e.Lp = Lp;
-            });
-            return CurrentDuel;
+            return new RunDuel(number, Floor, opponent, Lp, _main.Concat(_extra).ToArray(), engineSeed, shuffleSeed);
         }
 
         /// <summary>끝난 듀얼의 결과를 반영한다. 플레이어는 팀 0이다.</summary>
@@ -283,9 +330,16 @@ namespace DuelRoguelike.Run
             {
                 Wins++;
                 LosingStreak = 0;
-                Lp = playerLp;
                 AddEvent(RunEventKind.DuelWon, duel.DuelNumber, e => e.Lp = playerLp);
-                GrantReward(duel);
+                Lp = playerLp;
+                if (duel.IsBossFloor)
+                {
+                    if (Lp != RunRules.FullLp)
+                        ChangeLp(RunRules.FullLp, LpRestoreReason.BossCleared, duel.DuelNumber);
+                }
+                else
+                    ChangeLp(playerLp + RunRules.WinLpBonus, LpRestoreReason.Win, duel.DuelNumber);
+                OfferReward(duel);
                 Floor++;
                 return;
             }
@@ -300,13 +354,58 @@ namespace DuelRoguelike.Run
                 e.Result = result;
                 e.Count = LosingStreak;
             });
-            Faint(duel);
+            Seal(duel);
             // 패배하면 전부 회복. 회복은 LP를 낮추지 않는다 (덱 아웃 등으로 FullLp보다 높은 LP로 졌으면 그대로).
             // 엔진 LP는 0 아래로 내려갈 수 있어서 0으로 맞춰 기록한다.
             Lp = Math.Max(0, playerLp);
             if (playerLp < RunRules.FullLp)
-                RestoreLp(RunRules.FullLp, LpRestoreReason.Loss, duel.DuelNumber);
+                ChangeLp(RunRules.FullLp, LpRestoreReason.Loss, duel.DuelNumber);
             CheckMainDeckSize();
+        }
+
+        /// <summary>
+        /// 진행 중인 듀얼을 패배로 끝낸다 (InDuel에서만). 듀얼 도중에 게임이 꺼져 저장 파일에 듀얼 중으로 남은 런을 읽었을 때 쓴다.
+        /// LP 0으로 진 것으로 친다 (보통 패배처럼 FullLp로 회복한다. 시작 LP가 FullLp보다 높았어도 그 LP를 남기지 않는다).
+        /// </summary>
+        public void ForfeitDuel()
+        {
+            RequirePhase(RunPhase.InDuel, "듀얼을 패배로 처리할");
+            AddEvent(RunEventKind.DuelForfeited, CurrentDuel.DuelNumber, null);
+            FinishDuel(DuelResult.Loss, 0);
+        }
+
+        /// <summary>
+        /// 승리 보상 후보 중 하나를 고른다 (ChoosingReward에서만). slot이 카드 자리면 그 카드를 사이드 덱과 컬렉션에 넣고,
+        /// 빈 자리면 골드를 받는다. 고르면 Ready로 돌아간다.
+        /// </summary>
+        public void ChooseReward(int slot)
+        {
+            RequirePhase(RunPhase.ChoosingReward, "보상을 고를");
+            if (slot < 0 || slot >= RunRules.RewardChoices)
+                throw new ArgumentOutOfRangeException(nameof(slot), slot, $"보상 자리는 0~{RunRules.RewardChoices - 1}입니다.");
+            var offer = PendingReward;
+            PendingReward = null;
+            Phase = RunPhase.Ready;
+            if (offer.IsCard(slot))
+            {
+                uint card = offer.Cards[slot];
+                _side.Add(card);
+                Collection?.Add(card);
+                AddEvent(RunEventKind.RewardGained, offer.DuelNumber, e =>
+                {
+                    e.Code = card;
+                    e.Rarity = offer.Rarity;
+                }, offer.Floor);
+            }
+            else
+            {
+                Gold += offer.Gold;
+                AddEvent(RunEventKind.RewardGold, offer.DuelNumber, e =>
+                {
+                    e.Rarity = offer.Rarity;
+                    e.Count = offer.Gold;
+                }, offer.Floor);
+            }
         }
 
         /// <summary>사이드 덱의 카드를 메인·엑스트라 덱(카드 종류에 따라)으로 옮길 수 있는지. 보충 중에는 메인 덱 카드만.</summary>
@@ -324,7 +423,7 @@ namespace DuelRoguelike.Run
             else if (!IsExtraDeckCard(code) && _main.Count >= RunRules.MaxMainDeck)
                 reason = $"메인 덱이 {RunRules.MaxMainDeck}장으로 가득 참";
             else if (DeckCopies(code) >= RunRules.MaxCopies)
-                reason = $"같은 카드는 덱에 {RunRules.MaxCopies}장까지";
+                reason = $"같은 카드명은 덱에 {RunRules.MaxCopies}장까지";
             return reason == null;
         }
 
@@ -379,13 +478,14 @@ namespace DuelRoguelike.Run
         }
 
         /// <summary>
-        /// 런을 포기한다 (듀얼 사이에만: Ready, NeedsRefill). 런 종료로 처리한다:
-        /// 이미 얻은 카드는 컬렉션에 남고, 포인트 대체는 GameSave가 누적에 더한다.
+        /// 런을 포기한다 (듀얼 사이에만: Ready, ChoosingReward, NeedsRefill). 런 종료로 처리한다:
+        /// 이미 얻은 카드는 컬렉션에 남고, 얻은 골드는 GameSave가 누적에 더한다. 고르는 중이던 보상은 받지 않는다.
         /// </summary>
         public void Abandon()
         {
-            if (Phase != RunPhase.Ready && Phase != RunPhase.NeedsRefill)
+            if (Phase != RunPhase.Ready && Phase != RunPhase.ChoosingReward && Phase != RunPhase.NeedsRefill)
                 throw new InvalidOperationException($"런을 포기할 수 없습니다: 지금 상태는 {Phase} (듀얼 사이에만 포기할 수 있음)");
+            PendingReward = null;
             Phase = RunPhase.Ended;
             EndReason = RunEndReason.Abandoned;
             AddEvent(RunEventKind.RunEnded, DuelsPlayed, e => e.EndReason = EndReason);
@@ -399,11 +499,11 @@ namespace DuelRoguelike.Run
             return _side.Distinct().Where(code => CanMoveToDeck(code, out _)).ToList();
         }
 
-        /// <summary>사이드 덱에서 메인 덱으로 지금 옮길 수 있는 최대 장수 (메인 덱 카드만, 같은 카드 3장 제한).</summary>
+        /// <summary>사이드 덱에서 메인 덱으로 지금 옮길 수 있는 최대 장수 (메인 덱 카드만, 같은 카드명 3장 제한).</summary>
         public int RefillableCount()
         {
             int total = 0;
-            foreach (var group in _side.Where(code => !IsExtraDeckCard(code)).GroupBy(code => code))
+            foreach (var group in _side.Where(code => !IsExtraDeckCard(code)).GroupBy(NameCode))
                 total += Math.Max(0, Math.Min(group.Count(), RunRules.MaxCopies - DeckCopies(group.Key)));
             return Math.Min(total, RunRules.MaxMainDeck - _main.Count);
         }
@@ -411,56 +511,75 @@ namespace DuelRoguelike.Run
         /// <summary>엑스트라 덱에 들어가는 카드인지 (카드 DB의 종류로 판단).</summary>
         public bool IsExtraDeckCard(uint code) => _database.TryGet(code, out var record) && DeckRecipe.IsExtraDeckType(record.Type);
 
-        /// <summary>메인·엑스트라 덱에 든 같은 카드 장수.</summary>
-        public int DeckCopies(uint code) => _main.Count(c => c == code) + _extra.Count(c => c == code);
+        /// <summary>같은 카드명으로 치는 기준 코드 (카드 DB의 alias, 없으면 자기 코드).</summary>
+        public uint NameCode(uint code) => _database.NameCode(code);
 
-        void GrantReward(RunDuel duel)
+        /// <summary>메인·엑스트라 덱에 든 같은 카드명의 장수 (에라타 전·후 버전, 카드명 취급 카드도 합친다).</summary>
+        public int DeckCopies(uint code)
+        {
+            uint name = NameCode(code);
+            return _main.Count(c => NameCode(c) == name) + _extra.Count(c => NameCode(c) == name);
+        }
+
+        void OfferReward(RunDuel duel)
         {
             var random = RunRandom.For(Seed, duel.DuelNumber, RunRandomPurpose.Reward);
             var rarity = RewardTable.Roll(duel.Floor, random);
+            int gold = RunRules.GoldFor(rarity);
             // 등급은 지금 표에서 찾는다 (표가 바뀌면 다음 보상부터 바로 반영된다).
-            var candidates = duel.OpponentCards.Where(code => _rarities.TryGet(code, out var r) && r == rarity).ToList();
-            if (candidates.Count == 0)
+            var pool = duel.OpponentCards.Where(code => _rarities.TryGet(code, out var r) && r == rarity).Distinct().ToList();
+            if (pool.Count == 0)
             {
-                _substituted[(int)rarity]++;
-                AddEvent(RunEventKind.RewardSubstituted, duel.DuelNumber, e => e.Rarity = rarity, duel.Floor);
+                Gold += gold;
+                AddEvent(RunEventKind.RewardSubstituted, duel.DuelNumber, e =>
+                {
+                    e.Rarity = rarity;
+                    e.Count = gold;
+                }, duel.Floor);
                 return;
             }
-            uint card = candidates[random.Next(candidates.Count)];
-            _side.Add(card);
-            Collection?.Add(card);
-            AddEvent(RunEventKind.RewardGained, duel.DuelNumber, e =>
+            var cards = new List<uint>();
+            while (cards.Count < RunRules.RewardChoices && pool.Count > 0)
             {
-                e.Code = card;
+                int index = random.Next(pool.Count);
+                cards.Add(pool[index]);
+                pool.RemoveAt(index);
+            }
+            PendingReward = new RewardOffer(duel.DuelNumber, duel.Floor, rarity, cards, gold);
+            Phase = RunPhase.ChoosingReward;
+            AddEvent(RunEventKind.RewardOffered, duel.DuelNumber, e =>
+            {
                 e.Rarity = rarity;
+                e.Codes = cards.ToArray();
+                e.Count = PendingReward.EmptySlots > 0 ? gold : 0;
             }, duel.Floor);
         }
 
-        void Faint(RunDuel duel)
+        void Seal(RunDuel duel)
         {
-            var random = RunRandom.For(Seed, duel.DuelNumber, RunRandomPurpose.Faint);
-            int mainCount = Math.Min(RunRules.MainFaintCount(LosingStreak, duel.Floor), _main.Count);
+            var random = RunRandom.For(Seed, duel.DuelNumber, RunRandomPurpose.Seal);
+            int mainCount = Math.Min(RunRules.MainSealCount(LosingStreak, duel.Floor), _main.Count);
             for (int i = 0; i < mainCount; i++)
-                FaintOne(_main, _faintedMain, RunPile.Main, random, duel.DuelNumber);
-            int extraCount = RunRules.RollExtraFaintCount(random, _extra.Count);
+                SealOne(_main, _sealedMain, RunPile.Main, random, duel.DuelNumber);
+            int extraCount = RunRules.RollExtraSealCount(random, _extra.Count);
             for (int i = 0; i < extraCount; i++)
-                FaintOne(_extra, _faintedExtra, RunPile.Extra, random, duel.DuelNumber);
+                SealOne(_extra, _sealedExtra, RunPile.Extra, random, duel.DuelNumber);
         }
 
-        void FaintOne(List<uint> from, List<uint> to, RunPile pile, RunRandom random, int duelNumber)
+        void SealOne(List<uint> from, List<uint> to, RunPile pile, RunRandom random, int duelNumber)
         {
             int index = random.Next(from.Count);
             uint code = from[index];
             from.RemoveAt(index);
             to.Add(code);
-            AddEvent(RunEventKind.CardFainted, duelNumber, e =>
+            AddEvent(RunEventKind.CardSealed, duelNumber, e =>
             {
                 e.Code = code;
                 e.Pile = pile;
             });
         }
 
-        void RestoreLp(int lp, LpRestoreReason reason, int duelNumber)
+        void ChangeLp(int lp, LpRestoreReason reason, int duelNumber)
         {
             int previous = Lp;
             Lp = lp;
@@ -498,6 +617,7 @@ namespace DuelRoguelike.Run
             Phase == RunPhase.InDuel ? "듀얼 중에는 덱을 바꿀 수 없음"
             : Phase == RunPhase.Ended ? "런이 끝났음"
             : Phase == RunPhase.NeedsRefill ? "보충을 먼저 끝내야 함"
+            : Phase == RunPhase.ChoosingReward ? "승리 보상을 먼저 골라야 함"
             : "지금은 덱을 바꿀 수 없음";
 
         void AddEvent(RunEventKind kind, int duelNumber, Action<RunEvent> fill, int? floor = null)

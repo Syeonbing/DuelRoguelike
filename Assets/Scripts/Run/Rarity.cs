@@ -93,8 +93,8 @@ namespace DuelRoguelike.Run
         /// <summary>
         /// 표를 고친 뒤 확인할 것들. 문제가 없으면 빈 목록.
         /// - 상대 덱의 카드 중 등급이 없는 카드 (보상에서 빠진다)
-        /// - SR이나 UR이 한 장도 없는 상대 덱 (설계: 모든 상대 덱에 SR·UR 1장 이상, 포인트 대체는 N·R에서만)
-        /// - 표에는 있지만 카드 DB에 없거나 기본 카드(alias 없음)가 아닌 코드
+        /// - SR이나 UR이 한 장도 없는 상대 덱 (설계: 모든 상대 덱에 SR·UR 1장 이상, 골드 대체는 N·R에서만)
+        /// - 표에는 있지만 카드 DB에 없거나 일러스트만 다른 ID인 코드 (에라타 전 버전은 따로 등급을 매기므로 받는다)
         /// </summary>
         public List<string> Check(IEnumerable<DeckRecipe> opponentDecks, CardDatabase database)
         {
@@ -113,8 +113,8 @@ namespace DuelRoguelike.Run
             {
                 if (!database.TryGet(code, out var record))
                     problems.Add($"{code}: 카드 DB에 없는 코드");
-                else if (record.Data.Alias != 0)
-                    problems.Add($"{code} {record.Name}: 기본 카드가 아님 (alias {record.Data.Alias})");
+                else if (database.IsAlternativeArt(code))
+                    problems.Add($"{code} {record.Name}: 일러스트만 다른 ID (기본 ID {record.Data.Alias}를 쓴다)");
             }
             return problems;
         }
