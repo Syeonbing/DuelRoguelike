@@ -65,6 +65,13 @@ namespace DuelRoguelike.Engine.Duel
         DuelRequest _lastRequest;
         int _retries;
 
+        // 엔진이 한 번 처리할 때 나온 메시지 중 아직 반영하지 않은 것 (Step이 하나씩 꺼낸다)
+        readonly Queue<OcgMessage> _batch = new Queue<OcgMessage>();
+        OcgDuelStatus _status;
+        DuelRequest _batchRequest;
+        bool _batchRetried;
+        int _processCalls;
+
         public DuelState State { get; }
         public CardDatabase Database { get; }
 
@@ -128,10 +135,10 @@ namespace DuelRoguelike.Engine.Duel
         bool _started;
 
         /// <summary>
-        /// 덱을 섞어 넣고 듀얼을 시작해 첫 입력까지 진행한다.
+        /// 덱을 섞어 넣고 듀얼을 시작해 첫 입력까지 진행한다 (runToFirstRequest가 false면 시작만 하고, 진행은 Step이나 Run으로 한다).
         /// 카드 스크립트는 덱에 넣을 때 불러오므로, 이벤트(MessageReceived, EngineLog)는 이 전에 연결한다.
         /// </summary>
-        public void Start()
+        public void Start(bool runToFirstRequest = true)
         {
             if (_started)
                 throw new InvalidOperationException("이미 시작한 듀얼입니다.");
@@ -156,90 +163,133 @@ namespace DuelRoguelike.Engine.Duel
                 observer.OnDuelStart(info, this);
 
             _duel.Start();
-            Run();
+            if (runToFirstRequest)
+                Run();
         }
 
-        /// <summary>사람의 응답이 필요하거나 듀얼이 끝날 때까지 진행한다.</summary>
+        /// <summary>더 진행할 수 있는지. 사람의 응답을 기다리거나 듀얼이 끝났으면 false.</summary>
+        public bool CanStep => _started && PendingRequest == null && (!State.IsFinished || _batch.Count > 0);
+
+        /// <summary>
+        /// 엔진 메시지 하나만큼 진행한다. 화면이 메시지마다 멈추며 보여 줄 때 쓴다 (멈추는 시간은 화면이 정한다).
+        /// 반영한 메시지를 돌려준다. 메시지 없이 엔진만 돌았거나 해석하지 못한 메시지면 null.
+        /// 엔진이 한 번 처리할 때 나온 메시지 묶음을 받아 두고 하나씩 반영한다. 카드 배치는 엔진 조회로만 맞추므로
+        /// 묶음의 마지막 메시지를 반영할 때 다시 읽는다 (그 전까지 배치는 앞 묶음이 끝난 상태이고, LP·턴·페이즈는 메시지마다 바뀐다).
+        /// 묶음이 끝났는데 엔진이 응답을 기다리면 그 자리에서 플레이어에게 묻는다.
+        /// </summary>
+        public DuelMessage Step()
+        {
+            if (!CanStep)
+                return null;
+            if (_batch.Count == 0)
+            {
+                _status = _duel.Process();
+                _processCalls++;
+                _batchRequest = null;
+                _batchRetried = false;
+                foreach (var raw in _duel.ReadMessages())
+                    _batch.Enqueue(raw);
+                if (_batch.Count == 0)
+                {
+                    EndBatch();
+                    return null;
+                }
+            }
+            var message = ApplyMessage(_batch.Dequeue());
+            if (_batch.Count == 0)
+                EndBatch();
+            return message;
+        }
+
+        /// <summary>사람의 응답이 필요하거나 듀얼이 끝날 때까지 멈추지 않고 진행한다.</summary>
         public void Run(int maxProcessCalls = 100000)
         {
-            for (int call = 0; call < maxProcessCalls; call++)
+            int start = _processCalls;
+            while (CanStep)
             {
-                if (State.IsFinished || PendingRequest != null)
-                    return;
-
-                var status = _duel.Process();
-                DuelRequest request = null;
-                bool retried = false;
-                foreach (var raw in _duel.ReadMessages())
-                {
-                    foreach (var observer in Observers())
-                        observer.OnEngineMessage(raw);
-
-                    DuelMessage message;
-                    try
-                    {
-                        message = DuelMessageParser.Parse(raw);
-                    }
-                    catch (Exception e)
-                    {
-                        OnEngineLog(OcgLogType.Error, $"메시지 해석 실패 ({raw.Type}, {raw.Body.Length}바이트): {e.Message}");
-                        continue;
-                    }
-
-                    if (message.Type == OcgMessageType.Retry)
-                        retried = true;
-                    if (message is HintMessage hint && hint.HintType == OcgHintType.SelectMessage && hint.Player < 2)
-                        _selectHint[hint.Player] = hint.Data;
-                    if (message is DuelRequest r)
-                    {
-                        r.SelectHint = _selectHint[r.Player];
-                        _selectHint[r.Player] = 0;
-                        request = r;
-                    }
-                    State.Apply(message);
-                    MessageReceived?.Invoke(message);
-                }
-                State.Refresh(_duel);
-
-                if (State.IsFinished)
-                    return;
-                if (status == OcgDuelStatus.End)
-                {
-                    State.IsFinished = true;
-                    return;
-                }
-                if (status != OcgDuelStatus.Awaiting)
-                    continue;
-
-                // 응답 대기: 새 요청이 없으면(거절 후 다시 묻기) 바로 앞 요청을 다시 쓴다.
-                if (request == null)
-                    request = _lastRequest ?? throw new InvalidOperationException("엔진이 응답을 기다리지만 요청 메시지가 없습니다.");
-                _retries = retried ? _retries + 1 : 0;
-                _lastRequest = request;
-                IsRetry = retried;
-
-                byte[] response = _players[request.Player]?.Respond(request, State);
-                if (response == null)
-                {
-                    PendingRequest = request;
-                    PendingSerial++;
-                    return;
-                }
-                if (_retries >= MaxAutoRetries)
-                    throw new InvalidOperationException($"자동 응답이 계속 거절됩니다: {request.Type} (플레이어 {request.Player})");
-                _duel.SetResponse(response);
+                if (_batch.Count == 0 && _processCalls - start >= maxProcessCalls)
+                    throw new InvalidOperationException($"엔진 처리 횟수 한도({maxProcessCalls})를 넘었습니다.");
+                Step();
             }
-            throw new InvalidOperationException($"엔진 처리 횟수 한도({maxProcessCalls})를 넘었습니다.");
+        }
+
+        DuelMessage ApplyMessage(OcgMessage raw)
+        {
+            foreach (var observer in Observers())
+                observer.OnEngineMessage(raw);
+
+            DuelMessage message;
+            try
+            {
+                message = DuelMessageParser.Parse(raw);
+            }
+            catch (Exception e)
+            {
+                OnEngineLog(OcgLogType.Error, $"메시지 해석 실패 ({raw.Type}, {raw.Body.Length}바이트): {e.Message}");
+                return null;
+            }
+
+            if (message.Type == OcgMessageType.Retry)
+                _batchRetried = true;
+            if (message is HintMessage hint && hint.HintType == OcgHintType.SelectMessage && hint.Player < 2)
+                _selectHint[hint.Player] = hint.Data;
+            if (message is DuelRequest r)
+            {
+                r.SelectHint = _selectHint[r.Player];
+                _selectHint[r.Player] = 0;
+                _batchRequest = r;
+            }
+            State.Apply(message);
+            MessageReceived?.Invoke(message);
+            return message;
+        }
+
+        /// <summary>메시지 묶음을 다 반영했다: 배치를 다시 읽고, 엔진이 응답을 기다리면 플레이어에게 묻는다.</summary>
+        void EndBatch()
+        {
+            State.Refresh(_duel);
+            if (State.IsFinished)
+                return;
+            if (_status == OcgDuelStatus.End)
+            {
+                State.IsFinished = true;
+                return;
+            }
+            if (_status != OcgDuelStatus.Awaiting)
+                return;
+
+            // 응답 대기: 새 요청이 없으면(거절 후 다시 묻기) 바로 앞 요청을 다시 쓴다.
+            var request = _batchRequest ?? _lastRequest ?? throw new InvalidOperationException("엔진이 응답을 기다리지만 요청 메시지가 없습니다.");
+            _retries = _batchRetried ? _retries + 1 : 0;
+            _lastRequest = request;
+            IsRetry = _batchRetried;
+
+            byte[] response = _players[request.Player]?.Respond(request, State);
+            if (response == null)
+            {
+                PendingRequest = request;
+                PendingSerial++;
+                return;
+            }
+            if (_retries >= MaxAutoRetries)
+                throw new InvalidOperationException($"자동 응답이 계속 거절됩니다: {request.Type} (플레이어 {request.Player})");
+            _duel.SetResponse(response);
         }
 
         /// <summary>PendingRequest에 답하고 다음 입력이 필요할 때까지 진행한다.</summary>
         public void Respond(byte[] response)
         {
+            Answer(response);
+            Run();
+        }
+
+        /// <summary>PendingRequest에 답만 한다. 진행은 Step(한 단계씩)이나 Run으로 한다.</summary>
+        public void Answer(byte[] response)
+        {
             if (PendingRequest == null)
                 throw new InvalidOperationException("답할 요청이 없습니다.");
             PendingRequest = null;
             _duel.SetResponse(response);
-            Run();
         }
 
         public void Dispose() => _duel.Dispose();
