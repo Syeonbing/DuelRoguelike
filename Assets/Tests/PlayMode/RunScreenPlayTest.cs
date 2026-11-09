@@ -8,6 +8,7 @@
 // - 진행 중인 런이 있을 때 새 런: 한 번 더 눌러야 포기하고, 취소할 수 있는지
 // 층 사이 화면의 교환(사이드 덱 → 덱, 덱 → 사이드 덱)도 버튼·두 번 누르기·끌어다 놓기로 한 번씩 해 본다 (포인터 이벤트를 직접 보낸다).
 // 런 로그 창 열고 닫기, 런 시작 화면의 거르기·끌어다 놓기·두 번 누르기도 본다. 보충 고르기를 한 번 이상 거칠 때까지 런을 더 한다.
+// 듀얼 화면은 한 번, 6턴쯤에 자동 진행을 멈추고 카드에 마우스 올리기(왼쪽 카드 정보)와 묘지 누르기(카드 목록 창)를 해 본다.
 // 오류 로그(Debug.LogError·LogException)가 하나라도 나오면 실패한다.
 // 환경 변수 DUELROGUELIKE_SCREENSHOT_DIR에 폴더를 주면 화면마다 처음 한 번 1920×1080 PNG로 저장한다 (화면 모양 확인용).
 //
@@ -42,6 +43,7 @@ namespace DuelRoguelike.Tests
         int _refills;
         int _duels;
         bool _exchanged;
+        bool _duelViewChecked;
 
         string SaveFile => Path.Combine(_saveDir, "save.txt");
 
@@ -290,6 +292,8 @@ namespace DuelRoguelike.Tests
             while (Find<Button>(DuelUi, "leave-duel") == null)
             {
                 Assert.Less(Time.realtimeSinceStartup, until, $"시드 {seed} 듀얼: {DuelTimeout}초 안에 끝나지 않았다");
+                if (!_duelViewChecked && TurnOf(Find<Label>(DuelUi, "turn-label")) >= 6)
+                    yield return CheckDuelView();
                 var auto = Find<Button>(DuelUi, "auto-to-end");
                 if (auto != null)
                     Click(auto); // 처음, 또는 자동 응답이 멈췄으면 다시 켠다
@@ -380,6 +384,64 @@ namespace DuelRoguelike.Tests
 
             _exchanged = true;
             Debug.Log($"[런 화면 시험] 교환: {code} 사이드 덱 → 덱 → 사이드 덱 (버튼, 두 번 누르기, 끌어다 놓기)");
+        }
+
+        /// <summary>
+        /// 듀얼 도중 (한 번): 자동 진행을 멈추고, 내 필드(없으면 손패)의 카드에 마우스를 올려 왼쪽 카드 정보에 카드가 나오는지,
+        /// 내 묘지를 눌러 카드 목록 창이 열리는지 본다. 그 뒤 루프가 "자동으로 끝까지"를 다시 누른다.
+        /// </summary>
+        IEnumerator CheckDuelView()
+        {
+            _duelViewChecked = true;
+            var stop = Find<Button>(DuelUi, "auto-stop");
+            if (stop != null)
+            {
+                Click(stop);
+                yield return null;
+            }
+            if (Find<Button>(DuelUi, "leave-duel") != null)
+                yield break; // 그 사이에 끝났다
+            var root = Root(DuelUi);
+            var face = root.Q("my-field")?.Q("card-face") ?? root.Q("my-hand")?.Q("card-face");
+            Assert.IsNotNull(face, "6턴인데 내 필드와 손패에 앞면 카드가 없다");
+            var cell = face.parent;
+            while (cell != null && (cell.name == null || !(cell.name.StartsWith("zone-0-") || cell.name.StartsWith("hand-0-"))))
+                cell = cell.parent;
+            Assert.IsNotNull(cell, "카드 앞면이 필드 칸·손패 칸 안에 있지 않다");
+            Hover(cell);
+            yield return null;
+            Assert.IsNotNull(root.Q("card-detail")?.Q("card-face"), $"{cell.name}에 마우스를 올렸는데 카드 정보에 카드가 없다");
+            yield return Shot(DuelUi, "2b-duel-mid");
+
+            Click(Find<VisualElement>(DuelUi, "grave-0"));
+            yield return null;
+            var close = Find<Button>(DuelUi, "modal-close");
+            Assert.IsNotNull(close, "묘지를 눌렀는데 카드 목록 창이 없다");
+            yield return Shot(DuelUi, "2c-duel-grave");
+            Click(close);
+            yield return null;
+            Assert.IsNull(Find<Button>(DuelUi, "modal-close"), "닫기를 눌렀는데 카드 목록 창이 남아 있다");
+            Debug.Log($"[런 화면 시험] 듀얼 화면: {cell.name}에 마우스 올리기 → 카드 정보, 묘지 누르기 → 카드 목록 창");
+        }
+
+        /// <summary>"6턴 · …" → 6. 듀얼 준비 중이거나 없으면 0.</summary>
+        static int TurnOf(Label label)
+        {
+            if (label == null)
+                return 0;
+            int end = label.text.IndexOf('턴');
+            return end > 0 && int.TryParse(label.text.Substring(0, end), out int turn) ? turn : 0;
+        }
+
+        /// <summary>마우스를 올린다 (PointerEnter를 직접 보낸다).</summary>
+        static void Hover(VisualElement target)
+        {
+            var system = new Event { type = EventType.MouseMove, mousePosition = target.worldBound.center };
+            using (var e = PointerEnterEvent.GetPooled(system))
+            {
+                e.target = target;
+                target.SendEvent(e);
+            }
         }
 
         static VisualElement InDeck(string code) =>

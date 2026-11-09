@@ -1,9 +1,9 @@
-// 최소 듀얼 화면 (UI Toolkit). 설계 문서의 화면 구성을 따른다:
-// 왼쪽 플레이어 정보(위 상대, 아래 나, 카드 효과문은 내 초상화 자리), 가운데 필드(점대칭, 엑스트라 몬스터 존 없음,
-// 패는 필드 위아래, 묘지 옆 필드 가운데 쪽에 원형 제외 칸), 오른쪽 로그.
+// 듀얼 화면 (UI Toolkit). 설계 문서의 화면 구성을 따른다:
+// 왼쪽 플레이어 정보(위 상대, 아래 나, 카드 정보는 내 초상화 자리), 가운데 필드(점대칭, 엑스트라 몬스터 존 없음,
+// 패는 필드 위아래), 오른쪽 로그. 필드·손패·카드 더미·카드 정보는 DuelScreen.Field.cs에 있다.
 // 조작: 카드를 직접 눌러 행동을 고른다. 행동할 수 있는 카드·고를 수 있는 카드·고를 수 있는 칸은 테두리로 강조한다.
 // 칸 고르기(놓을 칸·무효로 할 칸)는 필드 칸(빈칸 포함)을 눌러서 고른다.
-// 센터 카드, 초상화 그림, 체인 박스 연출, 카드 크게 보기는 아직 없다.
+// 센터 카드, 초상화 그림, 체인 박스 연출은 아직 없다.
 //
 // 두 가지로 쓴다:
 // - 혼자: Duel 씬. 인스펙터의 고정 덱으로 듀얼 하나를 하고, 끝나면 새 시드로 다시 시작한다 (화면 시험용).
@@ -22,7 +22,7 @@ using UnityEngine.UIElements;
 
 namespace DuelRoguelike.UI
 {
-    public sealed class DuelScreen : MonoBehaviour
+    public sealed partial class DuelScreen : MonoBehaviour
     {
         [SerializeField, Tooltip("혼자 듀얼할 때: 듀얼 난수·덱 셔플 시드. 다시 시작할 때마다 1씩 늘어난다. (런에서는 런 시드로 정한다)")]
         int duelSeed = 1;
@@ -58,6 +58,7 @@ namespace DuelRoguelike.UI
         CardScriptSource _scripts;
         DuelSession _session;
         DuelText _text;
+        CardFaces _faces;
         DuelLogFormatter _logFormatter;
         SimpleAutoPlayer _helper;
         WindBotPlayer _opponentAi;
@@ -93,7 +94,6 @@ namespace DuelRoguelike.UI
         Label _turnLabel, _promptLabel, _promptDetail;
         VisualElement _chainBox, _stripButtons;
         ScrollView _log;
-        Label _detailName, _detailType, _detailStats, _detailText;
         VisualElement _menuLayer, _modalLayer;
 
         void Start()
@@ -112,6 +112,8 @@ namespace DuelRoguelike.UI
                 _text = new DuelText(new CardDatabase(), null, Me);
                 _logFormatter = new DuelLogFormatter(_text);
             }
+            // 혼자 듀얼할 때는 등급을 보이지 않는다 (등급은 런의 것).
+            _faces = new CardFaces(_text, null, CardImages.FromGameFolder());
             BuildLayout();
             if (loadError != null)
             {
@@ -138,8 +140,8 @@ namespace DuelRoguelike.UI
         /// <summary>런 화면이 맡긴다고 표시한다. Start가 혼자 듀얼을 시작하지 않도록 Start보다 먼저(Awake에서) 부른다.</summary>
         internal void UseExternalDuels() => _external = true;
 
-        /// <summary>런 화면이 읽은 카드 데이터로 화면을 만들고 숨겨 둔다.</summary>
-        internal void Attach(CardDataSet data)
+        /// <summary>런 화면이 읽은 카드 데이터로 화면을 만들고 숨겨 둔다. images: 런 화면과 같이 쓰는 카드 그림 (없으면 새로 만든다).</summary>
+        internal void Attach(CardDataSet data, CardImages images = null)
         {
             _external = true;
             if (_docRoot != null)
@@ -149,6 +151,8 @@ namespace DuelRoguelike.UI
             _scripts = data.Scripts;
             _text = new DuelText(_db, data.Strings, Me);
             _logFormatter = new DuelLogFormatter(_text);
+            // 듀얼 중에는 등급을 보이지 않는다 (필드의 카드는 듀얼의 카드로만 보인다).
+            _faces = new CardFaces(_text, null, images ?? CardImages.FromGameFolder());
             BuildLayout();
             SetVisible(false);
         }
@@ -274,6 +278,7 @@ namespace DuelRoguelike.UI
             _log.Clear();
             CloseMenu();
             CloseModal();
+            ClearDetail();
             for (int p = 0; p < 2; p++)
                 _playerName[p].text = _playerNames[p];
             _helper = new SimpleAutoPlayer(activateEffects: true, seed: helperSeed);
@@ -371,10 +376,7 @@ namespace DuelRoguelike.UI
                     SetCell(_spells[p, i], player.SpellZones[i]);
                 }
                 SetCell(_fieldZone[p], player.SpellZones[5]);
-                _deck[p].Set($"덱\n{player.DeckCount}", Touches(p, OcgLocation.Deck));
-                _extra[p].Set($"엑스트라\n{player.ExtraCount}", Touches(p, OcgLocation.Extra));
-                _grave[p].Set($"묘지\n{player.Grave.Count}", Touches(p, OcgLocation.Grave));
-                _removed[p].Set($"제외\n{player.Removed.Count}", Touches(p, OcgLocation.Removed));
+                RenderPiles(p, player);
                 RenderHand(p, player);
             }
 
@@ -467,20 +469,6 @@ namespace DuelRoguelike.UI
             if (!primary) b.style.color = UiStyle.TextDim;
             _stripButtons.Add(b);
             return b;
-        }
-
-        void RenderHand(byte p, PlayerState player)
-        {
-            var row = _handRows[p];
-            row.Clear();
-            _handCells[p].Clear();
-            foreach (var card in player.Hand)
-            {
-                var cell = new CardCell(this, 96, 92);
-                SetCell(cell, card, p == Me || card.IsPublic);
-                _handCells[p].Add(cell);
-                row.Add(cell.Root);
-            }
         }
 
         void SetCell(CardCell cell, CardInfo card, bool? visibleOverride = null)
@@ -645,6 +633,7 @@ namespace DuelRoguelike.UI
             if (closable)
             {
                 var close = UiStyle.Button("닫기", CloseModal, 15);
+                close.name = "modal-close";
                 close.style.marginLeft = 16;
                 head.Add(close);
             }
@@ -731,16 +720,18 @@ namespace DuelRoguelike.UI
                 return;
             var panel = OpenModal(_interaction.Prompt, _interaction.PromptDetail, closable: false);
             var grid = CardGrid(panel);
+            int index = 0;
             foreach (var candidate in sel.Candidates)
             {
                 var info = MakeInfo(candidate.Card);
                 // 순서를 정할 카드는 엔진이 정하는 사람에게 보여 준 카드다 (상대 덱 위의 카드라도).
                 bool visible = sel.Ordered ? candidate.Card.Code != 0 : IsVisibleRequestCard(candidate.Card, info);
-                var cell = new CardCell(this, 112, 104);
+                var cell = WindowCell($"candidate-{index++}");
                 cell.ClickOverride = () => OnCandidateClicked(candidate, info, visible);
-                cell.Set(info, visible, candidate.Extra);
+                cell.Set(info, visible);
                 cell.SetHighlight(sel.IsChosen(candidate) ? Chosen : Selectable);
-                cell.SetCaption(LocationCaption(candidate.Card.Location));
+                string caption = LocationCaption(candidate.Card.Location);
+                cell.SetCaption(string.IsNullOrEmpty(candidate.Extra) ? caption : $"{caption} {candidate.Extra}");
                 int number = sel.OrderOf(candidate);
                 cell.SetBadge(number > 0 ? number.ToString() : null);
                 grid.Add(cell.Root);
@@ -792,10 +783,11 @@ namespace DuelRoguelike.UI
             var grid = CardGrid(panel);
             if (cards.Count == 0)
                 grid.Add(UiStyle.Label("비어 있음", 16, UiStyle.TextDim));
-            foreach (var card in cards)
+            for (int i = 0; i < cards.Count; i++)
             {
+                var card = cards[i];
                 bool visible = p == Me || card.IsFaceUp || card.IsPublic || location == OcgLocation.Grave;
-                var cell = new CardCell(this, 112, 104, refresh: () => OpenPileWindow(p, location));
+                var cell = WindowCell($"pile-card-{i}", refresh: () => OpenPileWindow(p, location));
                 cell.Set(card, visible);
                 cell.SetHighlight(HighlightFor(card));
                 grid.Add(cell.Root);
@@ -874,30 +866,7 @@ namespace DuelRoguelike.UI
 
         string LocationCaption(CardLocation loc) => $"{_text.Player(loc.Controller)} {DuelText.Location(loc)}";
 
-        // ================= 카드 정보 =================
-
-        void ShowCard(CardInfo card, bool visible)
-        {
-            if (card == null)
-                return;
-            if (!visible)
-            {
-                _detailName.text = "뒷면 카드";
-                _detailType.text = $"{_text.Player(card.Location.Controller)}의 {DuelText.Location(card.Location)}";
-                _detailStats.text = "";
-                _detailText.text = "";
-                return;
-            }
-            var record = _text.Record(card.Code);
-            _detailName.text = _text.CardName(card.Code);
-            _detailType.text = DuelText.TypeLine(card.Type != 0 ? card.Type : record?.Type ?? OcgCardType.None,
-                card.IsMonster && (card.Type & OcgCardType.Xyz) != 0 ? card.Rank : card.Level, card.Attribute, card.Race);
-            _detailStats.text = card.IsMonster
-                ? $"ATK {card.Attack} / DEF {card.Defense}" + (card.Attack != card.BaseAttack || card.Defense != card.BaseDefense ? $"  (원래 {card.BaseAttack} / {card.BaseDefense})" : "")
-                  + (card.Location.IsOnField ? $" · {DuelText.Position(card.Position)}" : "")
-                : card.Location.IsOnField ? DuelText.Position(card.Position) : "";
-            _detailText.text = record?.Description ?? "";
-        }
+        // ================= 로그 =================
 
         void AddLog(string line, Color color)
         {
@@ -940,379 +909,11 @@ namespace DuelRoguelike.UI
             return layer;
         }
 
-        void BuildLayout()
-        {
-            // ---- 왼쪽: 상대 정보 / 카드 정보(내 초상화 자리) / 내 정보 ----
-            var left = UiStyle.Box("left");
-            left.style.width = 340;
-            left.style.marginRight = 12;
-            left.Add(PlayerPanel(Opp));
-            var detail = UiStyle.PanelBox("card-detail");
-            detail.style.flexGrow = 1;
-            detail.style.marginTop = detail.style.marginBottom = 12;
-            _detailName = UiStyle.Label("카드를 누르면 여기에 정보가 나온다.", 20, bold: true);
-            _detailType = UiStyle.Label("", 15, UiStyle.TextDim);
-            _detailStats = UiStyle.Label("", 16, UiStyle.Accent);
-            _detailType.style.marginTop = _detailStats.style.marginTop = 6;
-            var textScroll = new ScrollView(ScrollViewMode.Vertical);
-            textScroll.style.flexGrow = 1;
-            textScroll.style.marginTop = 10;
-            _detailText = UiStyle.Label("", 15);
-            textScroll.Add(_detailText);
-            detail.Add(_detailName);
-            detail.Add(_detailType);
-            detail.Add(_detailStats);
-            detail.Add(textScroll);
-            left.Add(detail);
-            left.Add(PlayerPanel(Me));
-            _root.Add(left);
-
-            // ---- 가운데: 필드 ----
-            var center = UiStyle.Box("field");
-            center.style.flexGrow = 1;
-            center.style.justifyContent = Justify.SpaceBetween;
-            center.style.alignItems = Align.Center;
-            _handRows[Opp] = HandRow();
-            center.Add(_handRows[Opp]);
-            center.Add(BackRow(Opp));
-            center.Add(FrontRow(Opp));
-            center.Add(CenterStrip());
-            center.Add(FrontRow(Me));
-            center.Add(BackRow(Me));
-            _handRows[Me] = HandRow();
-            center.Add(_handRows[Me]);
-            _root.Add(center);
-
-            // ---- 오른쪽: 로그 ----
-            var right = UiStyle.PanelBox("log");
-            right.style.width = 460;
-            right.style.marginLeft = 12;
-            right.Add(UiStyle.Label("로그", 17, UiStyle.TextDim, bold: true));
-            _log = new ScrollView(ScrollViewMode.Vertical);
-            _log.style.flexGrow = 1;
-            _log.style.marginTop = 6;
-            right.Add(_log);
-            _root.Add(right);
-        }
-
-        VisualElement PlayerPanel(byte p)
-        {
-            var panel = UiStyle.PanelBox();
-            var nameLabel = _playerName[p] = UiStyle.Label(_playerNames[p], 18, p == Me ? UiStyle.Mine : UiStyle.Opponent, bold: true);
-            _lp[p] = UiStyle.Label("LP 8000", 38, bold: true);
-            _playerInfo[p] = UiStyle.Label("", 15, UiStyle.TextDim);
-            panel.Add(nameLabel);
-            panel.Add(_lp[p]);
-            panel.Add(_playerInfo[p]);
-            return panel;
-        }
-
-        static VisualElement HandRow()
-        {
-            var row = UiStyle.Box(null, FlexDirection.Row);
-            row.style.height = 96;
-            row.style.justifyContent = Justify.Center;
-            row.style.alignItems = Align.Center;
-            return row;
-        }
-
-        static VisualElement FieldRow()
-        {
-            var row = UiStyle.Box(null, FlexDirection.Row);
-            row.style.alignItems = Align.Center;
-            return row;
-        }
-
-        // 내 쪽 몬스터 줄: [필드 존][M0..M4][제외(위)·묘지]. 상대 쪽은 점대칭: [묘지·제외(아래)][M4..M0][필드 존]
-        VisualElement FrontRow(byte p)
-        {
-            var row = FieldRow();
-            _fieldZone[p] = new CardCell(this, 104, 104, zone: new CardKey(p, OcgLocation.SpellTrapZone, 5));
-            for (int i = 0; i < MainZones; i++)
-                _monsters[p, i] = new CardCell(this, 104, 104, zone: new CardKey(p, OcgLocation.MonsterZone, (uint)i));
-            var gravePile = GraveStack(p);
-            if (p == Me)
-            {
-                row.Add(_fieldZone[p].Root);
-                for (int i = 0; i < MainZones; i++) row.Add(_monsters[p, i].Root);
-                row.Add(gravePile);
-            }
-            else
-            {
-                row.Add(gravePile);
-                for (int i = MainZones - 1; i >= 0; i--) row.Add(_monsters[p, i].Root);
-                row.Add(_fieldZone[p].Root);
-            }
-            _fieldZone[p].SetEmptyText("필드");
-            return row;
-        }
-
-        // 내 쪽 마법·함정 줄: [엑스트라][S0..S4][덱]. 상대 쪽은 점대칭: [덱][S4..S0][엑스트라]
-        VisualElement BackRow(byte p)
-        {
-            var row = FieldRow();
-            for (int i = 0; i < MainZones; i++)
-                _spells[p, i] = new CardCell(this, 104, 92, zone: new CardKey(p, OcgLocation.SpellTrapZone, (uint)i));
-            _deck[p] = new PileCell(104, 92, 6, () => OpenPileWindow(p, OcgLocation.Deck));
-            _extra[p] = new PileCell(104, 92, 6, () => OpenPileWindow(p, OcgLocation.Extra));
-            if (p == Me)
-            {
-                row.Add(_extra[p].Root);
-                for (int i = 0; i < MainZones; i++) row.Add(_spells[p, i].Root);
-                row.Add(_deck[p].Root);
-            }
-            else
-            {
-                row.Add(_deck[p].Root);
-                for (int i = MainZones - 1; i >= 0; i--) row.Add(_spells[p, i].Root);
-                row.Add(_extra[p].Root);
-            }
-            return row;
-        }
-
-        // 묘지(묘비 모양) + 원형 제외 칸. 제외 칸은 묘지 바로 옆, 필드 가운데(양쪽 필드 사이) 쪽에 둔다.
-        VisualElement GraveStack(byte p)
-        {
-            var stack = UiStyle.Box();
-            stack.style.alignItems = Align.Center;
-            stack.style.width = 104;
-            _grave[p] = new PileCell(92, 62, 0, () => OpenPileWindow(p, OcgLocation.Grave));
-            _grave[p].Root.style.borderTopLeftRadius = _grave[p].Root.style.borderTopRightRadius = 40; // 묘비
-            _removed[p] = new PileCell(44, 44, 22, () => OpenPileWindow(p, OcgLocation.Removed));      // 원형
-            if (p == Me)
-            {
-                stack.Add(_removed[p].Root);
-                stack.Add(_grave[p].Root);
-            }
-            else
-            {
-                stack.Add(_grave[p].Root);
-                stack.Add(_removed[p].Root);
-            }
-            _removed[p].Root.style.marginTop = _removed[p].Root.style.marginBottom = 2;
-            return stack;
-        }
-
-        // 양쪽 필드 사이: 위 줄은 턴·페이즈와 체인 목록(센터 카드 자리), 아래 줄은 안내 문구와 버튼(페이즈 넘기기, 확인 등).
-        VisualElement CenterStrip()
-        {
-            var strip = UiStyle.Box();
-            strip.style.width = Length.Percent(100);
-            strip.style.backgroundColor = UiStyle.PanelLight;
-            UiStyle.Radius(strip, 6);
-            UiStyle.Padding(strip, 8);
-
-            var top = UiStyle.Box(null, FlexDirection.Row);
-            top.style.justifyContent = Justify.SpaceBetween;
-            top.style.alignItems = Align.Center;
-            _turnLabel = UiStyle.Label("듀얼 준비", 19, bold: true);
-            _chainBox = UiStyle.Box();
-            _chainBox.style.alignItems = Align.FlexEnd;
-            top.Add(_turnLabel);
-            top.Add(_chainBox);
-
-            var bottom = UiStyle.Box(null, FlexDirection.Row);
-            bottom.style.justifyContent = Justify.SpaceBetween;
-            bottom.style.alignItems = Align.Center;
-            bottom.style.marginTop = 6;
-            var texts = UiStyle.Box();
-            texts.style.flexShrink = 1;
-            _promptLabel = UiStyle.Label("", 17, UiStyle.Accent, bold: true);
-            _promptDetail = UiStyle.Label("", 14, UiStyle.TextDim);
-            texts.Add(_promptLabel);
-            texts.Add(_promptDetail);
-            _stripButtons = UiStyle.Box(null, FlexDirection.Row);
-            _stripButtons.style.flexShrink = 0;
-            _stripButtons.style.alignItems = Align.Center;
-            bottom.Add(texts);
-            bottom.Add(_stripButtons);
-
-            strip.Add(top);
-            strip.Add(bottom);
-            return strip;
-        }
-
         static int PopCount(ulong v)
         {
             int n = 0;
             for (; v != 0; v &= v - 1) n++;
             return n;
-        }
-
-        // ================= 칸 =================
-
-        sealed class CardCell
-        {
-            public readonly VisualElement Root;
-            /// <summary>필드 칸이면 그 자리 (칸 고르기용). 패·창 안의 카드는 null.</summary>
-            public readonly CardKey? Zone;
-            readonly Label _name;
-            readonly Label _stats;
-            readonly Label _caption;
-            Label _badge;
-            readonly DuelScreen _screen;
-            /// <summary>있으면 누를 때 OnCardClicked 대신 부른다 (목록 창의 후보).</summary>
-            public Action ClickOverride;
-            CardInfo _card;
-            bool _visible;
-            string _emptyText = "";
-            Color _border;
-            float _borderWidth;
-
-            public CardCell(DuelScreen screen, float width, float height, Action refresh = null, CardKey? zone = null)
-            {
-                _screen = screen;
-                Zone = zone;
-                Root = UiStyle.Box();
-                Root.style.width = width;
-                Root.style.height = height;
-                UiStyle.Margin(Root, 3);
-                UiStyle.Radius(Root, 5);
-                UiStyle.Padding(Root, 5);
-                Root.style.justifyContent = Justify.SpaceBetween;
-                Root.style.overflow = Overflow.Hidden;
-                _name = UiStyle.Label("", 13, bold: true);
-                _stats = UiStyle.Label("", 13, UiStyle.Text);
-                _caption = UiStyle.Label("", 11, UiStyle.TextDim);
-                _caption.style.display = DisplayStyle.None;
-                Root.Add(_name);
-                Root.Add(_caption);
-                Root.Add(_stats);
-                Root.RegisterCallback<ClickEvent>(_ =>
-                {
-                    if (ClickOverride != null)
-                        ClickOverride();
-                    else
-                        _screen.OnCardClicked(_card, _visible, Root, refresh, Zone);
-                });
-                Set(null, false);
-            }
-
-            /// <summary>오른쪽 아래에 크게 띄우는 표시 (순서 정하기의 번호). null이나 빈 문자열이면 숨긴다.</summary>
-            public void SetBadge(string text)
-            {
-                if (_badge == null)
-                {
-                    if (string.IsNullOrEmpty(text))
-                        return;
-                    _badge = UiStyle.Label("", 20, UiStyle.Background, bold: true);
-                    _badge.style.position = Position.Absolute;
-                    _badge.style.right = 4;
-                    _badge.style.bottom = 4;
-                    _badge.style.backgroundColor = Chosen;
-                    _badge.style.paddingLeft = 7;
-                    _badge.style.paddingRight = 7;
-                    _badge.style.unityTextAlign = TextAnchor.MiddleCenter;
-                    UiStyle.Radius(_badge, 4);
-                    Root.Add(_badge);
-                }
-                _badge.text = text ?? "";
-                _badge.style.display = string.IsNullOrEmpty(text) ? DisplayStyle.None : DisplayStyle.Flex;
-            }
-
-            public void SetEmptyText(string text)
-            {
-                _emptyText = text;
-                if (_card == null) _name.text = text;
-            }
-
-            /// <summary>빈칸에 잠깐 띄우는 안내 (칸 고르기). 다음 Set에서 원래 문구로 돌아간다.</summary>
-            public void ShowEmptyHint(string text, Color color)
-            {
-                if (_card != null) return;
-                _name.text = text;
-                _name.style.color = color;
-            }
-
-            public void SetCaption(string text)
-            {
-                _caption.text = text;
-                _caption.style.display = string.IsNullOrEmpty(text) ? DisplayStyle.None : DisplayStyle.Flex;
-            }
-
-            public void Set(CardInfo card, bool visible, string extra = null)
-            {
-                _card = card;
-                _visible = visible;
-                if (card == null)
-                {
-                    _name.text = _emptyText;
-                    _name.style.color = UiStyle.TextDim;
-                    _stats.text = "";
-                    Root.style.backgroundColor = UiStyle.ZoneEmpty;
-                    SetBorder(UiStyle.Border, 1);
-                    return;
-                }
-                bool onField = card.Location.IsOnField;
-                bool faceDown = onField && !card.IsFaceUp;
-                _name.style.color = UiStyle.Text;
-                _name.text = visible ? _screen._text.CardName(card.Code) : "뒷면";
-                string stats;
-                if (!visible)
-                    stats = onField && (card.Position & OcgPosition.Defense) != 0 ? "수비" : "";
-                else if (card.IsMonster)
-                    stats = $"{card.Attack}/{card.Defense}" + (onField ? ((card.Position & OcgPosition.Defense) != 0 ? " 수비" : " 공격") : "") + (faceDown ? " 세트" : "");
-                else
-                    stats = ((card.Type & OcgCardType.Spell) != 0 ? "마법" : "함정") + (faceDown ? " 세트" : "");
-                _stats.text = string.IsNullOrEmpty(extra) ? stats : $"{stats} {extra}";
-                Root.style.backgroundColor = !visible || faceDown ? UiStyle.FaceDown : CardColor(card.Type);
-                var owner = card.Location.Controller == Me ? UiStyle.Mine : UiStyle.Opponent;
-                SetBorder(onField ? owner : UiStyle.Border, onField ? 2 : 1);
-            }
-
-            /// <summary>행동·선택 강조. null이면 원래 테두리로 돌린다.</summary>
-            public void SetHighlight(Color? color)
-            {
-                if (color.HasValue)
-                    UiStyle.BorderColor(Root, color.Value, 4);
-                else
-                    UiStyle.BorderColor(Root, _border, _borderWidth);
-            }
-
-            void SetBorder(Color color, float width)
-            {
-                _border = color;
-                _borderWidth = width;
-                UiStyle.BorderColor(Root, color, width);
-            }
-
-            static Color CardColor(OcgCardType type)
-            {
-                if ((type & OcgCardType.Spell) != 0) return UiStyle.Spell;
-                if ((type & OcgCardType.Trap) != 0) return UiStyle.Trap;
-                if ((type & (OcgCardType.Fusion | OcgCardType.Synchro | OcgCardType.Xyz | OcgCardType.Ritual)) != 0) return UiStyle.ExtraMonster;
-                if ((type & OcgCardType.Normal) != 0) return UiStyle.NormalMonster;
-                return UiStyle.EffectMonster;
-            }
-        }
-
-        sealed class PileCell
-        {
-            public readonly VisualElement Root;
-            readonly Label _label;
-
-            public PileCell(float width, float height, float radius, Action onClick)
-            {
-                Root = UiStyle.Box();
-                Root.style.width = width;
-                Root.style.height = height;
-                UiStyle.Margin(Root, 3);
-                UiStyle.Radius(Root, radius);
-                Root.style.backgroundColor = UiStyle.PanelLight;
-                UiStyle.BorderColor(Root, UiStyle.Border, 1);
-                Root.style.justifyContent = Justify.Center;
-                Root.style.alignItems = Align.Center;
-                _label = UiStyle.Label("", 13, UiStyle.TextDim);
-                _label.style.unityTextAlign = TextAnchor.MiddleCenter;
-                Root.Add(_label);
-                Root.RegisterCallback<ClickEvent>(_ => onClick());
-            }
-
-            public void Set(string text, bool highlight)
-            {
-                _label.text = text;
-                UiStyle.BorderColor(Root, highlight ? Actionable : UiStyle.Border, highlight ? 4 : 1);
-            }
         }
     }
 }

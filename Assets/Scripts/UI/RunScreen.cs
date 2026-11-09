@@ -107,7 +107,7 @@ namespace DuelRoguelike.UI
                 ShowLoadError(e);
                 return;
             }
-            duelScreen.Attach(_data);
+            duelScreen.Attach(_data, _images);
             _seedText = NewSeed().ToString();
             ShowStart();
         }
