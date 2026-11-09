@@ -2,6 +2,7 @@
 // 확률표·연쇄 확률은 난수를 많이 뽑아 비율을 본다.
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using DuelRoguelike.Engine.Data;
 using DuelRoguelike.Run;
@@ -37,6 +38,10 @@ namespace DuelRoguelike.Dev
                          ("같은 시드 재현", test.Determinism),
                          ("런 시작 확인", test.SetupChecks),
                          ("등급 파일 읽기", test.RarityParsing),
+                         ("런 포기", test.AbandonRun),
+                         ("저장 파일 쓰고 읽기", test.SaveRoundTrip),
+                         ("저장 파일 형식 오류", test.SaveFormatErrors),
+                         ("저장 파일 위치·깨진 파일", test.SaveFiles),
                      })
             {
                 try
@@ -428,6 +433,176 @@ namespace DuelRoguelike.Dev
             ExpectThrows<FormatException>(() => RarityTable.Parse("블랙홀 UR"), "카드 코드가 아님");
             ExpectThrows<FormatException>(() => RarityTable.Parse("53129443 UR SR"), "칸이 셋");
             Expect(_rarities.Check(StarterDecks.All, _db).Count == 0, "실제 등급 파일 확인 (아래 등급 표 확인에서 자세히)");
+        }
+
+        // --- 런 포기와 저장 ---
+
+        void AbandonRun()
+        {
+            var save = GameSave.NewGame();
+            var run = save.StartRun(new RunSetup { Seed = 7, StartDeck = StarterDecks.Kaiba }, _db, _rarities);
+            ExpectThrows<InvalidOperationException>(() => save.StartRun(new RunSetup { Seed = 8, StartDeck = StarterDecks.Yugi }, _db, _rarities),
+                "진행 중인 런이 있는데 새 런 시작");
+            run.BeginDuel();
+            ExpectThrows<InvalidOperationException>(() => run.Abandon(), "듀얼 중 포기");
+            run.FinishDuel(DuelResult.Win, 4000);
+            int events = run.Events.Count;
+            save.AbandonRun();
+            Expect(run.Phase == RunPhase.Ended && run.EndReason == RunEndReason.Abandoned && run.Events.Count == events + 1
+                   && run.Events.Last().Kind == RunEventKind.RunEnded && run.Events.Last().Describe(c => "") == "런 종료: 포기",
+                $"포기하면 런 종료 ({run.Phase}, {run.EndReason})");
+            Expect(save.Run == null, "포기한 런은 저장에서 빠짐");
+            int gained = run.Events.Count(e => e.Kind == RunEventKind.RewardGained);
+            Expect(save.Collection.TotalCount == CardCollection.FromRecipes(StarterDecks.All).TotalCount + gained, "포기해도 얻은 카드는 컬렉션에 남음");
+            Expect(save.Points.Sum() == run.SubstitutedRewards.Sum(), "포기한 런의 포인트 대체도 누적에 더함");
+            var next = save.StartRun(new RunSetup { Seed = 8, StartDeck = StarterDecks.Yugi }, _db, _rarities);
+            Expect(next.Phase == RunPhase.Ready && save.Run == next && save.LastStartDeckId == "Yugi", "포기한 뒤 새 런 시작");
+        }
+
+        /// <summary>저장 → 읽기 → 저장이 같은 글이고, 읽은 런을 이어 가면 원래 런과 똑같이 진행되는지.</summary>
+        void SaveRoundTrip()
+        {
+            string RoundTrip(GameSave save) => GameSave.Parse(save.Write(), _db, _rarities, "시험").Write();
+
+            var fresh = GameSave.NewGame();
+            Expect(RoundTrip(fresh) == fresh.Write(), "새 게임 저장 다시 읽기");
+            Expect(GameSave.Parse(fresh.Write(), _db, _rarities).Run == null, "새 게임에는 진행 중인 런이 없음");
+
+            var side = StarterDecks.Joey.Entries.Take(3).Select(e => e.Code).ToList();
+            var script = new (DuelResult, int)[]
+            {
+                (DuelResult.Win, 5000), (DuelResult.Loss, 0), (DuelResult.Win, 3000), (DuelResult.Draw, 0), (DuelResult.Win, 8000),
+                (DuelResult.Win, 1200), (DuelResult.Loss, -300), (DuelResult.Loss, 0), (DuelResult.Win, 9000), (DuelResult.Win, 400),
+                (DuelResult.Win, 2000), (DuelResult.Win, 2000), (DuelResult.Loss, 0), (DuelResult.Win, 2000), (DuelResult.Win, 2000),
+            };
+            var original = GameSave.NewGame();
+            original.StartRun(new RunSetup { Seed = 99, StartDeck = StarterDecks.Yugi, SideDeck = side }, _db, _rarities);
+            var reloaded = GameSave.Parse(original.Write(), _db, _rarities, "시험");
+            Expect(reloaded.LastStartDeckId == "Yugi" && reloaded.LastSideDeck("Yugi").SequenceEqual(side) && reloaded.LastSideDeck("Kaiba").Count == 0,
+                "마지막 시작 덱과 시작 사이드 덱을 기억");
+            int step = 0, mismatches = 0;
+            foreach (var (result, lp) in script)
+            {
+                foreach (var save in new[] { original, reloaded })
+                {
+                    var run = save.Run;
+                    if (run.Phase == RunPhase.Ended)
+                        continue;
+                    while (run.Phase == RunPhase.NeedsRefill)
+                        run.MoveToDeck(run.RefillCandidates()[0]);
+                    // 사이드 덱 교환도 섞는다: 사이드 덱 첫 카드를 넣을 수 있으면 넣고, 메인 덱 첫 카드를 뺀다.
+                    if (run.SideDeck.Count > 0 && run.CanMoveToDeck(run.SideDeck[0], out _))
+                        run.MoveToDeck(run.SideDeck[0]);
+                    if (run.CanMoveToSide(run.MainDeck[0], out _))
+                        run.MoveToSide(run.MainDeck[0]);
+                    run.BeginDuel();
+                    run.FinishDuel(result, lp);
+                }
+                step++;
+                if (original.Write() != reloaded.Write())
+                    mismatches++;
+                if (RoundTrip(original) != original.Write())
+                    mismatches++;
+                // 다음 걸음은 방금 저장한 것을 읽은 런으로 간다.
+                reloaded = GameSave.Parse(reloaded.Write(), _db, _rarities, "시험");
+            }
+            Expect(mismatches == 0, $"저장하며 이어 간 런이 원래 런과 같음 (불일치 {mismatches}번 / {step}걸음)");
+            var a = original.Run.Events.Select(e => e.ToString()).ToList();
+            var b = reloaded.Run.Events.Select(e => e.ToString()).ToList();
+            Expect(a.SequenceEqual(b), "이벤트도 같음");
+            Expect(original.Run.Events.Any(e => e.Kind == RunEventKind.RewardGained) && original.Run.Events.Any(e => e.Kind == RunEventKind.CardFainted)
+                   && original.Run.Events.Any(e => e.Kind == RunEventKind.MovedToSide) && original.Run.Events.Any(e => e.Kind == RunEventKind.LpRestored),
+                "시험 런에 획득·기절·교환·LP 회복이 모두 있음");
+            Expect(reloaded.Collection.TotalCount == original.Collection.TotalCount, "컬렉션 장수 같음");
+
+            // 끝난 런을 정리하면 포인트가 누적에 더해지고 런이 빠진다.
+            var ended = GameSave.NewGame();
+            var forty = new DeckRecipe("Test40", "시험 덱 40장", StarterDecks.Yugi.Entries.Take(40).ToList());
+            var endRun = ended.StartRun(new RunSetup { Seed = 5, StartDeck = forty }, _db, _rarities);
+            Expect(!ended.CloseEndedRun(), "끝나지 않은 런은 정리하지 않음");
+            endRun.BeginDuel();
+            endRun.FinishDuel(DuelResult.Loss, 0);
+            Expect(endRun.Phase == RunPhase.Ended, "40장 덱 첫 패배로 런 종료");
+            Expect(RoundTrip(ended) == ended.Write(), "끝난 런도 저장·읽기 (스타터 덱이 아닌 시작 덱 Id도 그대로)");
+            var substituted = endRun.SubstitutedRewards.ToArray();
+            Expect(ended.CloseEndedRun() && ended.Run == null && ended.Points.SequenceEqual(substituted), "끝난 런 정리: 포인트 누적, 런 빠짐");
+            Expect(GameSave.Parse(ended.Write(), _db, _rarities).Points.SequenceEqual(ended.Points), "포인트 저장·읽기");
+        }
+
+        void SaveFormatErrors()
+        {
+            var save = GameSave.NewGame();
+            var run = save.StartRun(new RunSetup { Seed = 3, StartDeck = StarterDecks.Pegasus }, _db, _rarities);
+            run.BeginDuel();
+            ExpectThrows<InvalidOperationException>(() => save.Write(), "듀얼 중에는 저장하지 않음");
+            run.FinishDuel(DuelResult.Win, 6000);
+            string good = save.Write();
+            Expect(GameSave.Parse(good, _db, _rarities).Run.Floor == 2, "정상 파일 읽기");
+            Expect(GameSave.Parse(good.Replace("\n", "\r\n"), _db, _rarities).Write() == good, "CRLF 줄바꿈도 읽음");
+
+            void Broken(string text, string what) => ExpectThrows<FormatException>(() => GameSave.Parse(text, _db, _rarities), what);
+            string Replace(string line, string with) => good.Replace("\n" + line + "\n", "\n" + with + "\n");
+            Broken("", "빈 파일");
+            Broken(good.Replace("format 1\n", ""), "format 줄 없음");
+            Broken(good.Replace("format 1\n", "format 2\n"), "새 버전 형식");
+            Broken(good.Replace("format 1\n", "format 1\nunknown 3\n"), "모르는 키");
+            Broken(good.Replace("format 1\n", "format 1\nformat 1\n"), "같은 키 두 번");
+            Broken(good.Replace("\nend-run\n", "\n"), "end-run 없음");
+            Broken(Replace("floor 2", "floor 0"), "0층");
+            Broken(Replace("floor 2", "floor 이층"), "층이 숫자가 아님");
+            Broken(Replace("phase Ready", "phase InDuel"), "듀얼 중 상태");
+            Broken(Replace("phase Ready", "phase 1"), "상태를 숫자로");
+            Broken(Replace("phase Ready", "phase Ended"), "끝났는데 종료 이유 없음");
+            Broken(Replace("wins 1", "wins 2"), "전적이 듀얼 수와 다름");
+            Broken(Replace("opponents Yugi Kaiba Joey Pegasus", "opponents Yugi Nobody"), "모르는 상대 덱");
+            Broken(Replace("seed 3", ""), "seed 줄 없음");
+            Broken(good.Replace("\nfainted-main\n", "\nfainted-main 99999999\n"), "카드 DB에 없는 카드");
+            Broken(good.Replace("event DuelWon duel=1", "event DuelWon duel=x"), "이벤트 칸 숫자 아님");
+            Broken(good.Replace("event DuelWon duel=1", "event DuelWon wins=1 duel=1"), "모르는 이벤트 칸");
+            Broken(good.Replace("event DuelWon duel=1 floor=1", "event DuelWon duel=1"), "이벤트에 floor 없음");
+            Broken("format 1\ncard 53129443 0\n", "컬렉션 0장");
+            Broken("format 1\ncard 53129443 1\ncard 53129443 2\n", "컬렉션에 같은 카드 두 번");
+            Broken("format 1\npoints 1 2 3\n", "포인트 칸 수");
+            Expect(GameSave.Parse("format 1\n# 주석\n\ncard 53129443 2\n", _db, _rarities).Collection.Count(53129443) == 2, "주석·빈 줄");
+        }
+
+        void SaveFiles()
+        {
+            string dir = Path.Combine(Path.GetTempPath(), "DuelRoguelike-save-test-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                var empty = GameSaveFile.Load(dir, _db, _rarities, out string notice);
+                Expect(empty.Run == null && notice == null && empty.Collection.TotalCount == CardCollection.FromRecipes(StarterDecks.All).TotalCount,
+                    "파일이 없으면 새 게임");
+
+                var save = GameSave.NewGame();
+                save.StartRun(new RunSetup { Seed = 11, StartDeck = StarterDecks.Joey }, _db, _rarities);
+                GameSaveFile.Save(save, dir);
+                Expect(!File.Exists(GameSaveFile.BackupPath(dir)), "처음 저장에는 .bak이 없음");
+                save.Run.BeginDuel();
+                save.Run.FinishDuel(DuelResult.Win, 7000);
+                GameSaveFile.Save(save, dir);
+                Expect(File.Exists(GameSaveFile.BackupPath(dir)) && !File.Exists(GameSaveFile.FilePath(dir) + ".tmp"), "두 번째 저장: 이전 파일은 .bak, 임시 파일은 남지 않음");
+                var loaded = GameSaveFile.Load(dir, _db, _rarities, out notice);
+                Expect(notice == null && loaded.Write() == save.Write(), "저장한 파일 읽기");
+
+                // 깨진 파일 + 읽을 수 있는 .bak → .bak으로 이어 감 (한 걸음 전)
+                File.WriteAllText(GameSaveFile.FilePath(dir), "format 1\nfloor 이층\n");
+                loaded = GameSaveFile.Load(dir, _db, _rarities, out notice);
+                Expect(notice != null && loaded.Run != null && loaded.Run.DuelsPlayed == 0, $"깨진 파일이면 .bak으로 ({notice})");
+                Expect(Directory.GetFiles(dir, "save-broken-*.txt").Length == 1 && !File.Exists(GameSaveFile.FilePath(dir)), "깨진 파일은 save-broken-*.txt로 옮김");
+
+                // 깨진 파일 + .bak도 깨짐 → 새 게임
+                File.WriteAllText(GameSaveFile.FilePath(dir), "엉망");
+                File.WriteAllText(GameSaveFile.BackupPath(dir), "엉망");
+                loaded = GameSaveFile.Load(dir, _db, _rarities, out notice);
+                Expect(notice != null && loaded.Run == null && Directory.GetFiles(dir, "save-broken-*.txt").Length == 2, "둘 다 깨졌으면 새 게임");
+            }
+            finally
+            {
+                if (Directory.Exists(dir))
+                    Directory.Delete(dir, true);
+            }
         }
     }
 }

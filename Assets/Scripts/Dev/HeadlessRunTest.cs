@@ -5,6 +5,7 @@
 // - 단계마다 런 규칙 점검 (RunRuleChecker: 획득·기절·LP·보충·종료)
 // - 같은 시드와 같은 듀얼 결과로 런 규칙만 다시 돌리면 이벤트가 똑같은지 (재현)
 // - 런의 첫 듀얼을 엔진으로 다시 돌리면 결과가 같은지 (엔진·플레이어까지 포함한 재현)
+// - 저장: 단계마다 저장 파일로 쓰고 읽어 다시 쓴 글이 같은지, 걸음마다 저장 파일을 읽은 런으로 이어 가도 원래 런과 같은지
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -44,11 +45,16 @@ namespace DuelRoguelike.Dev
             public int RuleReplayMismatches;
             /// <summary>첫 듀얼을 엔진으로 다시 돌렸을 때 결과(승자·LP·턴)가 달랐던 런.</summary>
             public int EngineReplayMismatches;
+            /// <summary>저장 파일로 쓰고 읽어 다시 쓴 횟수와, 글이 달랐던 횟수.</summary>
+            public int SaveRoundTrips;
+            public int SaveRoundTripMismatches;
+            /// <summary>걸음마다 저장 파일을 읽은 런으로 이어 간 재현이 원래 런과 달랐던 런.</summary>
+            public int SaveReplayMismatches;
             public readonly List<string> Problems = new List<string>();
 
             public bool Ok => Runs > 0 && Duel.Ok && (ReplayDuel.Duels == 0 || ReplayDuel.Ok) && Rules.ViolationCount == 0
                               && Capped == 0 && Aborted == 0 && RuleReplayMismatches == 0 && EngineReplayMismatches == 0
-                              && Ended == Runs;
+                              && SaveRoundTripMismatches == 0 && SaveReplayMismatches == 0 && Ended == Runs;
         }
 
         readonly HeadlessDuelRun _duels;
@@ -81,8 +87,10 @@ namespace DuelRoguelike.Dev
             report.Runs++;
             string runTag = $"[런 {startDeck.Id} 시드 {seed}]";
             var setup = new RunSetup { Seed = (ulong)seed, StartDeck = startDeck, Opponents = StarterDecks.All };
-            var run = RunState.Start(setup, _db, _rarities, CardCollection.FromRecipes(StarterDecks.All));
+            var save = GameSave.NewGame();
+            var run = save.StartRun(setup, _db, _rarities);
             var checker = new RunRuleChecker(run, _db, _rarities, report.Rules, runTag);
+            CheckSaveRoundTrip(report, save, runTag);
             var picks = RunRandom.For((ulong)seed, 0, RunRandomPurpose.External);
             var outcomes = new List<(DuelResult Result, int Lp)>();
             var refills = new List<uint>();
@@ -104,6 +112,7 @@ namespace DuelRoguelike.Dev
                     run.MoveToDeck(code);
                     checker.AfterMoveToDeck(code);
                     refills.Add(code);
+                    CheckSaveRoundTrip(report, save, runTag);
                     continue;
                 }
                 if (run.DuelsPlayed >= maxDuels)
@@ -135,6 +144,7 @@ namespace DuelRoguelike.Dev
                 run.FinishDuel(result, outcome.Lp[0]);
                 checker.AfterFinishDuel(duel, result, outcome.Lp[0]);
                 outcomes.Add((result, outcome.Lp[0]));
+                CheckSaveRoundTrip(report, save, runTag);
 
                 report.Duels++;
                 if (result == DuelResult.Win) report.Wins++;
@@ -163,6 +173,7 @@ namespace DuelRoguelike.Dev
                     _log($"      #{e.DuelNumber,-3} {e.Describe(_duels.CardName)}");
 
             CheckRuleReplay(report, setup, run, outcomes, refills, runTag);
+            CheckSaveReplay(report, setup, save, outcomes, refills, runTag);
             if (first.HasValue)
                 CheckEngineReplay(report, first.Value.Options, first.Value.PlayerSeed, first.Value.Outcome, runTag, player, maxTurns, hides);
         }
@@ -194,6 +205,76 @@ namespace DuelRoguelike.Dev
                 int at = Enumerable.Range(0, Math.Min(a.Count, b.Count)).FirstOrDefault(i => a[i] != b[i]);
                 report.Problems.Add($"{runTag} 런 규칙 재현 실패: {at}번째 이벤트 \"{(at < a.Count ? a[at] : "-")}\" / \"{(at < b.Count ? b[at] : "-")}\"");
             }
+        }
+
+        /// <summary>저장 파일로 쓰고, 읽고, 다시 쓴 글이 처음 쓴 글과 같은지 본다.</summary>
+        void CheckSaveRoundTrip(Report report, GameSave save, string runTag)
+        {
+            report.SaveRoundTrips++;
+            string text = save.Write();
+            string again;
+            try
+            {
+                again = GameSave.Parse(text, _db, _rarities, "시험").Write();
+            }
+            catch (FormatException e)
+            {
+                again = "읽기 실패: " + e.Message;
+            }
+            if (again != text)
+            {
+                report.SaveRoundTripMismatches++;
+                if (report.SaveRoundTripMismatches <= 3)
+                    report.Problems.Add($"{runTag} 듀얼 {save.Run.DuelsPlayed} 뒤 저장 다시 읽기 불일치: {FirstDifference(text, again)}");
+            }
+        }
+
+        /// <summary>
+        /// 같은 결과·같은 보충 선택으로 런 규칙만 다시 돌리되, 걸음(듀얼·보충)마다 저장 파일을 읽은 런으로 이어 간다.
+        /// 끝난 뒤의 저장 글(컬렉션·런 상태·이벤트 전부)이 원래 런과 같아야 한다.
+        /// </summary>
+        void CheckSaveReplay(Report report, RunSetup setup, GameSave original, List<(DuelResult Result, int Lp)> outcomes,
+            List<uint> refills, string runTag)
+        {
+            if (original.Run.Phase == RunPhase.InDuel)
+                return; // 듀얼이 끝나지 않아 멈춘 런 (따로 중단으로 센다)
+            var save = GameSave.NewGame();
+            save.StartRun(setup, _db, _rarities);
+            int nextOutcome = 0, nextRefill = 0;
+            while (save.Run.Phase != RunPhase.Ended)
+            {
+                save = GameSave.Parse(save.Write(), _db, _rarities, "시험");
+                var run = save.Run;
+                if (run.Phase == RunPhase.NeedsRefill)
+                {
+                    if (nextRefill >= refills.Count) break;
+                    run.MoveToDeck(refills[nextRefill++]);
+                    continue;
+                }
+                if (nextOutcome >= outcomes.Count) break;
+                run.BeginDuel();
+                var (result, lp) = outcomes[nextOutcome++];
+                run.FinishDuel(result, lp);
+            }
+            string a = original.Write(), b = save.Write();
+            if (a != b)
+            {
+                report.SaveReplayMismatches++;
+                report.Problems.Add($"{runTag} 저장하며 이어 간 런이 원래 런과 다름: {FirstDifference(a, b)}");
+            }
+        }
+
+        static string FirstDifference(string a, string b)
+        {
+            var x = a.Split('\n');
+            var y = b.Split('\n');
+            for (int i = 0; i < Math.Max(x.Length, y.Length); i++)
+            {
+                string p = i < x.Length ? x[i] : "(없음)", q = i < y.Length ? y[i] : "(없음)";
+                if (p != q)
+                    return $"{i + 1}번째 줄 \"{p}\" / \"{q}\"";
+            }
+            return "같음";
         }
 
         /// <summary>런의 첫 듀얼을 같은 설정·같은 플레이어 시드로 엔진에서 다시 돌려, 승자·LP·턴 수가 같은지 본다.</summary>

@@ -14,6 +14,7 @@
 - 모든 듀얼이 끝나고 엔진 오류·예외·대체 응답·거절된 응답·해석하지 않은 메시지 0
 - 단계마다 다시 계산한 런 규칙 점검 위반 0
 - 같은 시드·같은 결과로 런 규칙만 다시 돌린 이벤트가 같음, 런의 첫 듀얼을 엔진으로 다시 돌린 결과가 같음
+- 저장: 단계마다 저장 파일로 쓰고 읽어 다시 쓴 글이 같음, 걸음마다 저장 파일을 읽은 런으로 이어 가도 끝 상태가 같음
 보상 등급 분포, 기절 장수, 듀얼 시작 LP별 승률 등은 보고만 한다.
 
 PowerShell 7(pwsh)에서 실행한다.
@@ -152,6 +153,7 @@ for ($i = 0; $i -lt 5; $i++) {
     Write-Host ("      {0,-10}: 듀얼 {1}, 승률 {2}" -f [DuelRoguelike.Dev.RunRuleStats]::LpBucketNames[$i], $s.LpBucketDuels[$i], (Percent $s.LpBucketWins[$i] $s.LpBucketDuels[$i]))
 }
 Write-Host "    재현: 런 규칙 다시 돌리기 불일치 $($r.RuleReplayMismatches), 첫 듀얼 다시 돌리기 불일치 $($r.EngineReplayMismatches) (다시 돌린 듀얼 $($r.ReplayDuel.Duels)판, 점검 통과 $($r.ReplayDuel.Ok))"
+Write-Host "    저장: 쓰고 읽어 다시 쓰기 $($r.SaveRoundTrips)번 중 불일치 $($r.SaveRoundTripMismatches), 걸음마다 저장을 읽어 이어 간 런 불일치 $($r.SaveReplayMismatches)"
 foreach ($p in $r.Problems) { Write-Host "      $p" -ForegroundColor Red }
 
 if ($failed -or -not $r.Ok) { Write-Host '==> 실패' -ForegroundColor Red; exit 1 }
