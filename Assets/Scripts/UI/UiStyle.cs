@@ -95,6 +95,41 @@ namespace DuelRoguelike.UI
             e.style.borderLeftWidth = e.style.borderRightWidth = e.style.borderTopWidth = e.style.borderBottomWidth = width;
         }
 
+        static Font _font;
+
+        /// <summary>
+        /// 화면 하나(UIDocument)를 parent 아래 게임 오브젝트로 만들고 루트를 돌려준다. 화면마다 따로 만들고, 숨길 때는 루트의 display를 끈다.
+        /// 기준 해상도 1920×1080, 유니티 기본 런타임 테마, 한글 글꼴(맑은 고딕).
+        /// </summary>
+        public static VisualElement CreateDocument(Transform parent, string name)
+        {
+            var panel = ScriptableObject.CreateInstance<PanelSettings>();
+            panel.name = name + "Panel";
+            panel.scaleMode = PanelScaleMode.ScaleWithScreenSize;
+            panel.referenceResolution = new Vector2Int(1920, 1080);
+            panel.screenMatchMode = PanelScreenMatchMode.MatchWidthOrHeight;
+            panel.match = 0.5f;
+            // 유니티 기본 런타임 테마 (Assets/UI/Resources/DuelTheme.tss). 없으면 버튼·스크롤바 기본 모양이 빠진다.
+            panel.themeStyleSheet = Resources.Load<ThemeStyleSheet>("DuelTheme");
+            if (panel.themeStyleSheet == null)
+                Debug.LogWarning("Assets/UI/Resources/DuelTheme.tss를 찾지 못했습니다.");
+
+            var go = new GameObject(name);
+            go.SetActive(false);
+            go.transform.SetParent(parent, false);
+            var document = go.AddComponent<UIDocument>();
+            document.panelSettings = panel;
+            go.SetActive(true);
+
+            var docRoot = document.rootVisualElement;
+            // 한글 글꼴: Windows 기본 글꼴(맑은 고딕)을 실행 중에 불러온다. 프로젝트에는 글꼴 파일을 넣지 않는다.
+            if (_font == null)
+                _font = Font.CreateDynamicFontFromOSFont(new[] { "Malgun Gothic", "맑은 고딕" }, 32);
+            docRoot.style.unityFontDefinition = FontDefinition.FromFont(_font);
+            docRoot.style.color = UiStyle.Text;
+            return docRoot;
+        }
+
         public static VisualElement PanelBox(string name = null)
         {
             var e = Box(name);
