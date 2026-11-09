@@ -19,10 +19,18 @@ namespace DuelRoguelike.UI
     {
         /// <summary>덱 격자</summary>
         Small,
-        /// <summary>컬렉션·보충 후보</summary>
+        /// <summary>컬렉션·보충 후보, 듀얼 손패와 카드 목록 창</summary>
         Medium,
         /// <summary>카드 정보 (크게 보기)</summary>
         Large,
+        /// <summary>듀얼 필드의 칸과 카드 더미</summary>
+        Field,
+    }
+
+    /// <summary>듀얼 중의 지금 공격력·수비력. 원래 값보다 높으면 초록, 낮으면 빨강으로 쓴다.</summary>
+    public struct CardStats
+    {
+        public int Attack, Defense, BaseAttack, BaseDefense;
     }
 
     public sealed class CardFaces
@@ -30,6 +38,11 @@ namespace DuelRoguelike.UI
         static readonly Color Ink = UiStyle.Hex(0xf6efe2);
         static readonly Color InkDim = UiStyle.Hex(0xd9cdb8);
         static readonly Color Cyan = UiStyle.Hex(0x4fd1e8);
+        static readonly Color Up = UiStyle.Hex(0x5ee07a);
+        static readonly Color Down = UiStyle.Hex(0xff7a6a);
+        static readonly Color BackColor = UiStyle.Hex(0x263042);
+        static readonly Color BackLine = UiStyle.Hex(0x4a5a78);
+        static readonly Color BackMark = UiStyle.Hex(0xb08a3a);
 
         readonly DuelText _text;
         readonly RarityTable _rarities;
@@ -48,18 +61,33 @@ namespace DuelRoguelike.UI
             {
                 case CardFaceSize.Small: return new Vector2(82, 120);
                 case CardFaceSize.Medium: return new Vector2(108, 158);
+                case CardFaceSize.Field: return new Vector2(84, 122);
                 default: return new Vector2(250, 365);
             }
         }
 
-        /// <summary>카드 앞면 하나. count가 2 이상이면 ×n, tag가 있으면 왼쪽 위에 짧은 표시.</summary>
-        public VisualElement Build(uint code, CardFaceSize size, int count = 0, string tag = null)
+        static float ScaleOf(CardFaceSize size)
+        {
+            switch (size)
+            {
+                case CardFaceSize.Small: return 1f;
+                case CardFaceSize.Medium: return 1.25f;
+                case CardFaceSize.Field: return 1.03f;
+                default: return 2.4f;
+            }
+        }
+
+        /// <summary>
+        /// 카드 앞면 하나. count가 2 이상이면 ×n, tag가 있으면 왼쪽 위에 짧은 표시.
+        /// stats가 있으면 ATK/DEF를 그 값으로 쓴다 (듀얼 중 바뀐 값).
+        /// </summary>
+        public VisualElement Build(uint code, CardFaceSize size, int count = 0, string tag = null, CardStats? stats = null)
         {
             var record = _text.Record(code);
             var type = record?.Type ?? OcgCardType.None;
             var frame = FrameColor(type);
             var dims = SizeOf(size);
-            float scale = size == CardFaceSize.Small ? 1f : size == CardFaceSize.Medium ? 1.25f : 2.4f;
+            float scale = ScaleOf(size);
 
             var card = new VisualElement { name = "card-face" };
             card.pickingMode = PickingMode.Position;
@@ -117,8 +145,17 @@ namespace DuelRoguelike.UI
             if (record != null && !spell && !trap)
             {
                 int stat = Mathf.RoundToInt(11 * scale);
-                foot.Add(Text(Stat(record.Data.Attack), stat, Ink, bold: true));
-                foot.Add(Text(Stat(record.Data.Defense), stat, InkDim, bold: true));
+                if (stats.HasValue)
+                {
+                    var s = stats.Value;
+                    foot.Add(Text(Stat(s.Attack), stat, Compare(s.Attack, s.BaseAttack, Ink), bold: true));
+                    foot.Add(Text(Stat(s.Defense), stat, Compare(s.Defense, s.BaseDefense, InkDim), bold: true));
+                }
+                else
+                {
+                    foot.Add(Text(Stat(record.Data.Attack), stat, Ink, bold: true));
+                    foot.Add(Text(Stat(record.Data.Defense), stat, InkDim, bold: true));
+                }
             }
             else if (image != null && record != null)
                 foot.Add(Text(SubType(type) + (spell ? " 마법" : " 함정"), Mathf.RoundToInt(10 * scale), InkDim));
@@ -132,6 +169,41 @@ namespace DuelRoguelike.UI
                 art.Add(Badge("×" + count, UiStyle.Text, Position.Absolute, bottom: inset, right: inset, size: Mathf.RoundToInt(11 * scale)));
             if (!string.IsNullOrEmpty(tag))
                 art.Add(Badge(tag, UiStyle.Hex(0x5ee07a), Position.Absolute, top: inset, left: inset, size: Mathf.RoundToInt(10 * scale)));
+            return card;
+        }
+
+        static Color Compare(int value, int original, Color same) => value > original ? Up : value < original ? Down : same;
+
+        /// <summary>
+        /// 카드 뒷면 (직접 디자인: 어두운 바탕, 안쪽 테두리, 가운데 마름모). 공식 카드 뒷면은 따르지 않는다.
+        /// </summary>
+        public VisualElement BuildBack(CardFaceSize size)
+        {
+            var dims = SizeOf(size);
+            float scale = ScaleOf(size);
+            var card = new VisualElement { name = "card-back" };
+            card.style.width = dims.x;
+            card.style.height = dims.y;
+            card.style.flexShrink = 0;
+            card.style.backgroundColor = BackColor;
+            UiStyle.Radius(card, 4 * scale);
+            UiStyle.Padding(card, 4 * scale);
+            UiStyle.BorderColor(card, Color.Lerp(BackColor, Color.black, 0.45f), 1);
+
+            var inner = new VisualElement { pickingMode = PickingMode.Ignore };
+            inner.style.flexGrow = 1;
+            inner.style.justifyContent = Justify.Center;
+            inner.style.alignItems = Align.Center;
+            UiStyle.Radius(inner, 3 * scale);
+            UiStyle.BorderColor(inner, BackLine, Mathf.Max(1, 1.5f * scale));
+
+            var mark = new VisualElement { pickingMode = PickingMode.Ignore };
+            mark.style.width = mark.style.height = Mathf.Round(dims.x * 0.32f);
+            mark.style.rotate = new StyleRotate(new Rotate(new Angle(45f, AngleUnit.Degree)));
+            mark.style.backgroundColor = Color.Lerp(BackColor, Color.black, 0.25f);
+            UiStyle.BorderColor(mark, BackMark, Mathf.Max(1, 2f * scale));
+            inner.Add(mark);
+            card.Add(inner);
             return card;
         }
 
