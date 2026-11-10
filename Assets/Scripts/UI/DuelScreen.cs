@@ -174,15 +174,19 @@ namespace DuelRoguelike.UI
         bool _spaceHeld;
         string _badgeText;
         float _badgeUntil;
-        const float BadgeLingerSeconds = 0.6f;
+        const float BadgeLingerSeconds = 0.3f; // 건너뜀·가속 표시: 끝난 뒤 그대로 두는 시간
+        const float BadgeFadeSeconds = 0.6f;   // 그 뒤 흐려지며 사라지는 시간
+        const string SkipText = "건너뜀 · 다음 입력까지";
+        const string SpeedUpText = "가속 중 · 스페이스";
+        const string FieldViewText = "필드 확인 중 · Esc로 선택 창 다시 열기";
 
         /// <summary>선택 창(예·아니오, 카드 고르기)을 닫고 필드를 보는 중인지.</summary>
         bool InFieldView => !_autoPlay && _interaction != null && !_modalOpen
             && (_interaction.Dialog != null || (_interaction.Selection != null && _interaction.Selection.NeedsWindow && _windowHidden));
 
         /// <summary>
-        /// 필드 오른쪽 위 모서리에 지금 상태를 띄운다: 건너뛰는 중(엔터·필드 누르기) / 가속 중(스페이스) / 필드 확인 중(선택 창을 닫고 필드를 볼 때).
-        /// 건너뛰기는 한두 프레임에 끝날 수도 있어서 잠깐 더 남겨 둔다.
+        /// 필드 오른쪽 위 모서리에 지금 상태를 띄운다: 건너뜀(엔터·필드 누르기) / 가속 중(스페이스) / 필드 확인 중(선택 창을 닫고 필드를 볼 때).
+        /// 건너뜀·가속 표시는 끝나도 잠깐 남겼다가 흐려지며 사라진다 (건너뛰기는 한두 프레임에 끝나기도 한다). 필드 확인 중은 바로 사라진다.
         /// </summary>
         void UpdateStatusBadge()
         {
@@ -194,22 +198,32 @@ namespace DuelRoguelike.UI
             if (playing && _skipping)
                 text = SkipText;
             else if (playing && _spaceHeld)
-                text = "가속 중 · 스페이스";
+                text = SpeedUpText;
             else if (_session != null && InFieldView)
             {
-                text = "필드 확인 중 · Esc로 선택 창 다시 열기";
+                text = FieldViewText;
                 color = Selectable;
             }
 
             float now = Time.realtimeSinceStartup;
             if (text != null)
-                _badgeUntil = now + BadgeLingerSeconds;
-            else if (now < _badgeUntil && _badgeText != null && !_badgeText.StartsWith("필드"))
-                return; // 건너뛰기·가속 표시는 잠깐 남긴다
-            SetBadge(text, color);
+            {
+                if (text != FieldViewText)
+                    _badgeUntil = now + BadgeLingerSeconds;
+                SetBadge(text, color);
+                return;
+            }
+            if (_badgeText == null || _badgeText == FieldViewText)
+            {
+                SetBadge(null, color);
+                return;
+            }
+            float fade = (now - _badgeUntil) / BadgeFadeSeconds;
+            if (fade >= 1f)
+                SetBadge(null, color);
+            else
+                _statusBadge.style.opacity = Mathf.Clamp01(1f - fade);
         }
-
-        const string SkipText = "건너뛰는 중 · 다음 입력까지";
 
         /// <summary>다음 입력까지 남은 연출을 건너뛴다 (엔터·필드 누르기·건너뛰기 버튼). 한 프레임에 끝나도 표시가 보이게 바로 띄운다.</summary>
         void BeginSkip()
@@ -219,10 +233,12 @@ namespace DuelRoguelike.UI
             SetBadge(SkipText, UiStyle.Accent);
         }
 
+        /// <summary>표시를 바꾼다 (null이면 숨긴다). 바꿀 때마다 흐려진 것을 다시 또렷하게 한다.</summary>
         void SetBadge(string text, Color color)
         {
             if (_statusBadge == null)
                 return;
+            _statusBadge.style.opacity = 1f;
             if (text != null)
                 _statusBadge.style.backgroundColor = color;
             if (text == _badgeText)

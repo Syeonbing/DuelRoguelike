@@ -625,10 +625,25 @@ namespace DuelRoguelike.Tests
                 if (battle && !_skipSeen && skip != null)
                 {
                     Click(skip);
-                    string badge = Find<Label>(DuelUi, "status-badge")?.text ?? "";
-                    StringAssert.StartsWith("건너뛰는 중", badge, "건너뛰기를 눌렀는데 모서리 표시가 다르다");
+                    var badge = Find<Label>(DuelUi, "status-badge");
+                    StringAssert.StartsWith("건너뜀", badge?.text ?? "", "건너뛰기를 눌렀는데 모서리 표시가 다르다");
                     _skipSeen = true;
                     yield return Shot(DuelUi, "2i-skip");
+                    // 건너뛰기가 끝나면 표시가 흐려지며 사라진다 (바로 사라지지 않는다).
+                    bool faded = false;
+                    float fadeUntil = Time.realtimeSinceStartup + 5;
+                    while (badge.style.display.value == DisplayStyle.Flex && Time.realtimeSinceStartup < fadeUntil)
+                    {
+                        float alpha = badge.style.opacity.value;
+                        if (!faded && alpha > 0.1f && alpha < 0.9f)
+                        {
+                            faded = true;
+                            yield return Shot(DuelUi, "2j-skip-fade");
+                        }
+                        yield return null;
+                    }
+                    Assert.IsTrue(faded, "건너뜀 표시가 흐려지지 않고 사라졌다");
+                    Assert.AreEqual(DisplayStyle.None, badge.style.display.value, "건너뜀 표시가 사라지지 않는다");
                 }
                 var once = Find<Button>(DuelUi, "auto-once");
                 if (once != null)
