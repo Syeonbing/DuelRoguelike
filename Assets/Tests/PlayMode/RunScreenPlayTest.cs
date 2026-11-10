@@ -58,6 +58,10 @@ namespace DuelRoguelike.Tests
         bool _previewSeen;
         bool _fieldViewSeen;
         bool _chainSeen;
+        bool _speedSeen;
+        bool _lpSeen;
+        // 필드 보기는 선택 창(묘지·덱에서 고르기, 예/아니오 등)이 뜰 때만 있어서 기다리지 않는다. 뜨면 확인한다.
+        bool PlaybackAllSeen => _previewSeen && _skipSeen && _chainSeen && _speedSeen && _lpSeen;
         bool _skipSeen;
         const int MaxPlaybackTries = 3;
 
@@ -579,7 +583,7 @@ namespace DuelRoguelike.Tests
             int steps = 0;
             bool attack = false, battle = false;
             string last = null;
-            while (!(battle && _previewSeen && _skipSeen && _chainSeen) && Time.realtimeSinceStartup < until && Find<Button>(DuelUi, "leave-duel") == null)
+            while (!(battle && PlaybackAllSeen) && Time.realtimeSinceStartup < until && Find<Button>(DuelUi, "leave-duel") == null)
             {
                 // 내가 공격 대상을 고를 때: 후보 몬스터 위의 예상 결과
                 var note = Root(DuelUi)?.Query<Label>("attack-preview").Where(l => l.style.display.value == DisplayStyle.Flex && !string.IsNullOrEmpty(l.text)).First();
@@ -608,6 +612,19 @@ namespace DuelRoguelike.Tests
                             battle = true;
                             yield return Shot(DuelUi, "2f-duel-battle");
                         }
+                    }
+                }
+                // LP가 바뀌는 단계: LP 옆에 바뀐 양 (−1450 / +1000)
+                if (!_lpSeen)
+                {
+                    var delta = new[] { "lp-delta-0", "lp-delta-1" }.Select(n => Find<Label>(DuelUi, n))
+                        .FirstOrDefault(l => l != null && !string.IsNullOrEmpty(l.text));
+                    if (delta != null)
+                    {
+                        _lpSeen = true;
+                        StringAssert.IsMatch("^[+−][0-9]+$", delta.text, "LP 옆 바뀐 양 표시가 이상하다");
+                        Debug.Log($"[런 화면 시험] LP 변화: {delta.name} {delta.text}");
+                        yield return Shot(DuelUi, "2l-lp-delta");
                     }
                 }
                 // 체인이 쌓이면 로그 위 체인 목록 (체인이 생길 때만)
@@ -654,14 +671,75 @@ namespace DuelRoguelike.Tests
                     Assert.IsTrue(faded, "건너뜀 표시가 흐려지지 않고 사라졌다");
                     Assert.AreEqual(DisplayStyle.None, badge.style.display.value, "건너뜀 표시가 사라지지 않는다");
                 }
+                // 건너뛰기를 본 뒤: 보여 주는 중 스페이스를 누르고 있으면 모서리에 "가속 중"
+                if (_skipSeen && !_speedSeen && Find<Button>(DuelUi, "skip-playback") != null)
+                    yield return CheckSpeedUp();
                 var once = Find<Button>(DuelUi, "auto-once");
                 if (once != null)
                     Click(once);
                 yield return null;
             }
-            _playbackDone = battle && _previewSeen && _skipSeen && _chainSeen;
+            _playbackDone = battle && PlaybackAllSeen;
             Assert.Greater(steps, 0, "자동(한 번)으로 답했는데 멈춰 보여 주는 단계가 없다");
-            Debug.Log($"[런 화면 시험] 한 단계씩 보여 주기 ({_playbackTries}번째): 멈춘 단계 {steps}개, 상대 공격 {(attack ? "봄" : "못 봄")}, 그 뒤 데미지 계산 {(battle ? "봄" : "못 봄")}");
+            Debug.Log($"[런 화면 시험] 한 단계씩 보여 주기 ({_playbackTries}번째): 멈춘 단계 {steps}개, 상대 공격 {(attack ? "봄" : "못 봄")}, 그 뒤 데미지 계산 {(battle ? "봄" : "못 봄")}"
+                + $", 필드 확인 중 {(_fieldViewSeen ? "봄" : "못 봄")}, 가속 중 {(_speedSeen ? "봄" : "못 봄")}, LP 변화 {(_lpSeen ? "봄" : "못 봄")}");
+        }
+
+        /// <summary>
+        /// 보여 주는 중 스페이스를 누르고 있으면 모서리에 "가속 중", 떼면 흐려지며 사라진다.
+        /// 가상 키보드로 누른다. 그 사이 보여 주기가 끝나 버리면 다음에 다시 본다.
+        /// </summary>
+        IEnumerator CheckSpeedUp()
+        {
+            var settings = UnityEngine.InputSystem.InputSystem.settings;
+            var background = settings.backgroundBehavior;
+            var editorBehavior = settings.editorInputBehaviorInPlayMode;
+            // 배치 모드는 창에 포커스가 없어서 키 입력이 버려질 수 있다
+            settings.backgroundBehavior = UnityEngine.InputSystem.InputSettings.BackgroundBehavior.IgnoreFocus;
+            settings.editorInputBehaviorInPlayMode = UnityEngine.InputSystem.InputSettings.EditorInputBehaviorInPlayMode.AllDeviceInputAlwaysGoesToGameView;
+            var keyboard = UnityEngine.InputSystem.InputSystem.AddDevice<UnityEngine.InputSystem.Keyboard>();
+            try
+            {
+                keyboard.MakeCurrent();
+                UnityEngine.InputSystem.InputSystem.QueueStateEvent(keyboard,
+                    new UnityEngine.InputSystem.LowLevel.KeyboardState(UnityEngine.InputSystem.Key.Space));
+                Label badge = null;
+                for (int i = 0; i < 30 && badge == null; i++)
+                {
+                    yield return null;
+                    var b = Find<Label>(DuelUi, "status-badge");
+                    if (b != null && b.style.display.value == DisplayStyle.Flex && b.text.StartsWith("가속 중"))
+                        badge = b;
+                }
+                Assert.IsTrue(keyboard.spaceKey.isPressed, "가상 키보드의 스페이스 입력이 들어가지 않는다");
+                if (badge == null)
+                {
+                    Assert.IsNull(Find<Button>(DuelUi, "skip-playback"), "보여 주는 중 스페이스를 누르고 있는데 모서리에 가속 중이 안 뜬다");
+                    yield break; // 그 사이 보여 주기가 끝났다. 다음에 다시 본다.
+                }
+                _speedSeen = true;
+                yield return Shot(DuelUi, "2m-speed-up");
+                // 떼면 바로 사라지지 않고 흐려지며 사라진다
+                UnityEngine.InputSystem.InputSystem.QueueStateEvent(keyboard, new UnityEngine.InputSystem.LowLevel.KeyboardState());
+                bool faded = false;
+                float fadeUntil = Time.realtimeSinceStartup + 5;
+                while (badge.style.display.value == DisplayStyle.Flex && badge.text.StartsWith("가속 중") && Time.realtimeSinceStartup < fadeUntil)
+                {
+                    float alpha = badge.style.opacity.value;
+                    if (alpha > 0.1f && alpha < 0.9f)
+                        faded = true;
+                    yield return null;
+                }
+                Assert.IsTrue(faded, "가속 중 표시가 흐려지지 않고 사라졌다");
+                Assert.IsFalse(badge.style.display.value == DisplayStyle.Flex && badge.text.StartsWith("가속 중"), "스페이스를 뗐는데 가속 중 표시가 사라지지 않는다");
+                Debug.Log("[런 화면 시험] 스페이스 누르는 동안 가속 중 → 떼면 흐려지며 사라짐");
+            }
+            finally
+            {
+                UnityEngine.InputSystem.InputSystem.RemoveDevice(keyboard);
+                settings.backgroundBehavior = background;
+                settings.editorInputBehaviorInPlayMode = editorBehavior;
+            }
         }
 
         /// <summary>"6턴 · …" → 6. 듀얼 준비 중이거나 없으면 0.</summary>
