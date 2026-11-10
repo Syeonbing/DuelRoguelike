@@ -13,6 +13,7 @@
 // 듀얼 화면은 한 번, 6턴쯤에 자동 진행을 멈추고 카드에 마우스 올리기(왼쪽 카드 정보)와 묘지 누르기(카드 목록 창)를 해 본다.
 // 오류 로그(Debug.LogError·LogException)가 하나라도 나오면 실패한다.
 // 환경 변수 DUELROGUELIKE_SCREENSHOT_DIR에 폴더를 주면 화면마다 처음 한 번 1920×1080 PNG로 저장한다 (화면 모양 확인용).
+// DUELROGUELIKE_SCREEN_THOROUGH=1이면 한 단계씩 보여 주기를 더 오래(더 많은 듀얼에서) 지켜보며 가끔만 생기는 장면(체인 2 이상, 상대 체인, 선택 창)도 기다린다.
 //
 // 실행: 에디터의 Test Runner 창(Window > General > Test Runner) PlayMode 탭, 또는 에디터를 닫고 배치 모드로
 //   & "C:\Program Files\Unity\Hub\Editor\6000.3.28f1\Editor\Unity.exe" -batchmode -projectPath C:\Dev\DuelRoguelike -runTests -testPlatform PlayMode -testResults C:\Dev\playmode-results.xml -logFile C:\Dev\playmode.log
@@ -61,9 +62,14 @@ namespace DuelRoguelike.Tests
         bool _speedSeen;
         bool _lpSeen;
         // 필드 보기는 선택 창(묘지·덱에서 고르기, 예/아니오 등)이 뜰 때만 있어서 기다리지 않는다. 뜨면 확인한다.
-        bool PlaybackAllSeen => _previewSeen && _skipSeen && _chainSeen && _speedSeen && _lpSeen;
+        bool PlaybackAllSeen => _previewSeen && _skipSeen && _chainSeen && _speedSeen && _lpSeen && _enterSeen;
+        bool _enterSeen;
+        // 체인 목록: 체인 2 이상, "처리 중", 상대가 발동한 줄 (생길 때만 본다)
+        bool _chain2Seen, _chainSolvingSeen, _chainOpponentSeen;
         bool _skipSeen;
-        const int MaxPlaybackTries = 3;
+        static readonly bool Thorough = Environment.GetEnvironmentVariable("DUELROGUELIKE_SCREEN_THOROUGH") == "1";
+        static readonly int MaxPlaybackTries = Thorough ? 8 : 3;
+        bool RareSeen => _chain2Seen && _chainOpponentSeen && _fieldViewSeen;
 
         string SaveFile => Path.Combine(_saveDir, "save.txt");
 
@@ -583,7 +589,7 @@ namespace DuelRoguelike.Tests
             int steps = 0;
             bool attack = false, battle = false;
             string last = null;
-            while (!(battle && PlaybackAllSeen) && Time.realtimeSinceStartup < until && Find<Button>(DuelUi, "leave-duel") == null)
+            while (!(battle && PlaybackAllSeen && (!Thorough || RareSeen)) && Time.realtimeSinceStartup < until && Find<Button>(DuelUi, "leave-duel") == null)
             {
                 // 내가 공격 대상을 고를 때: 후보 몬스터 위의 예상 결과
                 var note = Root(DuelUi)?.Query<Label>("attack-preview").Where(l => l.style.display.value == DisplayStyle.Flex && !string.IsNullOrEmpty(l.text)).First();
@@ -635,16 +641,22 @@ namespace DuelRoguelike.Tests
                     Debug.Log($"[런 화면 시험] 체인 목록: {string.Join(" / ", chainPanel.Query<Label>().ToList().Select(l => l.text))}");
                     yield return Shot(DuelUi, "2k-chain");
                 }
-                // 선택 창의 "필드 보기" → 모서리에 "필드 확인 중" (선택 창이 뜰 때만)
-                var fieldView = Find<Button>(DuelUi, "field-view");
-                if (!_fieldViewSeen && fieldView != null)
+                yield return CheckChainPanel();
+                // 선택 창이 뜨면 (뜰 때만): Esc → 창을 닫고 "필드 확인 중", Esc → 창이 다시 열림, "필드 보기" → "필드 확인 중"
+                if (!_fieldViewSeen && Find<Button>(DuelUi, "field-view") != null)
                 {
+                    yield return Tap(UnityEngine.InputSystem.Key.Escape);
+                    StringAssert.StartsWith("필드 확인 중", BadgeText(), "선택 창에서 Esc를 눌렀는데 모서리 표시가 다르다");
+                    Assert.IsNull(Find<Button>(DuelUi, "field-view"), "Esc를 눌렀는데 선택 창이 닫히지 않았다");
+                    yield return Shot(DuelUi, "2h-field-view");
+                    yield return Tap(UnityEngine.InputSystem.Key.Escape);
+                    var fieldView = Find<Button>(DuelUi, "field-view");
+                    Assert.IsNotNull(fieldView, "필드 확인 중 Esc를 눌렀는데 선택 창이 다시 열리지 않았다");
                     Click(fieldView);
                     yield return null;
-                    string badge = Find<Label>(DuelUi, "status-badge")?.text ?? "";
-                    StringAssert.StartsWith("필드 확인 중", badge, "필드 보기를 눌렀는데 모서리 표시가 다르다");
+                    StringAssert.StartsWith("필드 확인 중", BadgeText(), "필드 보기를 눌렀는데 모서리 표시가 다르다");
                     _fieldViewSeen = true;
-                    yield return Shot(DuelUi, "2h-field-view");
+                    Debug.Log("[런 화면 시험] 선택 창: Esc → 필드 확인 중, Esc → 창 다시 열림, 필드 보기 → 필드 확인 중");
                 }
                 // 상대 공격을 본 뒤: 건너뛰기 → 모서리에 "건너뛰는 중"
                 var skip = Find<Button>(DuelUi, "skip-playback");
@@ -674,15 +686,109 @@ namespace DuelRoguelike.Tests
                 // 건너뛰기를 본 뒤: 보여 주는 중 스페이스를 누르고 있으면 모서리에 "가속 중"
                 if (_skipSeen && !_speedSeen && Find<Button>(DuelUi, "skip-playback") != null)
                     yield return CheckSpeedUp();
+                // 가속 중을 본 뒤: 보여 주는 중 엔터 → 모서리에 "건너뜀"
+                if (_speedSeen && !_enterSeen && Find<Button>(DuelUi, "skip-playback") != null)
+                {
+                    yield return Tap(UnityEngine.InputSystem.Key.Enter);
+                    if (BadgeText().StartsWith("건너뜀"))
+                    {
+                        _enterSeen = true;
+                        Debug.Log("[런 화면 시험] 보여 주는 중 엔터 → 건너뜀");
+                    }
+                    else // 그 사이 보여 주기가 끝났으면 다음에 다시 본다
+                        Assert.IsNull(Find<Button>(DuelUi, "skip-playback"), "보여 주는 중 엔터를 눌렀는데 모서리에 건너뜀이 안 뜬다");
+                }
                 var once = Find<Button>(DuelUi, "auto-once");
                 if (once != null)
                     Click(once);
                 yield return null;
             }
-            _playbackDone = battle && PlaybackAllSeen;
+            _playbackDone = battle && PlaybackAllSeen && (!Thorough || RareSeen);
             Assert.Greater(steps, 0, "자동(한 번)으로 답했는데 멈춰 보여 주는 단계가 없다");
             Debug.Log($"[런 화면 시험] 한 단계씩 보여 주기 ({_playbackTries}번째): 멈춘 단계 {steps}개, 상대 공격 {(attack ? "봄" : "못 봄")}, 그 뒤 데미지 계산 {(battle ? "봄" : "못 봄")}"
-                + $", 필드 확인 중 {(_fieldViewSeen ? "봄" : "못 봄")}, 가속 중 {(_speedSeen ? "봄" : "못 봄")}, LP 변화 {(_lpSeen ? "봄" : "못 봄")}");
+                + $", 필드 확인 중 {(_fieldViewSeen ? "봄" : "못 봄")}, 가속 중 {(_speedSeen ? "봄" : "못 봄")}, LP 변화 {(_lpSeen ? "봄" : "못 봄")}"
+                + $", 체인 2 이상 {(_chain2Seen ? "봄" : "못 봄")}, 상대 체인 {(_chainOpponentSeen ? "봄" : "못 봄")}");
+        }
+
+        static string BadgeText()
+        {
+            var badge = Find<Label>(DuelUi, "status-badge");
+            return badge != null && badge.style.display.value == DisplayStyle.Flex ? badge.text : "";
+        }
+
+        /// <summary>체인 목록에 체인 2 이상, "처리 중", 상대가 발동한 줄이 생기면 찍는다 (생길 때만).</summary>
+        IEnumerator CheckChainPanel()
+        {
+            var panel = Find<VisualElement>(DuelUi, "chain-panel");
+            if (panel == null || panel.style.display.value != DisplayStyle.Flex)
+                yield break;
+            string Labels() => string.Join(" / ", panel.Query<Label>().ToList().Select(l => l.text));
+            if (!_chain2Seen && panel.Q("chain-2") != null)
+            {
+                _chain2Seen = true;
+                // 위에서부터 처리: 가장 나중 체인이 맨 위
+                var numbers = panel.Query<VisualElement>().ToList().Where(e => e.name != null && Regex.IsMatch(e.name, @"^chain-\d+$"))
+                    .Select(e => int.Parse(e.name.Substring(6))).ToList();
+                Assert.IsTrue(numbers.Count >= 2 && numbers.SequenceEqual(numbers.OrderByDescending(n => n)),
+                    $"체인 목록이 위에서부터 처리 순서(나중 체인이 위)가 아니다: {string.Join(", ", numbers)}");
+                Debug.Log($"[런 화면 시험] 체인 2 이상: {Labels()}");
+                yield return Shot(DuelUi, "2n-chain-2");
+            }
+            if (!_chainSolvingSeen && panel.Query<Label>().Where(l => l.text == "처리 중").First() != null)
+            {
+                _chainSolvingSeen = true;
+                Debug.Log($"[런 화면 시험] 체인 처리 중: {Labels()}");
+                yield return Shot(DuelUi, "2o-chain-solving");
+            }
+            if (!_chainOpponentSeen && panel.Query<Label>().Where(l => l.text.StartsWith("상대 ·")).First() != null)
+            {
+                _chainOpponentSeen = true;
+                Debug.Log($"[런 화면 시험] 상대가 발동한 체인: {Labels()}");
+                yield return Shot(DuelUi, "2p-chain-opponent");
+            }
+        }
+
+        /// <summary>시험용 가상 키보드. 배치 모드는 창에 포커스가 없어 키 입력이 버려질 수 있어서, 쓰는 동안만 포커스를 무시하게 한다.</summary>
+        sealed class VirtualKeyboard : IDisposable
+        {
+            readonly UnityEngine.InputSystem.InputSettings.BackgroundBehavior _background;
+            readonly UnityEngine.InputSystem.InputSettings.EditorInputBehaviorInPlayMode _editor;
+            public readonly UnityEngine.InputSystem.Keyboard Device;
+
+            public VirtualKeyboard()
+            {
+                var settings = UnityEngine.InputSystem.InputSystem.settings;
+                _background = settings.backgroundBehavior;
+                _editor = settings.editorInputBehaviorInPlayMode;
+                settings.backgroundBehavior = UnityEngine.InputSystem.InputSettings.BackgroundBehavior.IgnoreFocus;
+                settings.editorInputBehaviorInPlayMode = UnityEngine.InputSystem.InputSettings.EditorInputBehaviorInPlayMode.AllDeviceInputAlwaysGoesToGameView;
+                Device = UnityEngine.InputSystem.InputSystem.AddDevice<UnityEngine.InputSystem.Keyboard>();
+                Device.MakeCurrent();
+            }
+
+            /// <summary>이 키들만 눌린 상태로 둔다 (빈 목록이면 모두 뗀다).</summary>
+            public void Hold(params UnityEngine.InputSystem.Key[] keys) =>
+                UnityEngine.InputSystem.InputSystem.QueueStateEvent(Device, new UnityEngine.InputSystem.LowLevel.KeyboardState(keys));
+
+            public void Dispose()
+            {
+                UnityEngine.InputSystem.InputSystem.RemoveDevice(Device);
+                var settings = UnityEngine.InputSystem.InputSystem.settings;
+                settings.backgroundBehavior = _background;
+                settings.editorInputBehaviorInPlayMode = _editor;
+            }
+        }
+
+        /// <summary>키를 한 번 눌렀다 뗀다 (누른 프레임에 화면이 wasPressedThisFrame으로 받는다).</summary>
+        static IEnumerator Tap(UnityEngine.InputSystem.Key key)
+        {
+            using (var keys = new VirtualKeyboard())
+            {
+                keys.Hold(key);
+                yield return null;
+                keys.Hold();
+                yield return null;
+            }
         }
 
         /// <summary>

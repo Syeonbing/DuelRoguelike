@@ -86,6 +86,17 @@ namespace DuelRoguelike.Engine.Duel
 
         public int EngineErrors { get; private set; }
 
+        /// <summary>
+        /// 켜면 배치 끝마다 메시지로 바로 반영한 상태와 엔진 조회 결과를 비교한다 (헤드리스 점검용).
+        /// 어긋나면 StateMismatched가 (어긋난 줄 "메시지 반영 → 엔진", 그 배치의 메시지 종류)를 알린다.
+        /// </summary>
+        public bool CheckMessageState;
+        public int StateChecks { get; private set; }
+        public int StateMismatches { get; private set; }
+        public event Action<IReadOnlyList<string>, IReadOnlyList<OcgMessageType>> StateMismatched;
+        readonly List<OcgMessageType> _checkTypes = new List<OcgMessageType>();
+        bool _refreshed;
+
         /// <summary>듀얼을 만드는 동안(덱 넣기 전까지) 나온 엔진 로그. 이벤트를 연결하기 전이라 따로 모아 둔다.</summary>
         public IReadOnlyList<(OcgLogType Type, string Text)> StartupLog { get; private set; }
 
@@ -240,14 +251,36 @@ namespace DuelRoguelike.Engine.Duel
                 _batchRequest = r;
             }
             State.Apply(message);
+            if (CheckMessageState)
+                _checkTypes.Add(message.Type);
             MessageReceived?.Invoke(message);
             return message;
+        }
+
+        void CompareState(string[] applied, string[] engine)
+        {
+            StateChecks++;
+            var diff = new List<string>();
+            for (int i = 0; i < applied.Length && i < engine.Length; i++)
+                if (applied[i] != engine[i])
+                    diff.Add($"{applied[i]}  →  {engine[i]}");
+            if (diff.Count > 0)
+            {
+                StateMismatches++;
+                StateMismatched?.Invoke(diff, _checkTypes.ToArray());
+            }
+            _checkTypes.Clear();
         }
 
         /// <summary>메시지 묶음을 다 반영했다: 배치를 다시 읽고, 엔진이 응답을 기다리면 플레이어에게 묻는다.</summary>
         void EndBatch()
         {
+            // 첫 배치는 비교하지 않는다 (그 전에 엔진 조회로 맞춘 적이 없어 덱·엑스트라가 비어 있다)
+            string[] before = CheckMessageState && _refreshed ? State.Snapshot() : null;
             State.Refresh(_duel);
+            _refreshed = true;
+            if (before != null)
+                CompareState(before, State.Snapshot());
             if (State.IsFinished)
                 return;
             if (_status == OcgDuelStatus.End)

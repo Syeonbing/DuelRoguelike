@@ -63,6 +63,11 @@ namespace DuelRoguelike.Dev
             public readonly int[] Retries = new int[2];
             /// <summary>거절된 요청의 "플레이어 요청 종류"별 수.</summary>
             public readonly Dictionary<string, int> RetryTypes = new Dictionary<string, int>();
+            /// <summary>배치 끝마다 메시지로 바로 반영한 상태와 엔진 조회를 비교한 수와 어긋난 수 (화면이 배치 중간에 그리는 필드 점검).</summary>
+            public int StateChecks;
+            public int StateMismatches;
+            /// <summary>어긋난 항목 → 그 배치의 메시지 종류별 횟수.</summary>
+            public readonly Dictionary<string, int> StateMismatchKinds = new Dictionary<string, int>();
 
             /// <summary>
             /// 플레이어 0에게 온 요청 중 화면에서 사람이 고를 수 없는 것 (카운터는 자동 분배, 카드 선언은 숫자 입력).
@@ -81,7 +86,7 @@ namespace DuelRoguelike.Dev
             public bool Ok => Finished == Duels && EngineErrors == 0 && Exceptions == 0 && InteractionFallbacks == 0
                               && WindBotFallbacks == 0 && WindBotMessageErrors == 0 && WindBotResyncs == 0
                               && (!WindBotHidesInfo || WindBotKnownSecrets == 0)
-                              && Retries[0] == 0 && Retries[1] == 0 && UnparsedTypes.Count == 0;
+                              && Retries[0] == 0 && Retries[1] == 0 && UnparsedTypes.Count == 0 && StateMismatches == 0;
         }
 
         const int MaxProblemsKept = 40;
@@ -302,8 +307,24 @@ namespace DuelRoguelike.Dev
                         if (session.State.Turn > maxTurns)
                             throw new TimeoutException($"{maxTurns}턴 안에 끝나지 않음");
                     };
+                    session.CheckMessageState = true;
+                    session.StateMismatched += (diff, types) =>
+                    {
+                        // 줄 이름: "P0 패: …" → "P0 패", "P0 LP 8000, 덱 …" → "P0 LP·장수", "체인: …" → "체인"
+                        var labels = string.Join(", ", diff.Select(d =>
+                        {
+                            int colon = d.IndexOf(':'), comma = d.IndexOf(',');
+                            return colon > 0 && (comma < 0 || colon < comma) ? d.Substring(0, colon) : d.Substring(0, 2) + " LP·장수";
+                        }).Distinct());
+                        string key = $"{labels} | {string.Join(" ", types.Distinct())}";
+                        Count(result.StateMismatchKinds, key);
+                        if (result.StateMismatchKinds[key] <= 2)
+                            _log($"{tag} 메시지 반영과 엔진이 다름 ({string.Join(" ", types)}):\n      " + string.Join("\n      ", diff));
+                    };
                     session.Start();
                     result.EngineErrors += session.EngineErrors;
+                    result.StateChecks += session.StateChecks;
+                    result.StateMismatches += session.StateMismatches;
                     result.TotalTurns += session.State.Turn;
                     outcome.Turns = session.State.Turn;
                     if (session.State.IsFinished)
