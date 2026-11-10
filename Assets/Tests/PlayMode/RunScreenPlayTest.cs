@@ -57,6 +57,7 @@ namespace DuelRoguelike.Tests
         bool _playbackDone;
         bool _previewSeen;
         bool _fieldViewSeen;
+        bool _chainSeen;
         bool _skipSeen;
         const int MaxPlaybackTries = 3;
 
@@ -528,7 +529,6 @@ namespace DuelRoguelike.Tests
         /// </summary>
         IEnumerator CheckDuelView()
         {
-            _duelViewChecked = true;
             var stop = Find<Button>(DuelUi, "auto-stop");
             if (stop != null)
             {
@@ -536,7 +536,8 @@ namespace DuelRoguelike.Tests
                 yield return null;
             }
             if (Find<Button>(DuelUi, "leave-duel") != null)
-                yield break; // 그 사이에 끝났다
+                yield break; // 그 사이에 끝났다. 다음 듀얼에서 다시 본다.
+            _duelViewChecked = true;
             var root = Root(DuelUi);
             var face = root.Q("my-field")?.Q("card-face") ?? root.Q("my-hand")?.Q("card-face");
             Assert.IsNotNull(face, "6턴인데 내 필드와 손패에 앞면 카드가 없다");
@@ -578,7 +579,7 @@ namespace DuelRoguelike.Tests
             int steps = 0;
             bool attack = false, battle = false;
             string last = null;
-            while (!(battle && _previewSeen && _skipSeen) && Time.realtimeSinceStartup < until && Find<Button>(DuelUi, "leave-duel") == null)
+            while (!(battle && _previewSeen && _skipSeen && _chainSeen) && Time.realtimeSinceStartup < until && Find<Button>(DuelUi, "leave-duel") == null)
             {
                 // 내가 공격 대상을 고를 때: 후보 몬스터 위의 예상 결과
                 var note = Root(DuelUi)?.Query<Label>("attack-preview").Where(l => l.style.display.value == DisplayStyle.Flex && !string.IsNullOrEmpty(l.text)).First();
@@ -608,6 +609,14 @@ namespace DuelRoguelike.Tests
                             yield return Shot(DuelUi, "2f-duel-battle");
                         }
                     }
+                }
+                // 체인이 쌓이면 로그 위 체인 목록 (체인이 생길 때만)
+                var chainPanel = Find<VisualElement>(DuelUi, "chain-panel");
+                if (!_chainSeen && chainPanel != null && chainPanel.style.display.value == DisplayStyle.Flex && chainPanel.Q("chain-1") != null)
+                {
+                    _chainSeen = true;
+                    Debug.Log($"[런 화면 시험] 체인 목록: {string.Join(" / ", chainPanel.Query<Label>().ToList().Select(l => l.text))}");
+                    yield return Shot(DuelUi, "2k-chain");
                 }
                 // 선택 창의 "필드 보기" → 모서리에 "필드 확인 중" (선택 창이 뜰 때만)
                 var fieldView = Find<Button>(DuelUi, "field-view");
@@ -650,7 +659,7 @@ namespace DuelRoguelike.Tests
                     Click(once);
                 yield return null;
             }
-            _playbackDone = battle && _previewSeen && _skipSeen;
+            _playbackDone = battle && _previewSeen && _skipSeen && _chainSeen;
             Assert.Greater(steps, 0, "자동(한 번)으로 답했는데 멈춰 보여 주는 단계가 없다");
             Debug.Log($"[런 화면 시험] 한 단계씩 보여 주기 ({_playbackTries}번째): 멈춘 단계 {steps}개, 상대 공격 {(attack ? "봄" : "못 봄")}, 그 뒤 데미지 계산 {(battle ? "봄" : "못 봄")}");
         }

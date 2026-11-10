@@ -87,11 +87,44 @@ namespace DuelRoguelike.Engine.Duel
             Players[0].Lp = Players[1].Lp = (int)startingLp;
         }
 
-        /// <summary>메시지로 알 수 있는 것(턴, 페이즈, LP, 승패)을 바로 반영한다.</summary>
+        /// <summary>
+        /// 새로 나타난 카드(덱에서 나온 카드 등)의 종류·레벨·공격력 등을 채울 카드 DB. 없으면 코드만 둔다.
+        /// 엔진 조회(Refresh)가 메시지 묶음이 끝날 때 다시 맞추므로, 그 사이에 잠깐 보일 값이다.
+        /// </summary>
+        public Data.CardDatabase Database;
+
+        /// <summary>
+        /// 메시지로 알 수 있는 것(턴, 페이즈, LP, 승패)을 바로 반영한다. 카드 이동·표시 형식·체인도 메시지마다 바로 옮겨 두어
+        /// 화면이 메시지 하나씩 보여 줄 때 배치가 그 단계와 맞게 한다. 정확한 값은 묶음이 끝날 때 Refresh가 엔진 조회로 다시 맞춘다.
+        /// </summary>
         public void Apply(DuelMessage message)
         {
             switch (message)
             {
+                case MoveMessage m:
+                    ApplyMove(m);
+                    break;
+                case PositionChangeMessage m when !m.Location.IsOverlay:
+                {
+                    var card = Find(m.Location);
+                    if (card != null)
+                        card.Location = new CardLocation(m.Location.Controller, m.Location.Location, m.Location.Sequence, m.Current);
+                    break;
+                }
+                case ChainingMessage m when m.ChainCount == Chain.Count + 1:
+                    Chain.Add(new ChainLink
+                    {
+                        Code = m.Code,
+                        Location = m.Location,
+                        TriggerController = m.TriggerController,
+                        TriggerLocation = m.TriggerLocation,
+                        TriggerSequence = m.TriggerSequence,
+                        Description = m.Description,
+                    });
+                    break;
+                case SimpleMessage m when m.Type == OcgMessageType.ChainEnd:
+                    Chain.Clear();
+                    break;
                 case NewTurnMessage m:
                     Turn++;
                     TurnPlayer = m.Player;
@@ -122,6 +155,130 @@ namespace DuelRoguelike.Engine.Duel
                     Winner = m.Winner;
                     WinReason = m.Reason;
                     break;
+            }
+        }
+
+        // ---- 메시지로 카드 옮기기 (Refresh 전까지의 근사치. 칸·순번이 어긋나면 그냥 넘긴다) ----
+
+        void ApplyMove(MoveMessage m)
+        {
+            CardInfo card = m.From.IsOverlay || m.From.Controller > 1 ? null : Take(m.From);
+            if (m.To.IsOverlay || m.To.Controller > 1 || m.To.Location == OcgLocation.None)
+                return;
+            if (card == null)
+                card = NewCard(m.Code);
+            else if (m.Code != 0)
+                card.Code = m.Code;
+            card.Location = m.To;
+            Put(card, m.To);
+        }
+
+        CardInfo NewCard(uint code)
+        {
+            var card = new CardInfo { Code = code };
+            if (code != 0 && Database != null && Database.TryGet(code, out var record))
+            {
+                card.Type = record.Type;
+                card.Level = record.Data.Level & 0xff;
+                card.Attribute = (OcgAttribute)record.Data.Attribute;
+                card.Race = record.Data.Race;
+                card.Attack = card.BaseAttack = record.Data.Attack;
+                card.Defense = card.BaseDefense = record.Data.Defense;
+            }
+            return card;
+        }
+
+        /// <summary>그 자리의 카드를 빼낸다. 덱이면 장수만 줄인다.</summary>
+        CardInfo Take(CardLocation loc)
+        {
+            var p = Players[loc.Controller];
+            int seq = (int)loc.Sequence;
+            switch (loc.Location)
+            {
+                case OcgLocation.Deck:
+                    p.DeckCount = System.Math.Max(0, p.DeckCount - 1);
+                    return null;
+                case OcgLocation.MonsterZone:
+                    return TakeZone(p.MonsterZones, seq);
+                case OcgLocation.SpellTrapZone:
+                    return TakeZone(p.SpellZones, seq);
+                case OcgLocation.Extra:
+                    p.ExtraCount = System.Math.Max(0, p.ExtraCount - 1);
+                    return TakeList(p.Extra, seq);
+                default:
+                    var list = ListOf(p, loc.Location);
+                    return list != null ? TakeList(list, seq) : null;
+            }
+        }
+
+        void Put(CardInfo card, CardLocation loc)
+        {
+            var p = Players[loc.Controller];
+            int seq = (int)loc.Sequence;
+            switch (loc.Location)
+            {
+                case OcgLocation.Deck:
+                    p.DeckCount++;
+                    return;
+                case OcgLocation.MonsterZone:
+                    if (seq < p.MonsterZones.Length) p.MonsterZones[seq] = card;
+                    return;
+                case OcgLocation.SpellTrapZone:
+                    if (seq < p.SpellZones.Length) p.SpellZones[seq] = card;
+                    return;
+                case OcgLocation.Extra:
+                    p.ExtraCount++;
+                    PutList(p.Extra, card, seq);
+                    return;
+                default:
+                    var list = ListOf(p, loc.Location);
+                    if (list != null) PutList(list, card, seq);
+                    return;
+            }
+        }
+
+        static List<CardInfo> ListOf(PlayerState p, OcgLocation location)
+        {
+            switch (location)
+            {
+                case OcgLocation.Hand: return p.Hand;
+                case OcgLocation.Grave: return p.Grave;
+                case OcgLocation.Removed: return p.Removed;
+                default: return null;
+            }
+        }
+
+        static CardInfo TakeZone(CardInfo[] zones, int seq)
+        {
+            if (seq >= zones.Length) return null;
+            var card = zones[seq];
+            zones[seq] = null;
+            return card;
+        }
+
+        static CardInfo TakeList(List<CardInfo> list, int seq)
+        {
+            if (seq >= list.Count) return null;
+            var card = list[seq];
+            list.RemoveAt(seq);
+            Renumber(list);
+            return card;
+        }
+
+        static void PutList(List<CardInfo> list, CardInfo card, int seq)
+        {
+            list.Insert(System.Math.Min(seq, list.Count), card);
+            Renumber(list);
+        }
+
+        /// <summary>목록(패·묘지·제외·엑스트라)의 순번을 자리에 맞게 다시 매긴다.</summary>
+        static void Renumber(List<CardInfo> list)
+        {
+            for (int i = 0; i < list.Count; i++)
+            {
+                var l = list[i].Location;
+                if (l.Sequence != i)
+                    list[i].Location = new CardLocation(l.Controller, l.Location, (uint)i, l.Position);
             }
         }
 

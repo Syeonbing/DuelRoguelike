@@ -221,6 +221,12 @@ namespace DuelRoguelike.UI
             right.style.minWidth = 320;
             right.style.flexShrink = 1;
             right.style.marginLeft = 12;
+            // 체인이 있을 때만 로그 위에 체인 목록을 띄운다.
+            _chainPanel = UiStyle.Box("chain-panel");
+            _chainPanel.style.marginBottom = 10;
+            _chainPanel.style.flexShrink = 0;
+            _chainPanel.style.display = DisplayStyle.None;
+            right.Add(_chainPanel);
             right.Add(UiStyle.Label("로그", 17, UiStyle.TextDim, bold: true));
             _log = new ScrollView(ScrollViewMode.Vertical);
             _log.style.flexGrow = 1;
@@ -577,7 +583,31 @@ namespace DuelRoguelike.UI
                 _caption.style.display = string.IsNullOrEmpty(text) ? DisplayStyle.None : DisplayStyle.Flex;
             }
 
-            Label _note;
+            Label _note, _chainNumber;
+
+            /// <summary>체인 번호 (왼쪽 위 동그라미, 쪽 색). 0이면 숨긴다.</summary>
+            public void SetChainNumber(int number, Color color)
+            {
+                if (_chainNumber == null)
+                {
+                    if (number <= 0)
+                        return;
+                    _chainNumber = UiStyle.Label("", 17, UiStyle.Background, bold: true);
+                    _chainNumber.name = "chain-number";
+                    _chainNumber.pickingMode = PickingMode.Ignore;
+                    _chainNumber.style.position = Position.Absolute;
+                    _chainNumber.style.left = -8;
+                    _chainNumber.style.top = -8;
+                    _chainNumber.style.width = _chainNumber.style.height = 28;
+                    _chainNumber.style.unityTextAlign = TextAnchor.MiddleCenter;
+                    UiStyle.Radius(_chainNumber, 14);
+                    UiStyle.BorderColor(_chainNumber, UiStyle.Background, 2);
+                    _holder.Add(_chainNumber);
+                }
+                _chainNumber.text = number > 0 ? number.ToString() : "";
+                _chainNumber.style.backgroundColor = color;
+                _chainNumber.style.display = number > 0 ? DisplayStyle.Flex : DisplayStyle.None;
+            }
 
             /// <summary>카드 가운데에 겹쳐 띄우는 짧은 글 (공격 대상의 예상 결과). null이나 빈 문자열이면 숨긴다.</summary>
             public void SetNote(string text)

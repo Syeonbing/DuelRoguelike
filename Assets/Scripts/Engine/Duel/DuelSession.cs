@@ -100,7 +100,7 @@ namespace DuelRoguelike.Engine.Duel
             _duel = duel;
             _players = players;
             Database = database;
-            State = new DuelState(startingLp);
+            State = new DuelState(startingLp) { Database = database };
         }
 
         public static DuelSession Create(DuelSessionOptions options, CardDatabase database, CardScriptSource scripts,
