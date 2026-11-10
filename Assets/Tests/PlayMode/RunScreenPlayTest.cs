@@ -1,13 +1,16 @@
 // 플레이 모드 시험: Run 씬을 열고 화면의 버튼만 눌러 로그라이크 런을 처음부터 끝까지 간다.
-// 런 시작(시작 덱·시드·시작 사이드 덱) → [층 사이 화면 → 다음 듀얼 시작 → 듀얼 화면 "자동으로 끝까지" → "결과 보기" → (승리 보상 고르기·보충 고르기)] 반복
+// 덱 편집(레시피 고치기·저장·지우기) → 런 시작(레시피·시드) → [층 사이 화면 → 다음 듀얼 시작 → 듀얼 화면 "자동으로 끝까지" → "결과 보기" → (승리 보상 고르기·보충 고르기)] 반복
 // → 런 종료 → 새 런. 듀얼은 사람 대신 임시 자동 응답(개발용 버튼)이 답하고, 상대는 WindBot이다.
 // 저장도 본다 (저장 폴더는 시험마다 새 임시 폴더라 실제 저장 파일은 건드리지 않는다):
 // - "처음 화면으로" → "이어하기", 씬을 다시 불러(게임을 다시 켠 것처럼) "이어하기"를 해도 층 사이 화면과 저장 파일이 그대로인지
 // - 듀얼을 시작하면 듀얼 중 상태로 저장되고, 듀얼 도중에 씬을 다시 부르면 그 듀얼이 패배로 처리되며 알림이 한 번 나오는지
-// - 런이 끝나면 진행 중인 런이 없어지고, 시작 사이드 덱은 다음 런에 그대로 채워지는지
+// - 런이 끝나면 진행 중인 런이 없어지고, 마지막으로 시작한 레시피(시작 사이드 덱 포함)가 다음 런에 그대로 골라져 있는지
+// - 레시피를 저장·지우면 저장 파일에 바로 쓰이는지, 층 사이 화면의 "지금 덱을 레시피로"가 새 레시피를 만드는지
+// 덱 편집: 시작 사이드 덱 3장(꽉 참)까지 넣기·빼기(버튼·두 번 누르기·끌어다 놓기), 덱 ↔ 사이드 덱 옮기기, 같은 카드명 4장째 막기,
+// 컬렉션보다 많이 넣으면 저장은 되고 런 시작은 막히는지, 메인 덱 39장은 저장할 수 없는지, 저장하지 않고 나가기 확인, 복사·지우기·빈 새 레시피.
 // - 진행 중인 런이 있을 때 새 런: 한 번 더 눌러야 포기하고, 취소할 수 있는지
 // 층 사이 화면의 교환(사이드 덱 → 덱, 덱 → 사이드 덱)도 버튼·두 번 누르기·끌어다 놓기로 한 번씩 해 본다 (포인터 이벤트를 직접 보낸다).
-// 런 로그 창 열고 닫기, 런 시작 화면의 거르기·끌어다 놓기·두 번 누르기, 꽉 찬 시작 사이드 덱(3장)에 더 넣을 때의 알림도 본다.
+// 런 로그 창 열고 닫기, 덱 편집 화면의 거르기, 꽉 찬 시작 사이드 덱(3장)에 더 넣을 때의 알림도 본다.
 // 승리 보상 창은 자리 3개를 확인하고, 누르고 받기·두 번 누르기를 번갈아 하며, 빈 자리(골드)가 나오면 한 번 골드를 고른다.
 // 보충 고르기를 한 번 이상 거칠 때까지 런을 더 한다.
 // 듀얼 화면은 한 번, 6턴쯤에 자동 진행을 멈추고 카드에 마우스 올리기(왼쪽 카드 정보)와 묘지 누르기(카드 목록 창)를 해 본다.
@@ -95,54 +98,167 @@ namespace DuelRoguelike.Tests
             Assert.IsNull(Find<Button>(RunUi, "continue-run"), "처음 켰는데 진행 중인 런이 있다");
             Assert.IsFalse(File.Exists(SaveFile), "아무것도 안 했는데 저장 파일이 있다");
 
-            // ---- 첫 런: 시작 덱, 시드, 시작 사이드 덱 3장 (꽉 참) ----
-            Click(Find<Button>(RunUi, "deck-Yugi"));
+            // ---- 덱 레시피: 새 게임에는 스타터 덱 4개 ----
+            foreach (string id in new[] { "Yugi", "Kaiba", "Joey", "Pegasus" })
+                Assert.IsNotNull(Find<Button>(RunUi, "recipe-" + id), $"새 게임에 스타터 덱 레시피 {id}가 없다");
+            Click(Find<Button>(RunUi, "recipe-Yugi"));
             yield return null;
-            SetSeed(1);
+            StringAssert.Contains("시작할 수 있습니다", Find<Label>(RunUi, "start-recipe-status").text, "스타터 덱 레시피로 런을 시작할 수 없다고 나온다");
+
+            // ---- 덱 편집: 유희 편 레시피의 시작 사이드 덱 3장 (꽉 참), 빼기·두 번 누르기·끌어다 놓기 ----
+            yield return OpenEditor("edit-recipe");
+            Assert.AreEqual("스타터 덱 —유희 편—", Find<TextField>(RunUi, "editor-name").value, "덱 편집 화면의 레시피 이름");
+            Assert.IsFalse(Find<Button>(RunUi, "editor-save").enabledSelf, "고치지 않았는데 저장 버튼이 켜져 있다");
+            StringAssert.Contains("규칙에 맞습니다", EditorStatus(), "스타터 덱 레시피가 규칙에 맞지 않다고 나온다");
             var picked = new List<string>();
             for (int i = 0; i < SidePicks; i++)
-                yield return PickToStartSide(picked);
-            Assert.AreEqual(SideCountText(SidePicks), Find<Label>(RunUi, "side-count").text);
-            // 빼고 다시 넣기
-            Click(Find<VisualElement>(RunUi, "side-" + picked[0]));
+                yield return PickToSide(picked);
+            Assert.AreEqual(SideCountText(SidePicks), Find<Label>(RunUi, "editor-side-count").text);
+            Click(Find<VisualElement>(RunUi, "deck-side-" + picked[0]));
             yield return null;
-            Click(Find<Button>(RunUi, "side-remove"));
+            Click(Find<Button>(RunUi, "editor-remove"));
             yield return null;
-            Assert.AreEqual(SideCountText(SidePicks - 1), Find<Label>(RunUi, "side-count").text, "사이드 덱에서 빼기");
-            Assert.IsNull(Find<VisualElement>(RunUi, "side-" + picked[0]), "뺀 카드가 사이드 덱 목록에 남아 있다");
+            Assert.AreEqual(SideCountText(SidePicks - 1), Find<Label>(RunUi, "editor-side-count").text, "시작 사이드 덱에서 빼기");
+            Assert.IsNull(Find<VisualElement>(RunUi, "deck-side-" + picked[0]), "뺀 카드가 시작 사이드 덱에 남아 있다");
             Click(Find<VisualElement>(RunUi, "pick-" + picked[0]));
             yield return null;
-            Click(Find<Button>(RunUi, "side-add"));
+            Click(Find<Button>(RunUi, "editor-add-side"));
             yield return null;
             foreach (string code in picked)
-                Assert.IsNotNull(Find<VisualElement>(RunUi, "side-" + code), $"고른 카드 {code}가 사이드 덱 목록에 없다");
-            // 두 번 눌러 빼고, 끌어다 놓아 다시 넣기
-            DoubleClick(Find<VisualElement>(RunUi, "side-" + picked[0]));
+                Assert.IsNotNull(Find<VisualElement>(RunUi, "deck-side-" + code), $"고른 카드 {code}가 시작 사이드 덱에 없다");
+            DoubleClick(Find<VisualElement>(RunUi, "deck-side-" + picked[0]));
             yield return null;
-            Assert.AreEqual(SideCountText(SidePicks - 1), Find<Label>(RunUi, "side-count").text, "시작 사이드 덱 카드를 두 번 눌러 빼기");
-            Assert.IsNull(Find<VisualElement>(RunUi, "side-" + picked[0]), "두 번 눌러 뺀 카드가 사이드 덱 목록에 남아 있다");
-            Drag(Find<VisualElement>(RunUi, "pick-" + picked[0]), Find<VisualElement>(RunUi, "start-side"));
+            Assert.AreEqual(SideCountText(SidePicks - 1), Find<Label>(RunUi, "editor-side-count").text, "시작 사이드 덱 카드를 두 번 눌러 빼기");
+            Drag(Find<VisualElement>(RunUi, "pick-" + picked[0]), Find<VisualElement>(RunUi, "editor-side"));
             yield return null;
-            Assert.AreEqual(SideCountText(SidePicks), Find<Label>(RunUi, "side-count").text, "컬렉션 카드를 시작 사이드 덱으로 끌어다 놓기");
-            Assert.IsNotNull(Find<VisualElement>(RunUi, "side-" + picked[0]), "끌어다 놓은 카드가 사이드 덱 목록에 없다");
+            Assert.AreEqual(SideCountText(SidePicks), Find<Label>(RunUi, "editor-side-count").text, "컬렉션 카드를 시작 사이드 덱으로 끌어다 놓기");
+            // 시작 사이드 덱 → 메인 덱 → 시작 사이드 덱 (끌어다 놓기)
+            int mainBefore = EditorMainCount();
+            Drag(Find<VisualElement>(RunUi, "deck-side-" + picked[0]), Find<VisualElement>(RunUi, "editor-main"));
+            yield return null;
+            Assert.AreEqual(mainBefore + 1, EditorMainCount(), "시작 사이드 덱 카드를 메인 덱으로 끌어다 놓기");
+            Assert.AreEqual(SideCountText(SidePicks - 1), Find<Label>(RunUi, "editor-side-count").text, "메인 덱으로 옮긴 뒤 시작 사이드 덱 장수");
+            Drag(Find<VisualElement>(RunUi, "deck-main-" + picked[0]), Find<VisualElement>(RunUi, "editor-side"));
+            yield return null;
+            Assert.AreEqual(mainBefore, EditorMainCount(), "메인 덱 카드를 시작 사이드 덱으로 끌어다 놓기");
+            Assert.AreEqual(SideCountText(SidePicks), Find<Label>(RunUi, "editor-side-count").text, "시작 사이드 덱으로 되돌린 뒤 장수");
             // 꽉 찬 시작 사이드 덱에 하나 더 끌어다 놓기: 들어가지 않고 까닭 알림
             string extra = Named("pick-").Select(e => e.name.Substring("pick-".Length)).FirstOrDefault(c => !picked.Contains(c));
             Assert.IsNotNull(extra, "컬렉션 목록에 끌어다 놓을 카드가 없다");
-            Drag(Find<VisualElement>(RunUi, "pick-" + extra), Find<VisualElement>(RunUi, "start-side"));
+            Drag(Find<VisualElement>(RunUi, "pick-" + extra), Find<VisualElement>(RunUi, "editor-side"));
             yield return null;
-            Assert.AreEqual(SideCountText(SidePicks), Find<Label>(RunUi, "side-count").text, "꽉 찬 시작 사이드 덱에 더 들어갔다");
-            Assert.IsNull(Find<VisualElement>(RunUi, "side-" + extra), "꽉 찬 시작 사이드 덱에 끌어다 놓은 카드가 들어갔다");
-            var full = Find<Label>(RunUi, "move-notice");
-            Assert.AreEqual(DisplayStyle.Flex, full.style.display.value, "꽉 찬 시작 사이드 덱에 넣을 때 알림이 보이지 않는다");
-            StringAssert.StartsWith("넣을 수 없습니다", full.text, "꽉 찬 시작 사이드 덱에 넣을 때 까닭 알림이 없다");
-            StringAssert.Contains($"{SidePicks}장까지", full.text, "꽉 찬 시작 사이드 덱 알림에 장수 제한이 없다");
-            Debug.Log($"[런 화면 시험] 꽉 찬 시작 사이드 덱: {full.text}");
+            Assert.AreEqual(SideCountText(SidePicks), Find<Label>(RunUi, "editor-side-count").text, "꽉 찬 시작 사이드 덱에 더 들어갔다");
+            Assert.IsNull(Find<VisualElement>(RunUi, "deck-side-" + extra), "꽉 찬 시작 사이드 덱에 끌어다 놓은 카드가 들어갔다");
+            string full = EditorNotice();
+            StringAssert.StartsWith("넣을 수 없습니다", full, "꽉 찬 시작 사이드 덱에 넣을 때 까닭 알림이 없다");
+            StringAssert.Contains($"{SidePicks}장까지", full, "꽉 찬 시작 사이드 덱 알림에 장수 제한이 없다");
+            Debug.Log($"[런 화면 시험] 꽉 찬 시작 사이드 덱: {full}");
             Click(Find<Button>(RunUi, "filter-spell"));
             yield return null;
             Assert.IsTrue(Named("pick-").Count > 0, "마법 거르기에 카드가 없다");
             Click(Find<Button>(RunUi, "filter-all"));
             yield return null;
-            Click(Named("pick-").First()); // 화면 확인용: 카드 하나를 고른 상태
+            Assert.AreEqual(DisplayStyle.Flex, Find<Label>(RunUi, "editor-dirty").style.display.value, "고쳤는데 저장하지 않은 변경 표시가 없다");
+            yield return Shot(RunUi, "1a-editor");
+            Click(Find<Button>(RunUi, "editor-save"));
+            yield return null;
+            StringAssert.Contains("저장했습니다", EditorNotice(), "저장 알림이 없다");
+            Assert.AreEqual(DisplayStyle.None, Find<Label>(RunUi, "editor-dirty").style.display.value, "저장했는데 변경 표시가 남아 있다");
+            string sideLine = File.ReadAllText(SaveFile).Replace("\r\n", "\n").Split('\n').FirstOrDefault(l => l.StartsWith("recipe-side Yugi "));
+            Assert.IsNotNull(sideLine, "저장 파일에 레시피의 시작 사이드 덱이 없다");
+            CollectionAssert.AreEquivalent(picked, sideLine.Split(' ').Skip(2).ToList(), "저장 파일의 시작 사이드 덱이 고른 카드와 다르다");
+
+            // ---- 같은 카드명 3장, 컬렉션보다 많이 넣기 (저장은 되고 런 시작은 안 됨) ----
+            string once = Named("pick-").Where(e => !e.Query<Label>().ToList().Any(l => l.text.StartsWith("×")))
+                .Select(e => e.name.Substring("pick-".Length))
+                .FirstOrDefault(c => Find<VisualElement>(RunUi, "deck-main-" + c) == null && Find<VisualElement>(RunUi, "deck-extra-" + c) == null
+                                     && !picked.Contains(c));
+            Assert.IsNotNull(once, "컬렉션에 1장 있고 레시피에 없는 카드가 없다");
+            for (int i = 0; i < 3; i++)
+            {
+                DoubleClick(Find<VisualElement>(RunUi, "pick-" + once));
+                yield return null;
+            }
+            Assert.AreEqual(3, CountInDeck(once), "컬렉션 카드를 두 번 눌러 덱에 3장 넣기");
+            StringAssert.Contains("런을 시작할 수 없음", EditorStatus(), "컬렉션보다 많이 넣었는데 시작 불가 알림이 없다");
+            Assert.IsTrue(Find<VisualElement>(RunUi, "pick-" + once).Query<Label>().ToList().Any(l => l.text == "부족"), "컬렉션보다 많이 넣은 카드에 부족 표시가 없다");
+            DoubleClick(Find<VisualElement>(RunUi, "pick-" + once));
+            yield return null;
+            Assert.AreEqual(3, CountInDeck(once), "같은 카드명 4장째가 들어갔다");
+            StringAssert.Contains("3장까지", EditorNotice(), "같은 카드명 4장째를 넣을 때 까닭 알림이 없다");
+            Click(Find<Button>(RunUi, "editor-save"));
+            yield return null;
+            StringAssert.Contains("저장했습니다", EditorNotice(), "컬렉션보다 많은 레시피가 저장되지 않았다");
+            Click(Find<Button>(RunUi, "editor-back"));
+            yield return WaitFor(() => Find<Button>(RunUi, "start-run") != null, 10, "런 시작 화면");
+            StringAssert.Contains("시작 불가", Find<Button>(RunUi, "recipe-Yugi").text, "컬렉션보다 많은 레시피에 시작 불가 표시가 없다");
+            Click(Find<Button>(RunUi, "start-run"));
+            yield return null;
+            Assert.IsNull(Find<Button>(RunUi, "next-duel"), "컬렉션보다 많은 레시피로 런이 시작됐다");
+            StringAssert.Contains("런을 시작할 수 없습니다", Find<Label>(RunUi, "start-error").text, "런 시작을 막은 까닭 알림이 없다");
+            yield return Shot(RunUi, "1b-start-blocked");
+            Debug.Log($"[런 화면 시험] 컬렉션 초과 레시피: {Find<Label>(RunUi, "start-error").text}");
+
+            // 다시 열어 빼고 저장
+            yield return OpenEditor("edit-recipe");
+            for (int i = 0; i < 3; i++)
+            {
+                DoubleClick(Find<VisualElement>(RunUi, "deck-main-" + once) ?? Find<VisualElement>(RunUi, "deck-extra-" + once));
+                yield return null;
+            }
+            Assert.AreEqual(0, CountInDeck(once), "덱 카드를 두 번 눌러 빼기");
+            StringAssert.Contains("규칙에 맞습니다", EditorStatus(), "넘친 카드를 뺐는데 규칙에 맞지 않다고 나온다");
+            Click(Find<Button>(RunUi, "editor-save"));
+            yield return null;
+
+            // ---- 메인 덱 39장은 저장할 수 없음, 저장하지 않고 나가기 ----
+            while (EditorMainCount() >= 40)
+            {
+                DoubleClick(Named("deck-main-").First());
+                yield return null;
+            }
+            StringAssert.Contains("저장할 수 없음", EditorStatus(), "메인 덱 39장인데 저장할 수 없다는 알림이 없다");
+            StringAssert.Contains("39장", EditorStatus(), "저장할 수 없는 까닭에 장수가 없다");
+            Assert.IsFalse(Find<Button>(RunUi, "editor-save").enabledSelf, "메인 덱 39장인데 저장 버튼이 켜져 있다");
+            yield return Shot(RunUi, "1c-editor-39");
+            Click(Find<Button>(RunUi, "editor-back"));
+            yield return null;
+            Assert.IsNotNull(Find<Button>(RunUi, "editor-leave"), "저장하지 않은 변경이 있는데 나가기 확인이 없다");
+            Click(Find<Button>(RunUi, "editor-leave"));
+            yield return WaitFor(() => Find<Button>(RunUi, "start-run") != null, 10, "런 시작 화면");
+            StringAssert.Contains("시작할 수 있습니다", Find<Label>(RunUi, "start-recipe-status").text, "저장하지 않고 나갔는데 레시피가 바뀌었다");
+
+            // ---- 복사해서 새 레시피, 지우기, 빈 새 레시피 ----
+            yield return OpenEditor("copy-recipe");
+            StringAssert.Contains("사본", Find<TextField>(RunUi, "editor-name").value, "복사한 레시피 이름");
+            Click(Find<Button>(RunUi, "editor-save"));
+            yield return null;
+            Assert.IsNotNull(Find<Button>(RunUi, "editor-delete"), "저장한 새 레시피에 지우기 버튼이 없다");
+            Click(Find<Button>(RunUi, "editor-back"));
+            yield return WaitFor(() => Find<Button>(RunUi, "start-run") != null, 10, "런 시작 화면");
+            Assert.IsNotNull(Find<Button>(RunUi, "recipe-deck-1"), "복사해서 저장한 레시피(deck-1)가 목록에 없다");
+            yield return OpenEditor("edit-recipe");
+            Click(Find<Button>(RunUi, "editor-delete"));
+            yield return null;
+            Click(Find<Button>(RunUi, "editor-delete-confirm"));
+            yield return WaitFor(() => Find<Button>(RunUi, "start-run") != null, 10, "런 시작 화면");
+            Assert.IsNull(Find<Button>(RunUi, "recipe-deck-1"), "지운 레시피가 목록에 남아 있다");
+            Assert.IsFalse(File.ReadAllText(SaveFile).Contains("recipe deck-1 "), "지운 레시피가 저장 파일에 남아 있다");
+            yield return OpenEditor("new-recipe");
+            StringAssert.Contains("저장할 수 없음", EditorStatus(), "빈 새 레시피가 저장할 수 있다고 나온다");
+            Click(Find<Button>(RunUi, "editor-back"));
+            yield return null;
+            Click(Find<Button>(RunUi, "editor-leave"));
+            yield return WaitFor(() => Find<Button>(RunUi, "start-run") != null, 10, "런 시작 화면");
+            Debug.Log("[런 화면 시험] 덱 편집: 시작 사이드 덱, 같은 카드명 3장, 컬렉션 초과(저장·시작 불가), 39장 저장 불가, 복사·지우기·빈 레시피");
+
+            // ---- 첫 런: 유희 편 레시피, 시드 1 ----
+            Click(Find<Button>(RunUi, "recipe-Yugi"));
+            yield return null;
+            SetSeed(1);
+            foreach (string code in picked)
+                Assert.IsNotNull(Find<VisualElement>(RunUi, "deck-side-" + code), $"런 시작 화면의 레시피 보기에 시작 사이드 덱 카드 {code}가 없다");
+            Click(Named("deck-main-").First()); // 화면 확인용: 카드 하나를 고른 상태
             yield return null;
             yield return Shot(RunUi, "1-start");
 
@@ -162,6 +278,23 @@ namespace DuelRoguelike.Tests
             Assert.IsNull(Find<VisualElement>(RunUi, "run-events"), "런 로그 창이 닫히지 않았다");
 
             yield return Exchange();
+
+            // ---- 지금 덱을 레시피로 저장 ----
+            Click(Find<Button>(RunUi, "save-recipe"));
+            yield return null;
+            var recipeName = Find<TextField>(RunUi, "recipe-name");
+            Assert.IsNotNull(recipeName, "지금 덱을 레시피로 저장하는 창이 열리지 않았다");
+            StringAssert.Contains("1층", recipeName.value, "레시피 이름 기본값에 층이 없다");
+            recipeName.value = "시험 런 덱";
+            yield return Shot(RunUi, "9b-save-recipe");
+            Click(Find<Button>(RunUi, "recipe-save-confirm"));
+            yield return null;
+            Assert.IsNull(Find<TextField>(RunUi, "recipe-name"), "저장했는데 창이 닫히지 않았다");
+            StringAssert.Contains("시험 런 덱", Find<Label>(RunUi, "move-notice").text, "레시피 저장 알림이 없다");
+            string runRecipe = File.ReadAllText(SaveFile).Replace("\r\n", "\n");
+            StringAssert.Contains("\nrecipe deck-1 시험%20런%20덱\n", runRecipe, "지금 덱이 레시피로 저장되지 않았다");
+            StringAssert.Contains("\nrecipe-side deck-1\n", runRecipe, "지금 덱을 저장한 레시피에 사이드 덱이 들어갔다");
+
             for (int target = _duels + 2; _duels < target && Find<Button>(RunUi, "new-run") == null;)
                 yield return Step(1);
             yield return Settle(1);
@@ -173,6 +306,7 @@ namespace DuelRoguelike.Tests
             Click(Find<Button>(RunUi, "to-title"));
             yield return null;
             Assert.IsNotNull(Find<Button>(RunUi, "continue-run"), "처음 화면에 이어하기가 없다");
+            StringAssert.Contains("시험 런 덱", Find<Button>(RunUi, "recipe-deck-1")?.text ?? "", "지금 덱으로 저장한 레시피가 런 시작 화면 목록에 없다");
             yield return Shot(RunUi, "7-continue");
             Click(Find<Button>(RunUi, "continue-run"));
             yield return null;
@@ -219,7 +353,9 @@ namespace DuelRoguelike.Tests
             Click(Find<Button>(RunUi, "new-run"));
             yield return WaitFor(() => Find<Button>(RunUi, "start-run") != null, 10, "새 런의 런 시작 화면");
             Assert.IsNull(Find<Button>(RunUi, "continue-run"), "끝난 런이 진행 중인 런으로 남아 있다");
-            Assert.AreEqual(SideCountText(SidePicks), Find<Label>(RunUi, "side-count").text, "지난번 시작 사이드 덱을 기억하지 못한다");
+            StringAssert.Contains("유희 편", Find<Label>(RunUi, "start-recipe-name").text, "마지막으로 시작한 레시피를 고른 상태가 아니다");
+            foreach (string code in picked)
+                Assert.IsNotNull(Find<VisualElement>(RunUi, "deck-side-" + code), $"레시피의 시작 사이드 덱 카드 {code}가 남아 있지 않다");
 
             // ---- 진행 중인 런이 있을 때 새 런: 취소, 그리고 포기 ----
             SetSeed(2);
@@ -274,8 +410,8 @@ namespace DuelRoguelike.Tests
 
         static string SideCountText(int count) => $"시작 사이드 덱 {count}/{SidePicks}장";
 
-        /// <summary>컬렉션 목록에서 아직 고르지 않았고 넣을 수 있는 카드를 하나 골라 "사이드 덱에 넣기"를 누른다.</summary>
-        IEnumerator PickToStartSide(List<string> picked)
+        /// <summary>덱 편집 화면: 컬렉션 목록에서 아직 고르지 않았고 넣을 수 있는 카드를 하나 골라 "시작 사이드 덱에 넣기"를 누른다.</summary>
+        IEnumerator PickToSide(List<string> picked)
         {
             // 누를 때마다 화면을 다시 그리므로 이름만 먼저 모아 두고 매번 새로 찾는다.
             var codes = Named("pick-").Select(e => e.name.Substring("pick-".Length)).Where(c => !picked.Contains(c)).ToList();
@@ -283,9 +419,9 @@ namespace DuelRoguelike.Tests
             {
                 Click(Find<VisualElement>(RunUi, "pick-" + code));
                 yield return null;
-                var add = Find<Button>(RunUi, "side-add");
+                var add = Find<Button>(RunUi, "editor-add-side");
                 if (add == null || !add.enabledSelf)
-                    continue; // 같은 카드명이 시작 덱에 이미 3장 있는 등
+                    continue; // 같은 카드명이 덱에 이미 3장 있는 등
                 Click(add);
                 yield return null;
                 picked.Add(code);
@@ -293,6 +429,38 @@ namespace DuelRoguelike.Tests
             }
             Assert.Fail("컬렉션 목록에 시작 사이드 덱에 넣을 수 있는 카드가 없다");
         }
+
+        /// <summary>런 시작 화면의 버튼(edit-recipe, copy-recipe, new-recipe)을 눌러 덱 편집 화면을 연다.</summary>
+        static IEnumerator OpenEditor(string button)
+        {
+            var b = Find<Button>(RunUi, button);
+            Assert.IsNotNull(b, $"런 시작 화면에 {button} 버튼이 없다");
+            Click(b);
+            yield return WaitFor(() => Find<VisualElement>(RunUi, "editor-bar") != null, 10, "덱 편집 화면");
+        }
+
+        static string EditorStatus() => Find<Label>(RunUi, "editor-status")?.text ?? "(규칙 확인 줄 없음)";
+
+        static string EditorNotice()
+        {
+            var notice = Find<Label>(RunUi, "editor-notice");
+            Assert.IsNotNull(notice, "덱 편집 화면에 알림 줄이 없다");
+            Assert.AreEqual(DisplayStyle.Flex, notice.style.display.value, "덱 편집 화면의 알림이 보이지 않는다");
+            return notice.text;
+        }
+
+        /// <summary>덱 편집 화면 "메인 덱 n장"의 n.</summary>
+        static int EditorMainCount()
+        {
+            var label = Find<Label>(RunUi, "editor-main-count");
+            Assert.IsNotNull(label, "덱 편집 화면에 메인 덱 장수가 없다");
+            var match = Regex.Match(label.text, @"메인 덱 (\d+)장");
+            Assert.IsTrue(match.Success, $"메인 덱 장수 글: {label.text}");
+            return int.Parse(match.Groups[1].Value);
+        }
+
+        /// <summary>덱 편집 화면의 메인·엑스트라 덱에 든 이 카드의 장수.</summary>
+        static int CountInDeck(string code) => CountNamed("deck-main-" + code) + CountNamed("deck-extra-" + code);
 
         /// <summary>층 사이 화면 "끝낸 듀얼 n"의 n.</summary>
         static int DuelsPlayed()
@@ -470,6 +638,8 @@ namespace DuelRoguelike.Tests
                 yield break;
             string code = side.name.Substring("card-side-".Length);
             int sideStart = SideCount(code), deckStart = DeckCount(code);
+            ParkPointer();
+            yield return null;
             void AssertMoved(bool inDeck, string how)
             {
                 Assert.AreEqual(inDeck ? sideStart - 1 : sideStart, SideCount(code), $"{how}: 사이드 덱 장수");
@@ -900,6 +1070,17 @@ namespace DuelRoguelike.Tests
             SendPointer(card, EventType.MouseDrag, Vector2.Lerp(from, end, 0.5f), 1);
             SendPointer(card, EventType.MouseDrag, end, 1);
             SendPointer(card, EventType.MouseUp, end, 1);
+        }
+
+        /// <summary>
+        /// 포인터를 화면 왼쪽 위 빈 곳(바깥 여백)으로 옮긴다. 화면을 다시 그리면 유니티가 마지막 포인터 위치의 요소에 마우스 올리기를 보내므로,
+        /// 앞서 두 번 누른 자리에 새 화면의 카드가 오면 고른 카드 정보 대신 그 카드 미리 보기가 뜬다 (덱 편집 화면 뒤 층 사이 화면).
+        /// </summary>
+        static void ParkPointer()
+        {
+            var root = Root(RunUi);
+            if (root != null)
+                SendPointer(root, EventType.MouseMove, new Vector2(4, 4), 0);
         }
 
         static void SendPointer(VisualElement target, EventType type, Vector2 position, int clicks)
