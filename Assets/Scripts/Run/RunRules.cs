@@ -13,6 +13,12 @@ namespace DuelRoguelike.Run
         /// <summary>듀얼에서 이기면 남은 LP에 더하는 값 (보스 제외). 더한 LP는 FullLp를 넘을 수 있다.</summary>
         public const int WinLpBonus = 1000;
 
+        /// <summary>코인 토스에서 플레이어가 이길 확률 (퍼센트). 아이템·보스·이벤트가 바꿀 수 있다 (RunState.CoinTossWinPercent).</summary>
+        public const int CoinTossWinPercent = 50;
+
+        /// <summary>상대(AI)가 코인 토스에 이겼을 때 선공을 고를 확률 (퍼센트). 규칙 결정 문서: AI는 대부분 선공을 고른다.</summary>
+        public const int AiChoosesFirstPercent = 90;
+
         /// <summary>
         /// 이 층의 배수(10, 20, 30…)는 보스 층이다 (탑 구조 10층 묶음의 끝, Tower). 보스를 이기면 LP를 FullLp로 맞춘다 (보너스 대신, 넘쳤어도 낮춘다).
         /// 보스 보상: 보통 승리 보상에 더해 봉인된 카드 1장을 골라 봉인 해제, 봉인된 카드가 없으면 보상 후보를 한 번 더.

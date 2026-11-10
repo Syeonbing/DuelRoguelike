@@ -40,6 +40,7 @@ namespace DuelRoguelike.Dev
                          ("봉인 장수·LP·층 진행", test.ScriptedRun),
                          ("칩교환소", test.ChipExchangeShop),
                          ("보스 보상과 골드 정산", test.BossBonusAndSettlement),
+                         ("코인 토스와 선후공", test.CoinTossAndTurnOrder),
                          ("런 종료와 보충", test.EndAndRefill),
                          ("사이드 덱 교환 규칙", test.ExchangeRules),
                          ("승리 보상 고르기", test.RewardChoice),
@@ -322,6 +323,71 @@ namespace DuelRoguelike.Dev
             Expect(rich.SideDeck.Count == unsealSide + 1 && rich.SealedCount == unsealSealed - 1 && rich.Chips == unsealChips - RunRules.ShopPrice(ShopProduct.Unseal)
                    && rich.Events.Last().Kind == RunEventKind.CardUnsealed && rich.Events.Last().Code == u, "봉인 해제: 사이드 덱으로, 칩 -150");
             ExpectThrows<InvalidOperationException>(() => rich.BuyUnseal(rich.SealedCards().FirstOrDefault()), "봉인 해제는 한 번만");
+        }
+
+        /// <summary>
+        /// 코인 토스: 같은 런·듀얼이면 결과가 같고, 이긴 쪽이 선후공을 고르며 (상대는 대부분 선공), 선공이 엔진의 팀 0이다.
+        /// 듀얼 시작 기록에 남고 저장 파일을 오간다. 형식 4(기록 없음) 파일도 읽는다.
+        /// </summary>
+        void CoinTossAndTurnOrder()
+        {
+            const int Seeds = 300;
+            int won = 0, lost = 0, opponentFirst = 0;
+            bool stable = true;
+            (GameSave Save, RunState Run) playerWins = default, opponentWins = default;
+            for (ulong seed = 1; seed <= Seeds; seed++)
+            {
+                var save = GameSave.NewGame();
+                var run = save.StartRun(new RunSetup { Seed = seed, StartDeck = StarterDecks.Yugi }, _db, _rarities);
+                PassFloors(run);
+                var toss = run.NextCoinToss();
+                var again = run.NextCoinToss();
+                stable &= again.PlayerWon == toss.PlayerWon && again.OpponentChoosesFirst == toss.OpponentChoosesFirst;
+                if (toss.PlayerWon)
+                {
+                    won++;
+                    if (playerWins.Run == null) playerWins = (save, run);
+                }
+                else
+                {
+                    lost++;
+                    if (toss.OpponentChoosesFirst)
+                    {
+                        opponentFirst++;
+                        if (opponentWins.Run == null) opponentWins = (save, run);
+                    }
+                }
+            }
+            Expect(stable, "같은 런·듀얼이면 코인 토스 결과가 같다");
+            Expect(won > Seeds * 4 / 10 && won < Seeds * 6 / 10, $"코인 토스 승률 {won}/{Seeds} (기대 약 50%)");
+            Expect(opponentFirst > lost * 8 / 10 && opponentFirst < lost, $"상대가 이겼을 때 선공을 고른 비율 {opponentFirst}/{lost} (기대 약 90%)");
+
+            // 이기면 고른 대로: 후공을 고르면 나는 엔진의 팀 1 (덱·LP 자리가 바뀐다).
+            var duel = playerWins.Run.BeginDuel(playerFirst: false);
+            var options = duel.CreateSessionOptions();
+            Expect(duel.Toss.PlayerWon && !duel.PlayerGoesFirst && duel.PlayerTeam == 1, "코인 토스에 이기고 후공을 고름");
+            Expect(options.Decks[1].SequenceEqual(duel.PlayerDeck) && options.Decks[0].SequenceEqual(duel.OpponentCards)
+                   && options.Team2.StartingLP == (uint)duel.PlayerLp && options.Team1.StartingLP == RunRules.FullLp,
+                "후공이면 엔진의 팀 0이 상대, 팀 1이 나");
+            var started = playerWins.Run.Events.Last(e => e.Kind == RunEventKind.DuelStarted);
+            Expect(started.Coin == CoinTossWinner.Player && started.Turn == TurnOrder.Second, "듀얼 시작 기록: 코인 토스 승리, 후공");
+            Expect(started.Describe(c => c.ToString()).EndsWith("코인 토스 승리 → 나의 후공"), "듀얼 시작 기록 문장");
+
+            // 후공 듀얼 중에 꺼지면 다시 읽을 때 패배. 기록은 그대로.
+            string text = playerWins.Save.Write();
+            Expect(text.Contains(" coin=Player turn=Second"), "저장 파일에 코인 토스·선후공");
+            var loaded = GameSave.Parse(text, _db, _rarities, "시험");
+            Expect(loaded.ForfeitedDuel == 1 && loaded.Run.Events.Any(e => e.Kind == RunEventKind.DuelStarted && e.Turn == TurnOrder.Second),
+                "후공 듀얼 중에 꺼짐 → 패배 처리, 선후공 기록은 남음");
+            string v4 = Regex.Replace(text.Replace("format 5\n", "format 4\n"), @" coin=\w+ turn=\w+", "");
+            var old = GameSave.Parse(v4, _db, _rarities, "시험");
+            Expect(old.ForfeitedDuel == 1 && old.Run.Events.Where(e => e.Kind == RunEventKind.DuelStarted).All(e => e.Turn == TurnOrder.Unknown),
+                "형식 4 파일 (코인 토스 기록 없음)도 읽음");
+
+            // 상대가 이기면 플레이어가 무엇을 골랐든 상대가 정한다.
+            var lostDuel = opponentWins.Run.BeginDuel(playerFirst: true);
+            Expect(!lostDuel.Toss.PlayerWon && !lostDuel.PlayerGoesFirst && lostDuel.PlayerTeam == 1, "상대가 이겨 선공을 고르면 나는 후공");
+            ExpectThrows<InvalidOperationException>(() => opponentWins.Run.NextCoinToss(), "듀얼 중에 코인 토스");
         }
 
         /// <summary>보스 보상(봉인된 카드가 없으면 보상 1장 더, 있으면 봉인 해제 고르기)과 런 종료 골드 정산.</summary>
@@ -1119,11 +1185,11 @@ namespace DuelRoguelike.Dev
 
             string Replace(string line, string with) => good.Replace("\n" + line + "\n", "\n" + with + "\n");
             Broken("", "빈 파일");
-            Broken(good.Replace("format 4\n", ""), "format 줄 없음");
-            Broken(good.Replace("format 4\n", "format 5\n"), "새 버전 형식");
-            Broken(good.Replace("format 4\n", "format 4\nunknown 3\n"), "모르는 키");
-            Broken(good.Replace("format 4\n", "format 4\nformat 4\n"), "같은 키 두 번");
-            Broken(good.Replace("format 4\n", "format 3\n"), "형식 3에 형식 4의 줄 (floor-kind, chips)");
+            Broken(good.Replace("format 5\n", ""), "format 줄 없음");
+            Broken(good.Replace("format 5\n", "format 6\n"), "새 버전 형식");
+            Broken(good.Replace("format 5\n", "format 5\nunknown 3\n"), "모르는 키");
+            Broken(good.Replace("format 5\n", "format 5\nformat 5\n"), "같은 키 두 번");
+            Broken(good.Replace("format 5\n", "format 3\n"), "형식 3에 형식 4의 줄 (floor-kind, chips)");
             // 형식 4: 지금 층 종류, 칩, 칩교환소 진열, 이벤트 층의 이벤트, 보스 보상
             string chipsLine = $"chips {run.Chips} {run.ChipsEarned}";
             Expect(run.Chips == RunRules.ChipsPerWin && good.Contains("\n" + chipsLine + "\n") && good.Contains("\nfloor-kind Battle\n"), "칩·층 종류 줄");
@@ -1165,7 +1231,7 @@ namespace DuelRoguelike.Dev
             Broken(good.Replace("event DuelWon duel=1", "event DuelWon duel=x"), "이벤트 칸 숫자 아님");
             Broken(good.Replace("event DuelWon duel=1", "event DuelWon wins=1 duel=1"), "모르는 이벤트 칸");
             Broken(good.Replace("event DuelWon duel=1 floor=1", "event DuelWon duel=1"), "이벤트에 floor 없음");
-            Broken(good.Replace("format 4\ngold 0\n", "format 4\ngold -1\n"), "골드 음수");
+            Broken(good.Replace("format 5\ngold 0\n", "format 5\ngold -1\n"), "골드 음수");
             Broken(good.Replace("\nrecipe Kaiba ", "\nrecipe Yugi "), "레시피 Id 두 번");
             Broken(good.Replace("\nrecipe-side Joey", "\nrecipe-side Nobody"), "recipe 줄에 없는 레시피의 사이드 덱");
             Broken(Regex.Replace(good, @"\nrecipe-deck Pegasus [^\n]*", ""), "recipe-deck 줄 없음");
@@ -1173,8 +1239,8 @@ namespace DuelRoguelike.Dev
             Broken(good.Replace("\nrecipe Yugi ", "\nrecipe Yugi %2 "), "레시피 줄 칸 수");
             Broken(good.Replace("\nrecipe Yugi ", "\nrecipe Yugi %zz"), "이름의 % 표기 틀림");
             Broken(good.Replace("\nrecipe-deck Yugi ", "\nrecipe-deck Yugi 99999x "), "레시피 카드 코드가 숫자 아님");
-            Broken("format 4\nrecipe-deck a 53129443\n", "recipe 없이 recipe-deck");
-            Broken(good.Replace("format 4\n", "format 4\nlast-side-deck Yugi\n"), "형식 4에 last-side-deck");
+            Broken("format 5\nrecipe-deck a 53129443\n", "recipe 없이 recipe-deck");
+            Broken(good.Replace("format 5\n", "format 5\nlast-side-deck Yugi\n"), "형식 4에 last-side-deck");
             Broken("format 2\ncard 53129443 0\n", "컬렉션 0장");
             Broken("format 2\ncard 53129443 1\ncard 53129443 2\n", "컬렉션에 같은 카드 두 번");
             Broken("format 2\npoints 1 2 3 4 5\n", "형식 2에 points");

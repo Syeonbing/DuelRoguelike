@@ -21,7 +21,7 @@ namespace DuelRoguelike.Run
     public sealed class GameSave
     {
         /// <summary>저장 파일 형식 버전. 형식을 바꾸면 올리고, 이전 버전 파일을 읽는 길을 남긴다.</summary>
-        public const int FormatVersion = 4;
+        public const int FormatVersion = 5;
 
         static readonly string[] ProfileKeys = { "format", "gold", "last-start-deck" };
         static readonly string[] RepeatableProfileKeysV2 = { "card", "last-side-deck" };

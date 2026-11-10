@@ -63,6 +63,8 @@ namespace DuelRoguelike.Dev
         public readonly int[] LpBucketWins = new int[LpBuckets];
         /// <summary>8000보다 높은 LP로 시작한 듀얼 수.</summary>
         public int DuelsAboveFullLp;
+        /// <summary>코인 토스: 플레이어가 이긴 수, 상대가 이겨 선공을 고른 수, 플레이어가 후공으로 한 듀얼 수, 후공 듀얼 승리 수.</summary>
+        public int CoinTossWins, OpponentChoseFirst, SecondDuels, SecondWins;
 
         public static int LpBucket(int lp) => lp >= 8000 ? 4 : Math.Max(0, lp / 2000);
 
@@ -135,7 +137,8 @@ namespace DuelRoguelike.Dev
         /// <summary>런 상태를 바꾸는 호출(BeginDuel, FinishDuel, ChooseReward, MoveToDeck) 바로 전에 부른다.</summary>
         public void BeforeStep() => _before = Take();
 
-        public void AfterBeginDuel(RunDuel duel, DuelSessionOptions options)
+        /// <param name="playerChoice">코인 토스에 이겼을 때 시험 플레이어가 고른 것 (true = 선공).</param>
+        public void AfterBeginDuel(RunDuel duel, DuelSessionOptions options, bool playerChoice)
         {
             var b = _before;
             var events = NewEvents(b);
@@ -149,8 +152,26 @@ namespace DuelRoguelike.Dev
             Expect(b.Kind == (boss ? FloorKind.Boss : FloorKind.Battle) && duel.IsBossFloor == boss, $"{where}: {b.Kind} 층에서 듀얼 (보스 {duel.IsBossFloor})");
             int expectedLp = b.Lp;
             Expect(duel.PlayerLp == expectedLp && _run.Lp == expectedLp, $"{where}: 시작 LP {duel.PlayerLp} (기대 {expectedLp})");
-            Expect(options.Team1.StartingLP == (uint)expectedLp, $"{where}: 엔진 시작 LP {options.Team1.StartingLP} (기대 {expectedLp})");
-            Expect(options.Team2.StartingLP == 8000, $"{where}: 상대 시작 LP {options.Team2.StartingLP}");
+
+            // 코인 토스: 런 시드·듀얼 번호의 CoinToss 난수에서 첫 값 < 50이면 플레이어 승리, 둘째 값 < 90이면 상대가 선공을 고른다.
+            // 이긴 쪽이 선후공을 고르고, 선공이 엔진의 팀 0이다.
+            var toss = RunRandom.For(_run.Seed, b.DuelsPlayed + 1, RunRandomPurpose.CoinToss);
+            bool won = toss.Next(100) < 50;
+            bool opponentFirst = toss.Next(100) < 90;
+            bool first = won ? playerChoice : !opponentFirst;
+            int me = first ? 0 : 1;
+            Expect(duel.Toss.PlayerWon == won && duel.PlayerGoesFirst == first && duel.PlayerTeam == me,
+                $"{where}: 코인 토스 {duel.Toss.PlayerWon}/선공 {duel.PlayerGoesFirst} (기대 {won}/{first})");
+            var lps = new[] { options.Team1.StartingLP, options.Team2.StartingLP };
+            Expect(lps[me] == (uint)expectedLp, $"{where}: 엔진에서 나의 시작 LP {lps[me]} (기대 {expectedLp}, 팀 {me})");
+            Expect(lps[1 - me] == 8000, $"{where}: 상대 시작 LP {lps[1 - me]}");
+            var started = events.LastOrDefault(e => e.Kind == RunEventKind.DuelStarted);
+            Expect(started != null && started.Coin == (won ? CoinTossWinner.Player : CoinTossWinner.Opponent)
+                                   && started.Turn == (first ? TurnOrder.First : TurnOrder.Second),
+                $"{where}: 듀얼 시작 기록의 코인 토스·선후공 ({started?.Coin}, {started?.Turn})");
+            if (won) _stats.CoinTossWins++;
+            else if (opponentFirst) _stats.OpponentChoseFirst++;
+            if (!first) _stats.SecondDuels++;
             Expect(!events.Any(e => e.Kind == RunEventKind.LpRestored), $"{where}: 듀얼 시작에 LP 이벤트");
             Expect(_run.Chips == b.Chips, $"{where}: 칩이 바뀜");
             Expect(events.Count(e => e.Kind == RunEventKind.DuelStarted) == 1 && events.Last().Kind == RunEventKind.DuelStarted,
@@ -158,9 +179,9 @@ namespace DuelRoguelike.Dev
 
             // 상대: 상대 목록 중 하나, 엔진에는 그 레시피 그대로.
             Expect(_run.Opponents.Contains(duel.Opponent), $"{where}: 상대 덱 {duel.Opponent.Id}가 상대 목록에 없음");
-            Expect(SameCards(options.Decks[1], duel.Opponent.ToCardList()), $"{where}: 엔진에 넣은 상대 덱이 레시피와 다름");
+            Expect(SameCards(options.Decks[1 - me], duel.Opponent.ToCardList()), $"{where}: 엔진에 넣은 상대 덱이 레시피와 다름");
             // 나: 지금 메인 + 엑스트라 덱 그대로 (사이드·봉인 카드는 넣지 않는다).
-            Expect(SameCards(options.Decks[0], b.Main.Concat(b.Extra)), $"{where}: 엔진에 넣은 나의 덱이 런의 메인·엑스트라 덱과 다름");
+            Expect(SameCards(options.Decks[me], b.Main.Concat(b.Extra)), $"{where}: 엔진에 넣은 나의 덱이 런의 메인·엑스트라 덱과 다름");
             Expect(options.Seed.Any(s => s != 0), $"{where}: 엔진 시드가 모두 0");
             ExpectUnchanged(b, where, main: true, extra: true, side: true, sealedCards: true);
             Expect(_run.Gold == b.Gold, $"{where}: 골드가 바뀜");
@@ -176,6 +197,8 @@ namespace DuelRoguelike.Dev
             var b = _before;
             var events = NewEvents(b);
             string where = $"{duel.Floor}층 듀얼 {duel.DuelNumber} ({result})";
+            if (!duel.PlayerGoesFirst && result == DuelResult.Win)
+                _stats.SecondWins++;
             Expect(_run.DuelsPlayed == duel.DuelNumber, $"{where}: 끝난 듀얼 수 {_run.DuelsPlayed}");
             Expect(_run.CurrentDuel == null, $"{where}: 진행 중인 듀얼이 남아 있음");
             _lastOpponentCards = duel.OpponentCards;

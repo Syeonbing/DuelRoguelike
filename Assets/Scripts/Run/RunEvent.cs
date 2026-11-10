@@ -64,6 +64,22 @@ namespace DuelRoguelike.Run
         Side,
     }
 
+    /// <summary>듀얼 전 코인 토스에서 이긴 쪽 (형식 4까지의 기록은 Unknown).</summary>
+    public enum CoinTossWinner
+    {
+        Unknown,
+        Player,
+        Opponent,
+    }
+
+    /// <summary>플레이어의 선후공 (형식 4까지의 기록은 Unknown, 그때는 늘 선공이었다).</summary>
+    public enum TurnOrder
+    {
+        Unknown,
+        First,
+        Second,
+    }
+
     /// <summary>LP가 바뀐 까닭 (듀얼 밖에서).</summary>
     public enum LpRestoreReason
     {
@@ -115,6 +131,9 @@ namespace DuelRoguelike.Run
         public string EventId { get; internal set; }
         /// <summary>보스 보상 (봉인된 카드가 없어 한 번 더 받는 승리 보상, 보스 보상 봉인 해제)</summary>
         public bool IsBonus { get; internal set; }
+        /// <summary>듀얼 시작: 코인 토스에서 이긴 쪽과 플레이어의 선후공</summary>
+        public CoinTossWinner Coin { get; internal set; }
+        public TurnOrder Turn { get; internal set; }
 
         /// <summary>한국어 한 줄 설명. cardName은 카드 코드 → 표시할 카드명.</summary>
         public string Describe(Func<uint, string> cardName)
@@ -124,7 +143,7 @@ namespace DuelRoguelike.Run
                 case RunEventKind.RunStarted:
                     return $"런 시작: 시작 덱 {DeckName ?? DeckNameOf(DeckId)} (메인 {MainCount}장, 엑스트라 {ExtraCount}장, 사이드 {SideCount}장)";
                 case RunEventKind.DuelStarted:
-                    return $"{Floor}층 듀얼 {DuelNumber}{(RunRules.IsBossFloor(Floor) ? " (보스 층)" : "")}: 상대 {DeckNameOf(DeckId)}, 나의 LP {Lp}";
+                    return $"{Floor}층 듀얼 {DuelNumber}{(RunRules.IsBossFloor(Floor) ? " (보스 층)" : "")}: 상대 {DeckNameOf(DeckId)}, 나의 LP {Lp}" + TossText();
                 case RunEventKind.DuelWon:
                     return $"승리 (남은 LP {Lp})";
                 case RunEventKind.DuelLost:
@@ -195,6 +214,16 @@ namespace DuelRoguelike.Run
 
         public static string PileName(RunPile pile) =>
             pile == RunPile.Main ? "메인 덱" : pile == RunPile.Extra ? "엑스트라 덱" : "사이드 덱";
+
+        /// <summary>", 코인 토스 승리 → 선공" (형식 4까지의 기록에는 없다).</summary>
+        string TossText()
+        {
+            if (Coin == CoinTossWinner.Unknown && Turn == TurnOrder.Unknown)
+                return "";
+            string coin = Coin == CoinTossWinner.Player ? "코인 토스 승리" : Coin == CoinTossWinner.Opponent ? "코인 토스 패배" : "코인 토스";
+            string turn = Turn == TurnOrder.First ? "나의 선공" : Turn == TurnOrder.Second ? "나의 후공" : "선후공 모름";
+            return $", {coin} → {turn}";
+        }
 
         /// <summary>듀얼 번호·층과 설명 (카드는 코드로). 같은 시드로 다시 돌린 런과 비교할 때도 쓴다.</summary>
         public override string ToString() => $"#{DuelNumber} {Floor}층 {Describe(code => code.ToString())}";

@@ -111,6 +111,8 @@ namespace DuelRoguelike.Run
             if (e.Product != default) yield return Invariant($"product={e.Product}");
             if (e.EventId != null) yield return "event-id=" + SaveEscape.Encode(e.EventId);
             if (e.IsBonus) yield return "bonus=1";
+            if (e.Coin != default) yield return Invariant($"coin={e.Coin}");
+            if (e.Turn != default) yield return Invariant($"turn={e.Turn}");
         }
 
         /// <param name="version">저장 파일 형식 버전 (GameSave.FormatVersion 이하).</param>
@@ -245,7 +247,11 @@ namespace DuelRoguelike.Run
             }
 
             if (run.Phase == RunPhase.InDuel)
-                run.CurrentDuel = run.CreateDuel(run.DuelsPlayed + 1);
+            {
+                // 선후공은 듀얼 시작 기록에서 (형식 4까지는 늘 선공).
+                var started = run._events.LastOrDefault(e => e.Kind == RunEventKind.DuelStarted);
+                run.CurrentDuel = run.CreateDuel(run.DuelsPlayed + 1, playerGoesFirst: started?.Turn != TurnOrder.Second);
+            }
             return run;
         }
 
@@ -392,6 +398,8 @@ namespace DuelRoguelike.Run
                             throw r.Error(line, "bonus는 1만 쓴다");
                         e.IsBonus = true;
                         break;
+                    case "coin": e.Coin = r.Enum<CoinTossWinner>(line, value); break;
+                    case "turn": e.Turn = r.Enum<TurnOrder>(line, value); break;
                     default:
                         throw r.Error(line, $"모르는 이벤트 칸 \"{name}\"");
                 }

@@ -150,6 +150,7 @@ if ($chainTotal -gt 0) {
     Write-Host "      엑스트라 덱이 2장 이상일 때 패배 $chainTotal 번: 0장 $($s.ExtraChain[0]), 1장 $($s.ExtraChain[1]), 2장 $($s.ExtraChain[2]), 3장 이상 $($s.ExtraChain[3]) (1장 이상 $(Percent ($chainTotal - $s.ExtraChain[0]) $chainTotal), 기대 20%)"
 }
 Write-Host "    LP: 휴식 층에서 8000으로 맞춤 $($s.RestHeals)번, 보스 격파 $($s.BossClears)번, 패배 회복 $($s.LossHeals)번, 8000보다 높은 LP로 시작한 듀얼 $($s.DuelsAboveFullLp)판"
+Write-Host "    코인 토스: 내가 이김 $($s.CoinTossWins)번 / 듀얼 $($r.Duels)판 ($(Percent $s.CoinTossWins $r.Duels)), 상대가 이겨 선공 고름 $($s.OpponentChoseFirst)번, 후공 듀얼 $($s.SecondDuels)판 (승 $($s.SecondWins), 승률 $(Percent $s.SecondWins $s.SecondDuels))"
 $kindNames = '전투', '이벤트', '칩교환소', '휴식', '보스'
 Write-Host ("    탑: 들어간 층 " + ((0..4 | ForEach-Object { "$($kindNames[$_]) $($s.FloorVisits[$_])" }) -join ', '))
 $randomFloors = @(1, 2, 3, 4, 7, 8) | ForEach-Object { "{0}층 {1}/{2}" -f $_, $s.RandomEventFloors[$_], $s.RandomFloorVisits[$_] }

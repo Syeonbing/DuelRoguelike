@@ -100,7 +100,7 @@ namespace DuelRoguelike.Dev
             // 런을 바꾼 걸음(듀얼 결과, 고르기, 칩교환소 구매 등)을 차례로 적어 두고, 재현 시험에서 그대로 다시 한다.
             var steps = new List<Action<RunState>>();
             int refillCards = 0;
-            (DuelSessionOptions Options, int PlayerSeed, HeadlessDuelRun.DuelOutcome Outcome)? first = null;
+            (DuelSessionOptions Options, int PlayerSeed, HeadlessDuelRun.DuelOutcome Outcome, int Team)? first = null;
 
             while (run.Phase != RunPhase.Ended)
             {
@@ -183,14 +183,19 @@ namespace DuelRoguelike.Dev
 
                 string beforeDuel = save.Write();
                 checker.BeforeStep();
-                var duel = run.BeginDuel();
+                // 시험 플레이어의 난수: 첫 값은 듀얼의 플레이어 시드 (런 화면과 같음), 둘째 값은 코인 토스에 이겼을 때 선공·후공.
+                var external = RunRandom.For((ulong)seed, run.DuelsPlayed + 1, RunRandomPurpose.External);
+                int playerSeed = external.NextSeed();
+                bool goFirst = external.Next(2) == 0;
+                var duel = run.BeginDuel(goFirst);
                 var options = duel.CreateSessionOptions();
-                checker.AfterBeginDuel(duel, options);
-                CheckForfeitOnLoad(report, save, beforeDuel, runTag);
+                checker.AfterBeginDuel(duel, options, goFirst);
+                CheckForfeitOnLoad(report, save, beforeDuel, runTag, goFirst);
 
-                int playerSeed = RunRandom.For((ulong)seed, duel.DuelNumber, RunRandomPurpose.External).NextSeed();
-                string tag = $"{runTag} {duel.Floor}층 듀얼 {duel.DuelNumber} 대 {duel.Opponent.Id}";
-                var outcome = _duels.PlayDuel(report.Duel, options, tag, playerSeed, false, maxTurns, player, HeadlessPlayerKind.WindBot, hides);
+                int me = duel.PlayerTeam;
+                string tag = $"{runTag} {duel.Floor}층 듀얼 {duel.DuelNumber} 대 {duel.Opponent.Id}" + (me == 1 ? " (후공)" : "");
+                var outcome = _duels.PlayDuel(report.Duel, options, tag, playerSeed, false, maxTurns,
+                    me == 0 ? player : HeadlessPlayerKind.WindBot, me == 0 ? HeadlessPlayerKind.WindBot : player, hides);
                 if (!outcome.Finished)
                 {
                     report.Aborted++;
@@ -198,16 +203,16 @@ namespace DuelRoguelike.Dev
                     break;
                 }
                 if (first == null)
-                    first = (duel.CreateSessionOptions(), playerSeed, outcome);
+                    first = (duel.CreateSessionOptions(), playerSeed, outcome, me);
 
-                var result = RunDuel.ResultOf(outcome.State);
+                var result = RunDuel.ResultOf(outcome.State, me);
+                int endLp = outcome.Lp[me];
                 checker.BeforeStep();
-                run.FinishDuel(result, outcome.Lp[0]);
-                checker.AfterFinishDuel(duel, result, outcome.Lp[0]);
-                int endLp = outcome.Lp[0];
+                run.FinishDuel(result, endLp);
+                checker.AfterFinishDuel(duel, result, endLp);
                 steps.Add(r =>
                 {
-                    r.BeginDuel();
+                    r.BeginDuel(goFirst);
                     r.FinishDuel(result, endLp);
                 });
                 CheckSaveRoundTrip(report, save, runTag);
@@ -241,7 +246,7 @@ namespace DuelRoguelike.Dev
             CheckRuleReplay(report, setup, run, steps, runTag);
             CheckSaveReplay(report, setup, save, steps, runTag);
             if (first.HasValue)
-                CheckEngineReplay(report, first.Value.Options, first.Value.PlayerSeed, first.Value.Outcome, runTag, player, maxTurns, hides);
+                CheckEngineReplay(report, first.Value.Options, first.Value.PlayerSeed, first.Value.Outcome, runTag, player, first.Value.Team, maxTurns, hides);
         }
 
         /// <summary>
@@ -331,7 +336,7 @@ namespace DuelRoguelike.Dev
         /// 듀얼을 시작한 직후(듀얼 중)의 저장 파일을 읽으면 그 듀얼이 패배로 처리되는지 본다:
         /// 듀얼 직전 저장으로 같은 듀얼을 시작해 LP 0으로 진 것과 같아야 한다 (DuelForfeited 이벤트 하나만 더).
         /// </summary>
-        void CheckForfeitOnLoad(Report report, GameSave save, string beforeDuel, string runTag)
+        void CheckForfeitOnLoad(Report report, GameSave save, string beforeDuel, string runTag, bool choice)
         {
             report.ForfeitChecks++;
             var run = save.Run;
@@ -341,7 +346,7 @@ namespace DuelRoguelike.Dev
             {
                 var loaded = GameSave.Parse(save.Write(), _db, _rarities, "시험");
                 var expected = GameSave.Parse(beforeDuel, _db, _rarities, "시험");
-                expected.Run.BeginDuel();
+                expected.Run.BeginDuel(choice);
                 expected.Run.FinishDuel(DuelResult.Loss, 0);
                 var forfeited = loaded.Run.Events.Where(e => e.Kind == RunEventKind.DuelForfeited).ToList();
                 string withoutForfeit = string.Join("\n", loaded.Write().Split('\n').Where(l => !l.StartsWith("event DuelForfeited ", StringComparison.Ordinal)));
@@ -412,10 +417,10 @@ namespace DuelRoguelike.Dev
 
         /// <summary>런의 첫 듀얼을 같은 설정·같은 플레이어 시드로 엔진에서 다시 돌려, 승자·LP·턴 수가 같은지 본다.</summary>
         void CheckEngineReplay(Report report, DuelSessionOptions options, int playerSeed, HeadlessDuelRun.DuelOutcome original,
-            string runTag, HeadlessPlayerKind player, int maxTurns, bool hides)
+            string runTag, HeadlessPlayerKind player, int team, int maxTurns, bool hides)
         {
             var again = _duels.PlayDuel(report.ReplayDuel, options, $"{runTag} 첫 듀얼 다시", playerSeed, false, maxTurns,
-                player, HeadlessPlayerKind.WindBot, hides);
+                team == 0 ? player : HeadlessPlayerKind.WindBot, team == 0 ? HeadlessPlayerKind.WindBot : player, hides);
             if (!again.Finished || again.Winner != original.Winner || again.Lp[0] != original.Lp[0] || again.Lp[1] != original.Lp[1]
                 || again.Turns != original.Turns)
             {

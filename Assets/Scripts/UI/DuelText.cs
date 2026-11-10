@@ -14,7 +14,7 @@ namespace DuelRoguelike.UI
         readonly SystemStrings _strings;
 
         /// <summary>화면 앞쪽(아래)에 있는 플레이어. 이 플레이어 기준으로 "나"/"상대"라고 쓴다.</summary>
-        public byte LocalPlayer { get; }
+        public byte LocalPlayer { get; set; }
 
         /// <param name="strings">EDOPro strings.conf (시스템 문구). 없으면 번호로 보여 준다.</param>
         public DuelText(CardDatabase db, SystemStrings strings, byte localPlayer = 0)

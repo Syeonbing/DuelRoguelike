@@ -248,14 +248,17 @@ namespace DuelRoguelike.Dev
         public DuelOutcome PlayDuel(Result result, DuelSessionOptions options, string tag, int playerSeed, bool print, int maxTurns,
             HeadlessPlayerKind player0, HeadlessPlayerKind player1, bool windBotHidesInfo)
         {
-            if (player1 == HeadlessPlayerKind.Interaction)
-                throw new ArgumentException("화면 조작 모델은 플레이어 0만 맡을 수 있습니다.", nameof(player1));
+            if (player0 == HeadlessPlayerKind.Interaction && player1 == HeadlessPlayerKind.Interaction)
+                throw new ArgumentException("화면 조작 모델은 한쪽만 맡을 수 있습니다.", nameof(player1));
             var outcome = new DuelOutcome();
             result.Duels++;
-            var interactionPlayer = player0 == HeadlessPlayerKind.Interaction ? new InteractionTestPlayer(_text, playerSeed) : null;
+            // 화면 조작 모델의 점검 수치(화면에서 고를 수 없는 선택 등)는 그 모델이 앉은 쪽의 요청만 센다 (런에서 후공이면 플레이어 1).
+            int watched = player1 == HeadlessPlayerKind.Interaction ? 1 : 0;
+            var interactionPlayer = player0 == HeadlessPlayerKind.Interaction || player1 == HeadlessPlayerKind.Interaction
+                ? new InteractionTestPlayer(_text, watched == 0 ? playerSeed : playerSeed + 7777) : null;
             var windBots = new List<WindBotPlayer>();
-            IDuelPlayer p0 = (IDuelPlayer)interactionPlayer ?? CreatePlayer(player0, 0, playerSeed, windBotHidesInfo, windBots);
-            IDuelPlayer p1 = CreatePlayer(player1, 1, playerSeed + 7777, windBotHidesInfo, windBots);
+            IDuelPlayer p0 = watched == 0 && interactionPlayer != null ? interactionPlayer : CreatePlayer(player0, 0, playerSeed, windBotHidesInfo, windBots);
+            IDuelPlayer p1 = watched == 1 ? interactionPlayer : CreatePlayer(player1, 1, playerSeed + 7777, windBotHidesInfo, windBots);
             if (print)
                 foreach (var bot in windBots)
                     bot.DebugLog += line => _log($"    [WindBot] {line}");
@@ -294,9 +297,9 @@ namespace DuelRoguelike.Dev
                             lastRequestPlayer = request.Player;
                             lastRequestType = request.Type;
                             Count(result.RequestTypes, message.Type);
-                            if (request.Player == 0 && _manual.Respond(request, session.State) == null)
+                            if (request.Player == watched && _manual.Respond(request, session.State) == null)
                                 Count(result.HumanPrompts, message.Type);
-                            if (request.Player == 0 && IsScreenless(request))
+                            if (request.Player == watched && IsScreenless(request))
                                 Count(result.ScreenlessChoices, $"{request.Type}: {_text.CardName(lastChainCode)}");
                         }
                         if (print)

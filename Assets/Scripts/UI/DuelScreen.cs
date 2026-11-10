@@ -47,8 +47,9 @@ namespace DuelRoguelike.UI
         [SerializeField, Tooltip("개발용: 임시 자동 응답이 대신 답하는 \"자동\"(한 번)과 \"자동으로 끝까지\" 버튼을 보인다.")]
         bool devAutoButtons = true;
 
-        const byte Me = 0;
-        const byte Opp = 1;
+        /// <summary>엔진에서 나의 팀 (선공 = 0). 런에서는 코인 토스로 후공이면 1이다 (SetSeat).</summary>
+        byte Me = 0;
+        byte Opp = 1;
         const int MainZones = 5;
         const int MaxLogLines = 800;
 
@@ -343,17 +344,39 @@ namespace DuelRoguelike.UI
         }
 
         /// <summary>
-        /// 런 화면의 듀얼 하나를 시작하고 화면을 보인다. 플레이어(나)는 팀 0이고 상대는 WindBot이다.
+        /// 런 화면의 듀얼 하나를 시작하고 화면을 보인다. 상대는 WindBot이다.
+        /// myTeam: 엔진에서 나의 팀 (선공 0, 후공 1). 어느 쪽이든 내 필드가 아래에 온다.
         /// 듀얼이 끝나 "결과 보기"를 누르면 화면을 숨기고 onLeave(끝난 듀얼 상태)를 부른다.
         /// </summary>
-        internal void BeginExternalDuel(DuelSessionOptions options, int helperSeed, int opponentSeed,
+        internal void BeginExternalDuel(DuelSessionOptions options, int myTeam, int helperSeed, int opponentSeed,
             string myName, string opponentName, string startLine, Action<DuelState> onLeave)
         {
             _onLeave = onLeave;
+            SetSeat((byte)myTeam);
             _playerNames[Me] = myName;
             _playerNames[Opp] = opponentName;
             SetVisible(true);
             RunSafely(() => StartSession(options, helperSeed, opponentSeed, startLine));
+        }
+
+        /// <summary>나의 팀을 정한다. 바뀌면 필드 배치를 다시 만든다 (내 쪽이 늘 아래, 상대가 위).</summary>
+        void SetSeat(byte me)
+        {
+            if (me > 1)
+                throw new ArgumentOutOfRangeException(nameof(me));
+            bool changed = me != Me;
+            Me = me;
+            Opp = (byte)(1 - me);
+            if (_text != null)
+                _text.LocalPlayer = me;
+            if (changed && _root != null && _faces != null)
+            {
+                _root.Clear();
+                // 손패 칸은 그리기 사이에 다시 쓰는 목록이라 옛 배치의 칸이 남지 않게 비운다 (나머지 칸은 BuildLayout이 새로 만든다).
+                foreach (var cells in _handCells)
+                    cells.Clear();
+                BuildLayout();
+            }
         }
 
         void LeaveDuel()
@@ -702,6 +725,7 @@ namespace DuelRoguelike.UI
         /// <summary>혼자 듀얼: 인스펙터의 고정 덱과 시드로 시작한다.</summary>
         void StartFreeDuel()
         {
+            SetSeat(0);
             var myRecipe = StarterDecks.Get(myDeck);
             var opponentRecipe = StarterDecks.Get(opponentDeck);
             var options = new DuelSessionOptions
@@ -734,7 +758,10 @@ namespace DuelRoguelike.UI
             _opponentAi.ProblemReported += text => Debug.LogWarning($"[WindBot] {text}");
             _manual = new ManualPlayer { ChainPrompt = chainPrompt, PlaceSelect = placeSelect };
             _chainStatus.Clear();
-            _session = DuelSession.Create(options, _db, _scripts, _manual, _opponentAi);
+            // 팀 0이 선공이다. 나는 Me 팀 (런에서 후공이면 1).
+            _session = Me == 0
+                ? DuelSession.Create(options, _db, _scripts, _manual, _opponentAi)
+                : DuelSession.Create(options, _db, _scripts, _opponentAi, _manual);
             _session.MessageReceived += OnMessage;
             _session.EngineLog += OnEngineLog;
             foreach (var (type, text) in _session.StartupLog)
@@ -1489,7 +1516,7 @@ namespace DuelRoguelike.UI
         }
 
         /// <summary>요청에 나온 카드를 내가 볼 수 있는지. 상대의 패·덱·뒷면 카드는 숨긴다.</summary>
-        static bool IsVisibleRequestCard(CardRef card, CardInfo info)
+        bool IsVisibleRequestCard(CardRef card, CardInfo info)
         {
             var loc = card.Location;
             if (card.Code == 0)
