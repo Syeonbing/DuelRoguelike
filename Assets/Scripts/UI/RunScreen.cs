@@ -433,12 +433,26 @@ namespace DuelRoguelike.UI
         {
             foreach (var (zone, onDrop) in _dropZones)
             {
-                if (zone.panel != null && zone.worldBound.Contains(position))
+                if (zone.panel != null && VisibleBound(zone).Contains(position))
                 {
                     onDrop(pile, code);
                     return;
                 }
             }
+        }
+
+        /// <summary>스크롤 안에서 보이는 부분만 (스크롤 밖으로 나간 부분은 그 아래 고정한 칸과 겹치므로 놓을 곳으로 치지 않는다).</summary>
+        static Rect VisibleBound(VisualElement element)
+        {
+            var r = element.worldBound;
+            for (var p = element.parent; p != null; p = p.parent)
+            {
+                if (!(p is ScrollView scroll))
+                    continue;
+                var v = scroll.contentViewport.worldBound;
+                r = Rect.MinMaxRect(Mathf.Max(r.xMin, v.xMin), Mathf.Max(r.yMin, v.yMin), Mathf.Min(r.xMax, v.xMax), Mathf.Min(r.yMax, v.yMax));
+            }
+            return r;
         }
 
         /// <summary>카드를 고른다: 테두리 표시와 카드 정보 칸만 바꾼다 (화면을 다시 그리지 않아서 두 번 누르기가 이어진다).</summary>

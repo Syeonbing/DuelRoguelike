@@ -176,21 +176,30 @@ namespace DuelRoguelike.UI
 
             var scroll = new ScrollView(ScrollViewMode.Vertical);
             scroll.style.flexGrow = 1;
+            scroll.style.flexShrink = 1;
             scroll.style.marginTop = 6;
+            panel.Add(scroll);
             foreach (var pile in StartPiles)
             {
                 var cards = RecipeCards(recipe, pile);
                 if (cards.Count == 0 && pile == Pile.DeckExtra)
                     continue;
-                scroll.Add(SubHeading($"{PileTitle(pile)} {cards.Count}장" + (pile == Pile.DeckMain ? " · " + KindCounts(cards) : "")));
+                // 시작 사이드 덱은 스크롤 밖 아래에 고정한다 (메인 덱을 내려 보지 않아도 보이게).
+                VisualElement parent = scroll;
+                if (pile == Pile.DeckSide)
+                {
+                    parent = new VisualElement();
+                    parent.style.flexShrink = 0;
+                    panel.Add(parent);
+                }
+                parent.Add(SubHeading($"{PileTitle(pile)} {cards.Count}장" + (pile == Pile.DeckMain ? " · " + KindCounts(cards) : "")));
                 var grid = Grid();
                 if (cards.Count == 0)
                     grid.Add(Text("비어 있음", 15, UiStyle.TextDim));
                 foreach (uint code in Sorted(cards))
-                    grid.Add(CardSlot(pile, code, CardFaceSize.Small, dim: _collection.Count(code) < RecipeUsed(recipe, code), draggable: false));
-                scroll.Add(grid);
+                    grid.Add(CardSlot(pile, code, CardFaceSize.Small, tag: _collection.Count(code) < RecipeUsed(recipe, code) ? "부족" : null, draggable: false));
+                parent.Add(grid);
             }
-            panel.Add(scroll);
             return panel;
         }
 
@@ -251,7 +260,8 @@ namespace DuelRoguelike.UI
             {
                 var chosen = r;
                 bool startable = RecipeRules.StartProblems(r, _data.Database, _collection).Count == 0;
-                var b = UiStyle.Button($"{r.Name}{(startable ? "" : "  · 시작 불가")}\n{RecipeCounts(r)}{RarityLine(r)}", () => ChooseRecipe(chosen), 15);
+                string rarity = RarityLine(r);
+                var b = UiStyle.Button($"{r.Name}{(startable ? "" : "  · 시작 불가")}\n{RecipeCounts(r)}{(rarity.Length == 0 ? "" : "\n" + rarity)}", () => ChooseRecipe(chosen), 15);
                 b.name = "recipe-" + r.Id;
                 b.style.marginBottom = 4;
                 if (!startable)
@@ -367,7 +377,7 @@ namespace DuelRoguelike.UI
             ShowStart();
         }
 
-        /// <summary>" · UR 3 · SR 3 · R 9 · N 35" (등급 표에 있는 카드만)</summary>
+        /// <summary>"UR 3 · SR 3 · R 9 · N 35" (등급 표에 있는 카드만, 없으면 빈 글)</summary>
         string RarityLine(PlayerRecipe recipe)
         {
             var counts = new int[RarityTable.RarityCount];
@@ -375,7 +385,7 @@ namespace DuelRoguelike.UI
                 if (_rarities.TryGet(code, out var rarity))
                     counts[(int)rarity]++;
             var parts = Enumerable.Range(0, counts.Length).Reverse().Where(i => counts[i] > 0).Select(i => $"{(Rarity)i} {counts[i]}").ToList();
-            return parts.Count == 0 ? "" : " · " + string.Join(" · ", parts);
+            return string.Join(" · ", parts);
         }
 
         void StartRun(Label error)

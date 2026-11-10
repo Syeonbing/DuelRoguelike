@@ -376,14 +376,17 @@ namespace DuelRoguelike.UI
             panel.style.flexShrink = 0;
             _editorDeckScroll = new ScrollView(ScrollViewMode.Vertical);
             _editorDeckScroll.style.flexGrow = 1;
+            _editorDeckScroll.style.flexShrink = 1;
             panel.Add(_editorDeckScroll);
 
             int main = _editor.MainCount;
-            var mainZone = AddEditorSection(Pile.DeckMain, "editor-main", $"메인 덱 {main}장 · {KindCounts(_editor.MainDeck)}",
+            var mainZone = AddEditorSection(_editorDeckScroll, Pile.DeckMain, "editor-main", $"메인 덱 {main}장 · {KindCounts(_editor.MainDeck)}",
                 $"{RunRules.MinMainDeck}~{RunRules.MaxMainDeck}장", main < RunRules.MinMainDeck);
-            var extraZone = AddEditorSection(Pile.DeckExtra, "editor-extra", $"엑스트라 덱 {_editor.ExtraCount}장", $"최대 {RunRules.MaxExtraDeck}장", false);
-            var sideZone = AddEditorSection(Pile.DeckSide, "editor-side", $"시작 사이드 덱 {_editor.Side.Count}/{RunRules.StartingSideDeckMax}장",
+            var extraZone = AddEditorSection(_editorDeckScroll, Pile.DeckExtra, "editor-extra", $"엑스트라 덱 {_editor.ExtraCount}장", $"최대 {RunRules.MaxExtraDeck}장", false);
+            // 시작 사이드 덱은 스크롤 밖 아래에 고정해서 메인 덱을 내려 보지 않아도 늘 보이게 한다.
+            var sideZone = AddEditorSection(panel, Pile.DeckSide, "editor-side", $"시작 사이드 덱 {_editor.Side.Count}/{RunRules.StartingSideDeckMax}장",
                 "런 중에 덱과 바꾸거나 보충에 쓴다", false);
+            sideZone.style.flexShrink = 0;
             void ToDeck(Pile pile, uint code)
             {
                 if (pile == Pile.Collection)
@@ -412,7 +415,7 @@ namespace DuelRoguelike.UI
             return panel;
         }
 
-        VisualElement AddEditorSection(Pile pile, string name, string title, string note, bool problem)
+        VisualElement AddEditorSection(VisualElement parent, Pile pile, string name, string title, string note, bool problem)
         {
             var zone = UiStyle.Box(name);
             zone.style.marginTop = pile == Pile.DeckMain ? 0 : 10;
@@ -443,7 +446,7 @@ namespace DuelRoguelike.UI
                     onDoubleClick: () => EditorRemove(c, fromSide: pile == Pile.DeckSide)));
             }
             zone.Add(grid);
-            _editorDeckScroll.Add(zone);
+            parent.Add(zone);
             return zone;
         }
 

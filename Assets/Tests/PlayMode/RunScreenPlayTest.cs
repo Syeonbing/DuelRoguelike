@@ -114,6 +114,7 @@ namespace DuelRoguelike.Tests
             for (int i = 0; i < SidePicks; i++)
                 yield return PickToSide(picked);
             Assert.AreEqual(SideCountText(SidePicks), Find<Label>(RunUi, "editor-side-count").text);
+            Assert.IsNull(Find<VisualElement>(RunUi, "editor-deck").Q<ScrollView>().Q("editor-side"), "시작 사이드 덱이 덱 스크롤 밖 아래에 고정돼 있지 않다");
             Click(Find<VisualElement>(RunUi, "deck-side-" + picked[0]));
             yield return null;
             Click(Find<Button>(RunUi, "editor-remove"));
@@ -192,6 +193,13 @@ namespace DuelRoguelike.Tests
             Click(Find<Button>(RunUi, "editor-back"));
             yield return WaitFor(() => Find<Button>(RunUi, "start-run") != null, 10, "런 시작 화면");
             StringAssert.Contains("시작 불가", Find<Button>(RunUi, "recipe-Yugi").text, "컬렉션보다 많은 레시피에 시작 불가 표시가 없다");
+            var shortSlot = Find<VisualElement>(RunUi, "deck-main-" + once) ?? Find<VisualElement>(RunUi, "deck-extra-" + once);
+            Assert.IsNotNull(shortSlot, "런 시작 화면의 레시피 보기에 컬렉션보다 많이 넣은 카드가 없다");
+            Assert.IsTrue(shortSlot.Query<Label>().ToList().Any(l => l.text == "부족"), "런 시작 화면의 레시피 보기에 부족 표시가 없다");
+            var startSide = Find<VisualElement>(RunUi, "deck-side-" + picked[0]);
+            var startScroll = Find<VisualElement>(RunUi, "start-recipe").Q<ScrollView>();
+            Assert.IsNotNull(startSide, "런 시작 화면의 레시피 보기에 시작 사이드 덱 카드가 없다");
+            Assert.IsTrue(startSide.worldBound.yMin >= startScroll.worldBound.yMax - 1, "시작 사이드 덱이 스크롤 아래에 고정돼 있지 않다");
             Click(Find<Button>(RunUi, "start-run"));
             yield return null;
             Assert.IsNull(Find<Button>(RunUi, "next-duel"), "컬렉션보다 많은 레시피로 런이 시작됐다");
