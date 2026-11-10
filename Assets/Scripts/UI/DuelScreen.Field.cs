@@ -114,12 +114,15 @@ namespace DuelRoguelike.UI
         /// <summary>마우스를 올린 카드: 떼면 누른 카드로 돌아간다.</summary>
         void PreviewCard(CardInfo card, bool visible)
         {
-            if (card != null)
-                RenderDetail(card, visible);
+            if (card == null)
+                return;
+            _previewing = true;
+            RenderDetail(card, visible);
         }
 
         void EndPreview()
         {
+            _previewing = false;
             if (_pinnedCard != null)
                 RenderDetail(_pinnedCard, _pinnedVisible);
             else
@@ -229,9 +232,17 @@ namespace DuelRoguelike.UI
             var panel = UiStyle.PanelBox();
             var nameLabel = _playerName[p] = UiStyle.Label(_playerNames[p], 18, p == Me ? UiStyle.Mine : UiStyle.Opponent, bold: true);
             _lp[p] = UiStyle.Label("LP 8000", 38, bold: true);
+            _lpDelta[p] = UiStyle.Label("", 24, FocusTarget, bold: true);
+            _lpDelta[p].name = $"lp-delta-{p}";
+            _lpDelta[p].style.marginLeft = 12;
+            _lpDelta[p].style.marginBottom = 5;
             _playerInfo[p] = UiStyle.Label("", 15, UiStyle.TextDim);
+            var lpRow = UiStyle.Box(null, FlexDirection.Row);
+            lpRow.style.alignItems = Align.FlexEnd;
+            lpRow.Add(_lp[p]);
+            lpRow.Add(_lpDelta[p]);
             panel.Add(nameLabel);
-            panel.Add(_lp[p]);
+            panel.Add(lpRow);
             panel.Add(_playerInfo[p]);
             return panel;
         }
@@ -562,6 +573,35 @@ namespace DuelRoguelike.UI
             {
                 _caption.text = text ?? "";
                 _caption.style.display = string.IsNullOrEmpty(text) ? DisplayStyle.None : DisplayStyle.Flex;
+            }
+
+            Label _note;
+
+            /// <summary>카드 가운데에 겹쳐 띄우는 짧은 글 (공격 대상의 예상 결과). null이나 빈 문자열이면 숨긴다.</summary>
+            public void SetNote(string text)
+            {
+                if (_note == null)
+                {
+                    if (string.IsNullOrEmpty(text))
+                        return;
+                    _note = UiStyle.Label("", 14, UiStyle.Text, bold: true);
+                    _note.name = "attack-preview";
+                    _note.pickingMode = PickingMode.Ignore;
+                    _note.style.position = Position.Absolute;
+                    _note.style.left = 2;
+                    _note.style.right = 2;
+                    _note.style.top = Length.Percent(32);
+                    _note.style.backgroundColor = new Color(0.05f, 0.06f, 0.08f, 0.85f);
+                    _note.style.paddingTop = _note.style.paddingBottom = 3;
+                    _note.style.unityTextAlign = TextAnchor.MiddleCenter;
+                    _note.style.whiteSpace = WhiteSpace.Normal;
+                    UiStyle.Radius(_note, 4);
+                    _holder.Add(_note);
+                }
+                _note.text = text ?? "";
+                _note.style.color = text != null && text.StartsWith("파괴") ? Chosen
+                    : text != null && (text.Contains("나 -") || text.StartsWith("내 몬스터")) ? FocusTarget : UiStyle.Text;
+                _note.style.display = string.IsNullOrEmpty(text) ? DisplayStyle.None : DisplayStyle.Flex;
             }
 
             /// <summary>오른쪽 아래에 크게 띄우는 표시 (순서 정하기의 번호). null이나 빈 문자열이면 숨긴다.</summary>

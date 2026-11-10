@@ -4,7 +4,8 @@
     "references": [
         "DuelRoguelike.Engine",
         "DuelRoguelike.AI",
-        "DuelRoguelike.Run"
+        "DuelRoguelike.Run",
+        "Unity.InputSystem"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

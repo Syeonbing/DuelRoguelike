@@ -55,6 +55,7 @@ namespace DuelRoguelike.Tests
         bool _duelViewChecked;
         int _playbackTries;
         bool _playbackDone;
+        bool _previewSeen;
         const int MaxPlaybackTries = 3;
 
         string SaveFile => Path.Combine(_saveDir, "save.txt");
@@ -575,8 +576,16 @@ namespace DuelRoguelike.Tests
             int steps = 0;
             bool attack = false, battle = false;
             string last = null;
-            while (!battle && Time.realtimeSinceStartup < until && Find<Button>(DuelUi, "leave-duel") == null)
+            while (!(battle && _previewSeen) && Time.realtimeSinceStartup < until && Find<Button>(DuelUi, "leave-duel") == null)
             {
+                // 내가 공격 대상을 고를 때: 후보 몬스터 위의 예상 결과
+                var note = Root(DuelUi)?.Query<Label>("attack-preview").Where(l => l.style.display.value == DisplayStyle.Flex && !string.IsNullOrEmpty(l.text)).First();
+                if (!_previewSeen && note != null)
+                {
+                    _previewSeen = true;
+                    Debug.Log($"[런 화면 시험] 공격 대상 예상 결과: {note.text.Replace('\n', ' ')}");
+                    yield return Shot(DuelUi, "2g-attack-preview");
+                }
                 if (Find<Button>(DuelUi, "skip-playback") != null)
                 {
                     string line = Find<Label>(DuelUi, "prompt-label")?.text ?? "";
@@ -603,7 +612,7 @@ namespace DuelRoguelike.Tests
                     Click(once);
                 yield return null;
             }
-            _playbackDone = battle;
+            _playbackDone = battle && _previewSeen;
             Assert.Greater(steps, 0, "자동(한 번)으로 답했는데 멈춰 보여 주는 단계가 없다");
             Debug.Log($"[런 화면 시험] 한 단계씩 보여 주기 ({_playbackTries}번째): 멈춘 단계 {steps}개, 상대 공격 {(attack ? "봄" : "못 봄")}, 그 뒤 데미지 계산 {(battle ? "봄" : "못 봄")}");
         }
