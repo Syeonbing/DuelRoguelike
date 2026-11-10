@@ -21,8 +21,9 @@ namespace DuelRoguelike.UI
         uint _shopRelease;
         /// <summary>이벤트 창을 저절로 띄운 층 (같은 층에서는 다시 띄우지 않는다).</summary>
         int _eventShownFloor;
-        /// <summary>휴식 창을 저절로 띄운 층.</summary>
+        /// <summary>휴식 창·칩교환소 창을 저절로 띄운 층.</summary>
         int _restShownFloor;
+        int _shopShownFloor;
 
         static readonly Color RestColor = UiStyle.Hex(0x5ee07a);
         static readonly Color EventFloorColor = UiStyle.Hex(0x9b7ae0);
@@ -190,6 +191,7 @@ namespace DuelRoguelike.UI
         {
             if (_run == null || _run.Phase != RunPhase.Ready || _run.FloorKind != FloorKind.ChipExchange)
                 return;
+            _shopShownFloor = _run.Floor;
             if (_shopProduct != null)
             {
                 OpenShopPicker();

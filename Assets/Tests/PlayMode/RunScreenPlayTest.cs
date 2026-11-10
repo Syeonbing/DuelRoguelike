@@ -445,6 +445,10 @@ namespace DuelRoguelike.Tests
             Assert.IsNotNull(Find<Button>(RunUi, "leave-floor"), "칩교환소에 다음 층으로 버튼이 없다");
             StringAssert.Contains("봉인 3장", HubText(), "봉인 3장이 보이지 않는다");
             StringAssert.Contains("칩 400", Find<Label>(RunUi, "tower-chips")?.text ?? "", "탑 아래에 칩이 없다");
+            Assert.IsNotNull(Find<VisualElement>(RunUi, "chip-exchange"), "칩교환소 층에 왔는데 칩교환소 창이 저절로 뜨지 않았다");
+            Click(Find<Button>(RunUi, "shop-close"));
+            yield return null;
+            Assert.IsNull(Find<VisualElement>(RunUi, "chip-exchange"), "칩교환소 창이 닫히지 않았다");
             yield return Shot(RunUi, "11-tower");
 
             Click(Find<Button>(RunUi, "open-shop"));
