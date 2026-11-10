@@ -93,6 +93,12 @@ namespace DuelRoguelike.UI
         float _holdUntil;
         CardLocation? _lastChaining;
 
+        // 플레이 편의
+        const ulong HintAttackTarget = 549;   // HINTMSG_ATTACKTARGET: 공격할 대상을 고를 때의 안내
+        CardLocation? _attacker;              // 배틀 페이즈에 공격하겠다고 고른 내 몬스터 (공격 대상 예상 결과에 쓴다)
+        int _solvingChain;                    // 지금 처리 중인 체인 번호 (0이면 없음)
+        bool _previewing;                     // 카드에 마우스를 올려 카드 정보를 보는 중
+
         DuelInteraction _interaction;
         int _interactionSerial = -1;
         bool _windowHidden;
@@ -101,6 +107,7 @@ namespace DuelRoguelike.UI
         VisualElement _docRoot, _root;
         readonly Label[] _playerName = new Label[2];
         readonly Label[] _lp = new Label[2];
+        readonly Label[] _lpDelta = new Label[2];
         readonly Label[] _playerInfo = new Label[2];
         readonly CardCell[,] _monsters = new CardCell[2, MainZones];
         readonly CardCell[,] _spells = new CardCell[2, MainZones];
@@ -153,10 +160,39 @@ namespace DuelRoguelike.UI
 
         void Update()
         {
+            HandleKeys();
             if (_autoPlay)
                 AutoPlayStep();
             else
                 AdvancePlayback();
+        }
+
+        /// <summary>
+        /// 키보드: 스페이스 = 지금 멈춘 단계를 넘긴다 (누르고 있으면 빨리 넘어간다), 엔터 = 다음 입력까지 건너뛴다,
+        /// Esc = 메뉴·창을 닫는다 (선택 창은 "선택 창 열기"로 다시 연다).
+        /// </summary>
+        void HandleKeys()
+        {
+#if ENABLE_INPUT_SYSTEM // 유니티 밖(헤드리스 컴파일)에는 Input System이 없다
+            var keyboard = UnityEngine.InputSystem.Keyboard.current;
+            if (keyboard == null || _session == null || _docRoot == null || _docRoot.style.display == DisplayStyle.None)
+                return;
+            if (keyboard.spaceKey.isPressed && _focus != null)
+                _holdUntil = 0;
+            if ((keyboard.enterKey.wasPressedThisFrame || keyboard.numpadEnterKey.wasPressedThisFrame) && !_autoPlay
+                && (_focus != null || _session.CanStep))
+                _skipping = true;
+            if (keyboard.escapeKey.wasPressedThisFrame)
+            {
+                CloseMenu();
+                if (_modalOpen)
+                {
+                    _windowHidden = true;
+                    CloseModal();
+                    Render();
+                }
+            }
+#endif
         }
 
         // ================= 런 화면이 맡기는 듀얼 =================
@@ -272,6 +308,10 @@ namespace DuelRoguelike.UI
             public byte Actor;
             public float Seconds;
             public byte LpPlayer = OcgConstants.PlayerNone;
+            public int LpDelta;
+            /// <summary>카드 정보에 띄울 카드 (0이면 그대로 둔다).</summary>
+            public uint DetailCode;
+            public CardLocation DetailLocation;
             public readonly List<(CardKey Key, Color Color)> Cards = new List<(CardKey, Color)>();
 
             public void Add(CardLocation loc, Color color)
@@ -298,6 +338,58 @@ namespace DuelRoguelike.UI
             _focus = _nextFocus = null;
             _skipping = _stalled = _pacing = false;
             _lastChaining = null;
+            _attacker = null;
+            _solvingChain = 0;
+        }
+
+        /// <summary>멈춘 단계의 카드(발동·소환·공격)를 카드 정보에 띄운다. 마우스를 올려 보는 중이면 떼었을 때 보인다.</summary>
+        void ShowFocusCard(PlaybackFocus f)
+        {
+            if (f.DetailCode == 0)
+                return;
+            var card = _session.State.Find(f.DetailLocation);
+            if (card == null || card.Code != f.DetailCode)
+            {
+                // 아직 배치를 다시 읽기 전이면 카드 DB의 값으로 보인다.
+                var record = _text.Record(f.DetailCode);
+                card = new CardInfo { Code = f.DetailCode, Location = f.DetailLocation };
+                if (record != null)
+                {
+                    card.Type = record.Type;
+                    card.Level = record.Data.Level & 0xff;
+                    card.Attribute = (OcgAttribute)record.Data.Attribute;
+                    card.Race = record.Data.Race;
+                    card.Attack = card.BaseAttack = record.Data.Attack;
+                    card.Defense = card.BaseDefense = record.Data.Defense;
+                }
+            }
+            _pinnedCard = card;
+            _pinnedVisible = true;
+            if (!_previewing)
+                RenderDetail(card, true);
+        }
+
+        /// <summary>
+        /// 공격 대상 고르기: 후보 몬스터의 예상 결과. 공격력·수비력만 비교한다 (효과는 따지지 않는다). 해당 없으면 null.
+        /// </summary>
+        string AttackPreview(CardInfo target)
+        {
+            if (target == null || !_attacker.HasValue || !(_interaction?.Request is SelectCardRequest r) || r.SelectHint != HintAttackTarget
+                || _interaction.Selection?.Find(new CardKey(target.Location)) == null)
+                return null;
+            var attacker = _session.State.Find(_attacker.Value);
+            if (attacker == null || !attacker.IsMonster)
+                return null;
+            if (!target.IsFaceUp)
+                return "뒷면\n결과 모름";
+            int atk = attacker.Attack;
+            if ((target.Position & OcgPosition.Defense) != 0)
+            {
+                int def = target.Defense;
+                return atk > def ? "파괴" : atk == def ? "변화 없음" : $"나 -{def - atk}";
+            }
+            int diff = atk - target.Attack;
+            return diff > 0 ? $"파괴\n상대 -{diff}" : diff == 0 ? "서로 파괴" : $"내 몬스터 파괴\n나 -{-diff}";
         }
 
         /// <summary>멈춘 단계가 끝났으면 다음 중요한 메시지까지 진행한다. 한 프레임에 너무 오래 붙잡지 않는다.</summary>
@@ -328,6 +420,8 @@ namespace DuelRoguelike.UI
                 {
                     _nextFocus = null;
                     _session.Step();
+                    if (_nextFocus != null)
+                        ShowFocusCard(_nextFocus);
                     if (_nextFocus != null && !_skipping)
                     {
                         _focus = _nextFocus;
@@ -388,6 +482,8 @@ namespace DuelRoguelike.UI
                     seconds = 1.0f;
                     f.Add(m.Location, FocusActor);
                     _lastChaining = m.Location;
+                    f.DetailCode = m.Code;
+                    f.DetailLocation = m.Location;
                     break;
                 case CardListMessage m when m.Type == OcgMessageType.BecomeTarget:
                     seconds = 0.7f;
@@ -406,11 +502,19 @@ namespace DuelRoguelike.UI
                     seconds = 0.8f;
                     break;
                 case AttackMessage m:
+                {
                     seconds = 1.0f;
                     f.Add(m.Attacker, FocusActor);
                     if (!m.IsDirect)
                         f.Add(m.Target, FocusTarget);
+                    var attacker = state.Find(m.Attacker);
+                    if (attacker != null && IsVisible(attacker))
+                    {
+                        f.DetailCode = attacker.Code;
+                        f.DetailLocation = m.Attacker;
+                    }
                     break;
+                }
                 case BattleMessage m:
                     seconds = 1.1f;
                     f.Add(m.Attacker, FocusActor);
@@ -420,6 +524,8 @@ namespace DuelRoguelike.UI
                 case LpChangeMessage m:
                     seconds = 0.8f;
                     f.LpPlayer = m.Player;
+                    f.LpDelta = m.Kind == LpChangeKind.Recover ? (int)m.Amount
+                        : m.Kind == LpChangeKind.Damage || m.Kind == LpChangeKind.PayCost ? -(int)m.Amount : 0;
                     break;
                 case MoveMessage m:
                     seconds = 0.6f;
@@ -428,6 +534,8 @@ namespace DuelRoguelike.UI
                 case SummoningMessage m:
                     seconds = 0.6f;
                     f.Add(m.Location, FocusActor);
+                    f.DetailCode = m.Code;
+                    f.DetailLocation = m.Location;
                     break;
                 case SetMessage m:
                     seconds = 0.5f;
@@ -518,6 +626,11 @@ namespace DuelRoguelike.UI
                 return;
             CloseMenu();
             CloseModal();
+            // 공격하겠다고 고른 몬스터를 기억해 둔다 (다음 공격 대상 고르기에서 예상 결과를 보인다).
+            if (_session?.PendingRequest is SelectBattleCmdRequest battle)
+                for (int i = 0; i < battle.Attackers.Count; i++)
+                    if (response.SequenceEqual(DuelResponses.Attack(i)))
+                        _attacker = battle.Attackers[i].Location;
             RunSafely(() => _session.Answer(response));
             AdvancePlayback(); // 나머지는 Update가 한 단계씩 진행한다
         }
@@ -539,6 +652,10 @@ namespace DuelRoguelike.UI
 
         void OnMessage(DuelMessage message)
         {
+            if (message is ChainEventMessage solving && message.Type == OcgMessageType.ChainSolving)
+                _solvingChain = solving.ChainCount;
+            else if (message.Type == OcgMessageType.ChainEnd)
+                _solvingChain = 0;
             string line = _logFormatter.Format(message, _session.State);
             if (line == null)
                 return;
@@ -591,7 +708,11 @@ namespace DuelRoguelike.UI
             {
                 var player = state.Players[p];
                 _lp[p].text = $"LP {player.Lp}";
-                _lp[p].style.color = _focus != null && _focus.LpPlayer == p ? FocusTarget : UiStyle.Text;
+                bool lpFocus = _focus != null && _focus.LpPlayer == p;
+                _lp[p].style.color = lpFocus ? FocusTarget : UiStyle.Text;
+                // LP가 바뀌는 단계: 바뀐 양을 LP 옆에 띄운다.
+                _lpDelta[p].text = lpFocus && _focus.LpDelta != 0 ? (_focus.LpDelta > 0 ? $"+{_focus.LpDelta}" : $"−{-_focus.LpDelta}") : "";
+                _lpDelta[p].style.color = lpFocus && _focus.LpDelta > 0 ? Chosen : FocusTarget;
                 _playerInfo[p].text = $"패 {player.Hand.Count} · 덱 {player.DeckCount} · 묘지 {player.Grave.Count}";
                 for (int i = 0; i < MainZones; i++)
                 {
@@ -606,10 +727,16 @@ namespace DuelRoguelike.UI
             _turnLabel.text = state.Turn == 0 ? "듀얼 준비"
                 : $"{state.Turn}턴 · {_text.Player(state.TurnPlayer)}의 턴 · {DuelText.ShortPhase(state.Phase)}";
             _chainBox.Clear();
+            // 체인: 쌓인 순서대로, 쪽마다 색을 달리하고 지금 처리 중인 체인에 표시한다.
             for (int i = 0; i < state.Chain.Count; i++)
             {
                 var link = state.Chain[i];
-                _chainBox.Add(UiStyle.Label($"체인 {i + 1}: {_text.CardName(link.Code)} ({_text.Player(link.Location.Controller)})", 15, UiStyle.Accent));
+                byte owner = link.Location.Controller;
+                bool solving = _solvingChain == i + 1;
+                var label = UiStyle.Label($"{(solving ? "▶ 처리 중 " : "")}체인 {i + 1}: 「{_text.CardName(link.Code)}」 ({_text.Player(owner)})", 15,
+                    solving ? UiStyle.Accent : owner == Opp ? OpponentLine : UiStyle.Mine, bold: solving);
+                label.name = $"chain-{i + 1}";
+                _chainBox.Add(label);
             }
             RenderStrip(state);
         }
@@ -661,6 +788,9 @@ namespace DuelRoguelike.UI
                 detail = sel.Progress + (detail != null ? $" · {detail}" : "");
             if (places != null && places.NeedsConfirm)
                 detail = $"{places.Chosen.Count} / {places.Count}칸 골랐다" + (detail != null ? $" · {detail}" : "");
+            if (_attacker.HasValue && _interaction.Request is SelectCardRequest attackTarget && attackTarget.SelectHint == HintAttackTarget
+                && _session.State.Find(_attacker.Value) is CardInfo attacker)
+                detail = $"「{_text.CardName(attacker.Code)}」 공격력 {attacker.Attack} · 카드 위 예상 결과는 공격력·수비력만 비교한다";
             _promptDetail.text = detail ?? "";
 
             foreach (var b in _interaction.Buttons)
@@ -708,6 +838,7 @@ namespace DuelRoguelike.UI
         {
             bool visible = visibleOverride ?? IsVisible(card);
             cell.Set(card, visible);
+            cell.SetNote(AttackPreview(card));
             if (_focus != null)
             {
                 // 멈춰 보여 주는 단계: 발동한 카드·공격하는 몬스터는 주황, 대상·공격받는 쪽은 빨강 테두리 (빈칸이면 칸에).
