@@ -65,6 +65,14 @@ namespace DuelRoguelike.Dev
         public int DuelsAboveFullLp;
         /// <summary>코인 토스: 플레이어가 이긴 수, 상대가 이겨 선공을 고른 수, 플레이어가 후공으로 한 듀얼 수, 후공 듀얼 승리 수.</summary>
         public int CoinTossWins, OpponentChoseFirst, SecondDuels, SecondWins;
+        /// <summary>이벤트: 성향별로 나온 수 (긍정·무성향·부정), 이벤트별로 나온 수, 고른 선택지 수, 그냥 지나간 수, 잠겨서 강제 선택지를 고른 수.</summary>
+        public readonly int[] EventTendencies = new int[3];
+        public readonly SortedDictionary<string, int> EventsSeen = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        public int EventChoices, EventPasses, EventForced;
+        /// <summary>이벤트 전투 수와 승리 수, 이벤트로 받은·잃은 카드, 봉인, 칩.</summary>
+        public int EventBattles, EventBattleWins, EventCardsGained, EventCardsLost, EventSeals, EventUnseals, EventChipsGained, EventChipsLost;
+
+        public string EventsSeenText => string.Join(", ", EventsSeen.Select(p => $"{p.Key} {p.Value}"));
 
         public static int LpBucket(int lp) => lp >= 8000 ? 4 : Math.Max(0, lp / 2000);
 
@@ -99,6 +107,8 @@ namespace DuelRoguelike.Dev
             public RunPhase Phase;
             public FloorKind Kind;
             public string EventId;
+            public bool EventDone;
+            public int BattleChoice;
             public RewardOffer Offer;
             public List<(ShopProduct Product, int Price, bool Sold)> Shop;
             public Dictionary<uint, int> Collection;
@@ -147,9 +157,19 @@ namespace DuelRoguelike.Dev
             Expect(_run.Phase == RunPhase.InDuel, $"{where}: 상태가 InDuel이 아님 ({_run.Phase})");
             Expect(duel.Floor == b.Floor && duel.DuelNumber == b.DuelsPlayed + 1, $"{where}: 듀얼의 층·번호가 다름 ({duel.Floor}층, {duel.DuelNumber})");
 
-            // 듀얼은 전투 층(보스 층 포함)에서만. LP는 듀얼 전에 바꾸지 않는다 (8000으로 맞추는 것은 9층 휴식).
+            // 듀얼은 전투 층(보스 층 포함)에서만, 또는 이벤트 전투를 고른 이벤트 층. LP는 듀얼 전에 바꾸지 않는다 (8000으로 맞추는 것은 9층 휴식).
             bool boss = b.Floor % 10 == 0;
-            Expect(b.Kind == (boss ? FloorKind.Boss : FloorKind.Battle) && duel.IsBossFloor == boss, $"{where}: {b.Kind} 층에서 듀얼 (보스 {duel.IsBossFloor})");
+            bool eventBattle = b.Kind == FloorKind.Event;
+            if (eventBattle)
+            {
+                var choice = BattleChoiceOf(b);
+                Expect(choice != null && duel.IsEventBattle && !duel.IsBossFloor && duel.Opponent.Id == choice.BattleDeckId,
+                    $"{where}: 이벤트 층에서 이벤트 전투가 아닌 듀얼 (선택지 {b.BattleChoice}, 상대 {duel.Opponent.Id}, 이벤트 전투 {duel.IsEventBattle})");
+                _stats.EventBattles++;
+            }
+            else
+                Expect(b.Kind == (boss ? FloorKind.Boss : FloorKind.Battle) && duel.IsBossFloor == boss && !duel.IsEventBattle,
+                    $"{where}: {b.Kind} 층에서 듀얼 (보스 {duel.IsBossFloor}, 이벤트 전투 {duel.IsEventBattle})");
             int expectedLp = b.Lp;
             Expect(duel.PlayerLp == expectedLp && _run.Lp == expectedLp, $"{where}: 시작 LP {duel.PlayerLp} (기대 {expectedLp})");
 
@@ -177,8 +197,8 @@ namespace DuelRoguelike.Dev
             Expect(events.Count(e => e.Kind == RunEventKind.DuelStarted) == 1 && events.Last().Kind == RunEventKind.DuelStarted,
                 $"{where}: 듀얼 시작 이벤트가 이상함");
 
-            // 상대: 상대 목록 중 하나, 엔진에는 그 레시피 그대로.
-            Expect(_run.Opponents.Contains(duel.Opponent), $"{where}: 상대 덱 {duel.Opponent.Id}가 상대 목록에 없음");
+            // 상대: 상대 목록 중 하나(이벤트 전투면 선택지에 정해진 덱), 엔진에는 그 레시피 그대로.
+            Expect(eventBattle || _run.Opponents.Contains(duel.Opponent), $"{where}: 상대 덱 {duel.Opponent.Id}가 상대 목록에 없음");
             Expect(SameCards(options.Decks[1 - me], duel.Opponent.ToCardList()), $"{where}: 엔진에 넣은 상대 덱이 레시피와 다름");
             // 나: 지금 메인 + 엑스트라 덱 그대로 (사이드·봉인 카드는 넣지 않는다).
             Expect(SameCards(options.Decks[me], b.Main.Concat(b.Extra)), $"{where}: 엔진에 넣은 나의 덱이 런의 메인·엑스트라 덱과 다름");
@@ -203,7 +223,9 @@ namespace DuelRoguelike.Dev
             Expect(_run.CurrentDuel == null, $"{where}: 진행 중인 듀얼이 남아 있음");
             _lastOpponentCards = duel.OpponentCards;
 
-            if (result == DuelResult.Win)
+            if (duel.IsEventBattle)
+                CheckEventBattleEnd(result, endLp, b, events, where);
+            else if (result == DuelResult.Win)
                 CheckWin(duel, endLp, b, events, where);
             else
                 CheckLoss(result, endLp, b, events, where);
@@ -405,7 +427,7 @@ namespace DuelRoguelike.Dev
             else
                 Expect(shop.Count == 0, $"{where}: 칩교환소가 아닌데 진열이 있음");
             if (kind == FloorKind.Event)
-                Expect(_run.CurrentEvent != null && entered.EventId == _run.CurrentEventId, $"{where}: 이벤트 층인데 이벤트가 없음 ({entered.EventId})");
+                CheckEventPick(where, entered);
             else
                 Expect(_run.CurrentEventId == null && entered.EventId == null, $"{where}: 이벤트 층이 아닌데 이벤트 {entered.EventId}");
         }
@@ -423,13 +445,19 @@ namespace DuelRoguelike.Dev
             _stats.SettlementGold += expected;
         }
 
-        void CheckLoss(DuelResult result, int endLp, Snapshot b, List<RunEvent> events, string where)
+        /// <param name="eventBattle">이벤트 전투의 패배: 봉인 규칙은 같고, 보충할 일이 없으면 다음 층으로 간다.</param>
+        void CheckLoss(DuelResult result, int endLp, Snapshot b, List<RunEvent> events, string where, bool eventBattle = false)
         {
             int streak = b.Streak + 1;
             Expect(_run.LosingStreak == streak, $"{where}: 연패 {_run.LosingStreak} (기대 {streak})");
-            Expect(_run.Floor == b.Floor, $"{where}: 패배 뒤 층 {_run.Floor} (그대로여야 함)");
-            // 패배: 8000으로 회복 (듀얼이 8000보다 높은 LP로 끝났으면 그대로).
-            Expect(_run.Lp == Math.Max(endLp, 8000), $"{where}: 패배 뒤 LP {_run.Lp} (기대 {Math.Max(endLp, 8000)})");
+            bool moved = eventBattle && _run.Phase == RunPhase.Ready;
+            Expect(_run.Floor == b.Floor + (moved ? 1 : 0), $"{where}: 패배 뒤 층 {_run.Floor} ({(moved ? "다음 층" : "그대로")}이어야 함)");
+            // 패배: 8000으로 회복 (듀얼이 8000보다 높은 LP로 끝났으면 그대로). 이벤트 전투 뒤 휴식 층에 들어갔으면 8000.
+            int lossLp = Math.Max(endLp, 8000);
+            if (moved)
+                CheckEntered(events, b.Floor, lossLp, where);
+            else
+                Expect(_run.Lp == lossLp, $"{where}: 패배 뒤 LP {_run.Lp} (기대 {lossLp})");
             var restored = events.FirstOrDefault(e => e.Kind == RunEventKind.LpRestored);
             Expect(restored == null || restored.PreviousLp >= 0, $"{where}: 회복 전 LP가 음수로 기록됨 ({restored?.PreviousLp})");
             if (endLp < 8000)
@@ -441,7 +469,7 @@ namespace DuelRoguelike.Dev
             Expect(SameCards(_run.SideDeck, b.Side), $"{where}: 패배했는데 사이드 덱이 바뀜");
             Expect(_run.Gold == b.Gold, $"{where}: 패배했는데 골드가 바뀜");
             Expect(_run.Chips == b.Chips && _run.ChipsEarned == b.ChipsEarned, $"{where}: 패배했는데 칩이 바뀜");
-            Expect(!events.Any(e => e.Kind == RunEventKind.FloorEntered), $"{where}: 패배했는데 다른 층으로 감");
+            Expect(moved || !events.Any(e => e.Kind == RunEventKind.FloorEntered), $"{where}: 패배했는데 다른 층으로 감");
             Expect(_run.PendingReward == null && !events.Any(e => e.Kind == RunEventKind.RewardOffered || e.Kind == RunEventKind.RewardGained
                                                                   || e.Kind == RunEventKind.RewardSubstituted), $"{where}: 패배했는데 보상");
 
@@ -558,7 +586,8 @@ namespace DuelRoguelike.Dev
             var b = _before;
             var events = NewEvents(b);
             string where = $"{b.Floor}층({b.Kind}) 떠나기";
-            Expect(b.Phase == RunPhase.Ready && (b.Kind == FloorKind.ChipExchange || b.Kind == FloorKind.Rest), $"{where}: 떠날 수 없는 층·상태 ({b.Phase})");
+            Expect(b.Phase == RunPhase.Ready && (b.Kind == FloorKind.ChipExchange || b.Kind == FloorKind.Rest || (b.Kind == FloorKind.Event && b.EventDone && b.BattleChoice < 0)),
+                $"{where}: 떠날 수 없는 층·상태 ({b.Phase}, 이벤트 끝남 {b.EventDone})");
             Expect(_run.Phase == RunPhase.Ready, $"{where}: 떠난 뒤 상태 {_run.Phase}");
             ExpectUnchanged(b, where, main: true, extra: true, side: true, sealedCards: true);
             Expect(_run.Chips == b.Chips && _run.Gold == b.Gold, $"{where}: 칩·골드가 바뀜");
@@ -566,19 +595,267 @@ namespace DuelRoguelike.Dev
             CheckEntered(events, b.Floor, b.Lp, where);
         }
 
-        /// <summary>이벤트 층에서 선택지를 골랐다 (지금 이벤트는 결과가 없다): 다음 층.</summary>
+        /// <summary>
+        /// 이벤트 층에서 선택지를 골랐다 (-1은 그냥 지나감). 고를 수 있었는지(조건·강제·지나가기)를 고르기 전 상태로 따로 따지고,
+        /// 이벤트 전투면 그 층에서 듀얼을 기다리는지, 아니면 결과를 따로 계산해 맞춰 보고 다음 층(보충·종료면 그대로)인지 본다.
+        /// </summary>
         public void AfterEventChoice(int index)
         {
             var b = _before;
             var events = NewEvents(b);
             string where = $"{b.Floor}층 이벤트 {b.EventId} 선택지 {index}";
-            Expect(b.Phase == RunPhase.Ready && b.Kind == FloorKind.Event && b.EventId != null, $"{where}: 이벤트 층이 아니었음 ({b.Kind}, {b.Phase})");
+            var ev = TowerEventList.Find(b.EventId ?? "");
+            if (!Expect(b.Phase == RunPhase.Ready && b.Kind == FloorKind.Event && ev != null && !b.EventDone && b.BattleChoice < 0,
+                    $"{where}: 고를 수 있는 이벤트 층이 아니었음 ({b.Kind}, {b.Phase}, 끝남 {b.EventDone}, 전투 {b.BattleChoice})"))
+                return;
+            bool allLocked = ev.Choices.Where(c => !c.IsForced).All(c => !Meets(c, ev.Scope, b));
+            var choice = index >= 0 && index < ev.Choices.Count ? ev.Choices[index] : null;
+            bool legal = index == -1 ? allLocked && !ev.Choices.Any(c => c.IsForced)
+                : choice == null ? false
+                : choice.IsForced ? allLocked
+                : Meets(choice, ev.Scope, b);
+            Expect(legal, $"{where}: 고를 수 없는 선택지를 고름 (모두 잠김 {allLocked})");
             Expect(events.Count >= 1 && events[0].Kind == RunEventKind.EventResolved && events[0].EventId == b.EventId && events[0].Count == index,
                 $"{where}: 이벤트 결과 기록이 이상함");
-            Expect(_run.Phase == RunPhase.Ready, $"{where}: 고른 뒤 상태 {_run.Phase}");
-            ExpectUnchanged(b, where, main: true, extra: true, side: true, sealedCards: true);
-            Expect(_run.Chips == b.Chips && _run.Gold == b.Gold, $"{where}: 칩·골드가 바뀜");
-            CheckEntered(events, b.Floor, b.Lp, where);
+            if (index == -1) _stats.EventPasses++;
+            else if (choice != null && choice.IsForced) _stats.EventForced++;
+            else _stats.EventChoices++;
+
+            if (choice != null && choice.IsBattle)
+            {
+                Expect(_run.EventBattlePending && _run.PendingEventBattleIndex == index && !_run.EventDone && _run.Phase == RunPhase.Ready
+                       && _run.Floor == b.Floor && events.Count == 1, $"{where}: 이벤트 전투를 기다리지 않음");
+                ExpectUnchanged(b, where, main: true, extra: true, side: true, sealedCards: true);
+                Expect(_run.Chips == b.Chips && _run.Gold == b.Gold && _run.Lp == b.Lp, $"{where}: 이벤트 전투 전에 칩·골드·LP가 바뀜");
+                return;
+            }
+            Expect(!_run.EventBattlePending, $"{where}: 전투가 아닌데 이벤트 전투를 기다림");
+            int lp = CheckEventEffects(choice, b, b.Lp, b.Chips, b.ChipsEarned, events.Skip(1).ToList(), where);
+            CheckAfterEvent(events, b, lp, where);
+        }
+
+        /// <summary>이벤트 결과를 다 받은 뒤: Ready면 다음 층, 보충이면 그 층에 남아 이벤트 끝남, 종료면 정산.</summary>
+        void CheckAfterEvent(List<RunEvent> events, Snapshot b, int lp, string where)
+        {
+            if (_run.Phase == RunPhase.Ready)
+                CheckEntered(events, b.Floor, lp, where);
+            else
+            {
+                Expect(_run.Floor == b.Floor && !events.Any(e => e.Kind == RunEventKind.FloorEntered) && _run.Lp == lp,
+                    $"{where}: 보충·종료인데 층 {_run.Floor}, LP {_run.Lp} (기대 {lp})");
+                if (_run.Phase == RunPhase.NeedsRefill)
+                {
+                    _stats.RefillsRequired++;
+                    Expect(_run.EventDone && _run.RefillNeeded == 40 - _run.MainDeck.Count, $"{where}: 이벤트 뒤 보충 상태가 이상함");
+                }
+                else if (Expect(_run.Phase == RunPhase.Ended && _run.EndReason == RunEndReason.DeckBelowMinimum, $"{where}: 이벤트 뒤 상태 {_run.Phase}"))
+                {
+                    _stats.RunsEnded++;
+                    CheckSettlement(events, where);
+                }
+            }
+            CheckConservation(where);
+            if (_run.Phase != RunPhase.Ended)
+                CheckDeckRules(where, allowShortMain: _run.Phase == RunPhase.NeedsRefill);
+        }
+
+        /// <summary>이벤트 전투가 끝났다: 이기면 남은 LP + 1000 뒤에 선택지 결과(보상·칩 없음), 지면 일반 패배처럼 봉인. 보충할 일이 없으면 다음 층.</summary>
+        void CheckEventBattleEnd(DuelResult result, int endLp, Snapshot b, List<RunEvent> events, string where)
+        {
+            var choice = BattleChoiceOf(b);
+            Expect(!_run.EventBattlePending && (_run.Phase != RunPhase.Ready || _run.Floor == b.Floor + 1 || _run.EventDone),
+                $"{where}: 이벤트 전투가 끝났는데 아직 기다림");
+            Expect(_run.PendingReward == null && !events.Any(e => e.Kind == RunEventKind.RewardOffered || e.Kind == RunEventKind.RewardGained
+                                                                  || e.Kind == RunEventKind.RewardSubstituted || e.Kind == RunEventKind.UnsealOffered),
+                $"{where}: 이벤트 전투인데 승리 보상");
+            if (choice == null || result != DuelResult.Win)
+            {
+                CheckLoss(result, endLp, b, events, where, eventBattle: true);
+                return;
+            }
+            _stats.EventBattleWins++;
+            Expect(_run.LosingStreak == 0 && _run.Wins == b.Wins + 1, $"{where}: 승리 수·연패");
+            int n = events.Count;
+            Expect(n >= 2 && events[0].Kind == RunEventKind.DuelWon && events[0].Lp == endLp
+                   && events[1].Kind == RunEventKind.LpRestored && events[1].LpReason == LpRestoreReason.Win && events[1].PreviousLp == endLp
+                   && events[1].Lp == endLp + 1000, $"{where}: 이벤트 전투 승리 기록(승리, LP +1000)이 이상함");
+            int lp = CheckEventEffects(choice, b, endLp + 1000, b.Chips, b.ChipsEarned, events.Skip(2).ToList(), where);
+            CheckAfterEvent(events, b, lp, where);
+        }
+
+        EventChoice BattleChoiceOf(Snapshot b)
+        {
+            var ev = TowerEventList.Find(b.EventId ?? "");
+            var choice = ev != null && b.BattleChoice >= 0 && b.BattleChoice < ev.Choices.Count ? ev.Choices[b.BattleChoice] : null;
+            return choice != null && choice.IsBattle ? choice : null;
+        }
+
+        /// <summary>선택지 조건을 이 상태에서 만족하는지: 칩 이상, 보유 범위(덱 = 메인·엑스트라, 덱·사이드 덱 = + 사이드)의 조건 카드 장수 이상.</summary>
+        bool Meets(EventChoice choice, HoldScope scope, int chips, IEnumerable<uint> main, IEnumerable<uint> extra, IEnumerable<uint> side)
+        {
+            var held = scope == HoldScope.Deck ? main.Concat(extra) : main.Concat(extra).Concat(side);
+            return chips >= choice.MinChips && (choice.Requires == null || held.Count(c => choice.Requires.Matches(c, _db)) >= choice.Requires.Count);
+        }
+
+        bool Meets(EventChoice choice, HoldScope scope, Snapshot b) => Meets(choice, scope, b.Chips, b.Main, b.Extra, b.Side);
+
+        /// <summary>
+        /// 선택지 결과를 순서대로 따로 계산해 런과 맞춰 본다: 칩(잃는 칩은 가진 만큼만), LP(1 아래로는 안 감), 골드, 카드 받기(사이드 덱·컬렉션),
+        /// 봉인(메인 덱에서), 봉인 해제(봉인된 카드가 없으면 칩), 잃기(보유 범위에서 조건에 맞는 카드). 결과를 받은 뒤의 LP를 돌려준다 (층 들어가기 전).
+        /// </summary>
+        int CheckEventEffects(EventChoice choice, Snapshot b, int lp, int chips, int earned, List<RunEvent> events, string where)
+        {
+            var main = b.Main.ToList();
+            var extra = b.Extra.ToList();
+            var side = b.Side.ToList();
+            var sealedMain = b.SealedMain.ToList();
+            var sealedExtra = b.SealedExtra.ToList();
+            int gold = b.Gold;
+            var collection = new Dictionary<uint, int>(b.Collection);
+            var cardEvents = new Queue<RunEvent>(events.Where(e => e.Kind == RunEventKind.CardSealed || e.Kind == RunEventKind.CardUnsealed
+                                                                   || e.Kind == RunEventKind.CardLost || e.Kind == RunEventKind.EventCardGained));
+            var scope = TowerEventList.Find(b.EventId ?? "")?.Scope ?? HoldScope.DeckAndSide;
+            RunEvent Next(RunEventKind kind)
+            {
+                var e = cardEvents.Count > 0 ? cardEvents.Dequeue() : null;
+                Expect(e != null && e.Kind == kind, $"{where}: {kind} 기록이 없음 ({e?.Kind})");
+                return e != null && e.Kind == kind ? e : null;
+            }
+            foreach (var effect in choice?.Effects ?? Array.Empty<EventEffect>())
+            {
+                switch (effect.Kind)
+                {
+                    case EventEffectKind.Chips:
+                        if (effect.Amount > 0)
+                        {
+                            chips += effect.Amount;
+                            earned += effect.Amount;
+                            _stats.EventChipsGained += effect.Amount;
+                        }
+                        else
+                        {
+                            int lost = Math.Min(-effect.Amount, chips);
+                            chips -= lost;
+                            _stats.EventChipsLost += lost;
+                        }
+                        break;
+                    case EventEffectKind.Lp:
+                        lp = Math.Max(1, lp + effect.Amount);
+                        break;
+                    case EventEffectKind.Gold:
+                        gold += effect.Amount;
+                        break;
+                    case EventEffectKind.GainCard:
+                        if (Next(RunEventKind.EventCardGained) is RunEvent gained)
+                            Expect(gained.Code == effect.Card, $"{where}: 받은 카드 {gained.Code} (기대 {effect.Card})");
+                        side.Add(effect.Card);
+                        collection[effect.Card] = Get(collection, effect.Card) + 1;
+                        _expectedCards[effect.Card] = Get(_expectedCards, effect.Card) + 1;
+                        _stats.EventCardsGained++;
+                        break;
+                    case EventEffectKind.Seal:
+                        for (int i = 0; i < effect.Amount && main.Count > 0; i++)
+                        {
+                            if (!(Next(RunEventKind.CardSealed) is RunEvent sealedEvent))
+                                break;
+                            Expect(sealedEvent.Pile == RunPile.Main && main.Remove(sealedEvent.Code), $"{where}: 메인 덱에 없는 카드 {sealedEvent.Code}를 봉인");
+                            sealedMain.Add(sealedEvent.Code);
+                            _stats.EventSeals++;
+                        }
+                        break;
+                    case EventEffectKind.Unseal:
+                        if (sealedMain.Count + sealedExtra.Count == 0)
+                        {
+                            chips += effect.Amount;
+                            earned += effect.Amount;
+                            _stats.EventChipsGained += effect.Amount;
+                        }
+                        else if (Next(RunEventKind.CardUnsealed) is RunEvent unsealed)
+                        {
+                            var from = unsealed.Pile == RunPile.Extra ? sealedExtra : sealedMain;
+                            Expect(!unsealed.IsBonus && from.Remove(unsealed.Code), $"{where}: 봉인되지 않은 카드 {unsealed.Code}를 봉인 해제");
+                            side.Add(unsealed.Code);
+                            _stats.EventUnseals++;
+                        }
+                        break;
+                    case EventEffectKind.LoseCard:
+                        var piles = new List<(List<uint> Pile, RunPile Kind)> { (main, RunPile.Main), (extra, RunPile.Extra) };
+                        if (scope != HoldScope.Deck)
+                            piles.Add((side, RunPile.Side));
+                        if (!piles.Any(p => p.Pile.Any(c => effect.Target.Matches(c, _db))))
+                            break;
+                        if (Next(RunEventKind.CardLost) is RunEvent lostEvent)
+                        {
+                            var pile = piles.FirstOrDefault(p => p.Kind == lostEvent.Pile).Pile;
+                            Expect(pile != null && effect.Target.Matches(lostEvent.Code, _db) && pile.Remove(lostEvent.Code),
+                                $"{where}: 조건({effect.Target.Text})에 맞지 않거나 없는 카드 {lostEvent.Code}를 잃음 ({lostEvent.Pile})");
+                            _expectedCards[lostEvent.Code] = Get(_expectedCards, lostEvent.Code) - 1;
+                            if (_expectedCards[lostEvent.Code] == 0)
+                                _expectedCards.Remove(lostEvent.Code);
+                            _stats.EventCardsLost++;
+                        }
+                        break;
+                }
+            }
+            Expect(cardEvents.Count == 0, $"{where}: 결과에 없는 카드 기록 {cardEvents.Count}개 ({cardEvents.FirstOrDefault()?.Kind})");
+            Expect(_run.Chips == chips && _run.ChipsEarned == earned, $"{where}: 칩 {_run.Chips}/{_run.ChipsEarned} (기대 {chips}/{earned})");
+            Expect(_run.Gold == gold, $"{where}: 골드 {_run.Gold} (기대 {gold})");
+            Expect(SameCards(_run.MainDeck, main), $"{where}: 이벤트 뒤 메인 덱이 맞지 않음"); // 보충은 따로 고르는 걸음
+            Expect(SameCards(_run.ExtraDeck, extra), $"{where}: 이벤트 뒤 엑스트라 덱이 맞지 않음");
+            Expect(SameCards(_run.SideDeck, side), $"{where}: 이벤트 뒤 사이드 덱이 맞지 않음");
+            Expect(SameCards(_run.SealedMain, sealedMain) && SameCards(_run.SealedExtra, sealedExtra), $"{where}: 이벤트 뒤 봉인 카드가 맞지 않음");
+            var nowCollection = _run.Collection?.Cards.ToDictionary(p => p.Key, p => p.Value) ?? new Dictionary<uint, int>();
+            Expect(nowCollection.Count == collection.Count && nowCollection.All(p => Get(collection, p.Key) == p.Value), $"{where}: 이벤트 뒤 컬렉션이 맞지 않음");
+            var lpEvents = events.Where(e => e.Kind == RunEventKind.LpRestored && e.LpReason == LpRestoreReason.Event).ToList();
+            int lpEffects = (choice?.Effects ?? Array.Empty<EventEffect>()).Count(e => e.Kind == EventEffectKind.Lp);
+            Expect(lpEvents.Count <= lpEffects && lpEvents.All(e => e.Lp != e.PreviousLp && e.Lp >= 1) && (lpEvents.Count == 0 || lpEvents.Last().Lp == lp),
+                $"{where}: 이벤트 LP 기록이 이상함 ({lpEvents.Count}개, LP 결과 {lpEffects}개)");
+            return lp;
+        }
+
+        /// <summary>
+        /// 이벤트 층의 이벤트를 같은 규칙으로 다시 뽑아 맞춰 본다: 자리(1~4·6·7~8층)·깊이·덱·반복으로 후보를 모으고,
+        /// 런 시드·층의 Event 난수로 성향(긍정 35 : 무성향 15 : 부정 50, 후보 없는 성향은 뺌)을 뽑고, 그 안에서 가중치
+        /// (지금 조건을 만족하는 조건 선택지가 있으면 ×2)로 뽑는다. 후보가 없으면 고요한 층.
+        /// </summary>
+        void CheckEventPick(string where, RunEvent entered)
+        {
+            var ev = _run.CurrentEvent;
+            if (!Expect(ev != null && entered.EventId == _run.CurrentEventId, $"{where}: 이벤트 층인데 이벤트가 없음 ({entered.EventId})"))
+                return;
+            Expect(!_run.EventDone && !_run.EventBattlePending, $"{where}: 새 이벤트 층인데 이미 고른 상태");
+            int floor = _run.Floor, pos = (floor - 1) % 10 + 1;
+            var slot = pos <= 4 ? EventSlots.Early : pos == 6 ? EventSlots.Sixth : pos == 7 || pos == 8 ? EventSlots.Late : EventSlots.None;
+            var seen = new HashSet<string>(_run.Events.Where(e => e.Kind == RunEventKind.FloorEntered && e.EventId != null && !ReferenceEquals(e, entered))
+                .Select(e => e.EventId));
+            var pool = TowerEventList.All.Where(e => (e.Slots & slot) != 0 && floor >= e.MinFloor && (e.MaxFloor == 0 || floor <= e.MaxFloor)
+                                                     && (e.DeckId == null || e.DeckId == _run.StartDeckId) && (e.Repeatable || !seen.Contains(e.Id))).ToList();
+            int[] tendencyWeights = { 35, 15, 50 };
+            var tendencies = new[] { EventTendency.Positive, EventTendency.Neutral, EventTendency.Negative }.Where(t => pool.Any(e => e.Tendency == t)).ToList();
+            var expected = TowerEventList.QuietFloor;
+            if (tendencies.Count > 0)
+            {
+                var random = RunRandom.For(_run.Seed, floor, RunRandomPurpose.Event);
+                var tendency = Weighted(tendencies, t => tendencyWeights[(int)t], random);
+                expected = Weighted(pool.Where(e => e.Tendency == tendency).ToList(),
+                    e => e.Weight * (e.Choices.Any(c => c.HasCondition && !c.IsForced && Meets(c, e.Scope, _run.Chips, _run.MainDeck, _run.ExtraDeck, _run.SideDeck)) ? 2 : 1),
+                    random);
+            }
+            Expect(ev == expected, $"{where}: 이벤트 {ev.Id} (다시 뽑으면 {expected.Id}, 후보 {pool.Count}개)");
+            _stats.EventTendencies[(int)ev.Tendency]++;
+            _stats.EventsSeen[ev.Id] = (_stats.EventsSeen.TryGetValue(ev.Id, out int n) ? n : 0) + 1;
+        }
+
+        static T Weighted<T>(List<T> items, Func<T, int> weight, RunRandom random)
+        {
+            int roll = random.Next(items.Sum(weight));
+            foreach (var item in items)
+            {
+                roll -= weight(item);
+                if (roll < 0)
+                    return item;
+            }
+            return items[items.Count - 1];
         }
 
         /// <summary>
@@ -731,6 +1008,8 @@ namespace DuelRoguelike.Dev
             Phase = _run.Phase,
             Kind = _run.FloorKind,
             EventId = _run.CurrentEventId,
+            EventDone = _run.EventDone,
+            BattleChoice = _run.PendingEventBattleIndex,
             Offer = _run.PendingReward,
             Shop = _run.Shop.Select(o => (o.Product, o.Price, o.Sold)).ToList(),
             Collection = _run.Collection?.Cards.ToDictionary(p => p.Key, p => p.Value) ?? new Dictionary<uint, int>(),

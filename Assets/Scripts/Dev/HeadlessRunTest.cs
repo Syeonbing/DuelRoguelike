@@ -144,12 +144,20 @@ namespace DuelRoguelike.Dev
                     CheckSaveRoundTrip(report, save, runTag);
                     continue;
                 }
-                if (!Tower.IsBattle(run.FloorKind))
+                if (!Tower.IsBattle(run.FloorKind) && !run.EventBattlePending)
                 {
                     checker.BeforeStep();
-                    if (run.FloorKind == FloorKind.Event)
+                    if (run.FloorKind == FloorKind.Event && !run.EventDone)
                     {
-                        int choice = picks.Next(run.CurrentEvent.Choices.Count);
+                        // 지금 고를 수 있는 선택지(-1 = 그냥 지나가기 포함) 중 무작위. 이벤트 전투면 다음 걸음이 그 듀얼이다.
+                        var open = Enumerable.Range(-1, run.CurrentEvent.Choices.Count + 1).Where(i => run.CanChooseEventOption(i, out _)).ToList();
+                        if (open.Count == 0)
+                        {
+                            report.Rules.AddViolation($"{runTag} {run.Floor}층 이벤트 {run.CurrentEventId}: 고를 수 있는 선택지가 없음");
+                            report.Aborted++;
+                            break;
+                        }
+                        int choice = open[picks.Next(open.Count)];
                         run.ChooseEventOption(choice);
                         checker.AfterEventChoice(choice);
                         steps.Add(r => r.ChooseEventOption(choice));

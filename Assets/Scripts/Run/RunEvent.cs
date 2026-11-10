@@ -50,8 +50,16 @@ namespace DuelRoguelike.Run
         CardUnsealed,
         /// <summary>보스 보상: 봉인된 카드 1장을 골라 봉인 해제해야 함 (ChoosingUnseal). Count: 봉인된 카드 장수</summary>
         UnsealOffered,
-        /// <summary>EventId, Count: 고른 선택지 번호 (0부터)</summary>
+        /// <summary>EventId, Count: 고른 선택지 번호 (0부터, -1은 그냥 지나감). 이벤트 전투면 그 듀얼이 끝난 뒤에 결과가 온다</summary>
         EventResolved,
+        /// <summary>Count: 잃은 칩, Chips: 잃은 뒤 가진 칩 (이벤트)</summary>
+        ChipsLost,
+        /// <summary>Code: 이벤트로 받은 카드 (사이드 덱으로)</summary>
+        EventCardGained,
+        /// <summary>Code, Pile: 이벤트로 잃은 카드와 있던 덱 (이번 런에서 사라짐)</summary>
+        CardLost,
+        /// <summary>Count: 이벤트로 받은 골드</summary>
+        EventGold,
         /// <summary>런 종료 골드 정산. Count: 정산 골드, Floor: 도달 층, ChipsEarned: 런 동안 얻은 칩, Chips: 종료 때 가진 칩</summary>
         GoldSettled,
     }
@@ -93,6 +101,8 @@ namespace DuelRoguelike.Run
         BossCleared,
         /// <summary>휴식 층(9층마다)에 들어감: FullLp로 맞춤 (넘쳤어도 낮춘다)</summary>
         Rest,
+        /// <summary>이벤트 결과로 LP가 오르거나 내림 (1 아래로는 내려가지 않는다)</summary>
+        Event,
     }
 
     public sealed class RunEvent
@@ -173,7 +183,7 @@ namespace DuelRoguelike.Run
                     return EndReason == RunEndReason.Abandoned ? "런 종료: 포기"
                         : $"런 종료: 메인 덱을 {RunRules.MinMainDeck}장으로 채울 수 없음";
                 case RunEventKind.FloorEntered:
-                    return $"{Floor}층: {Tower.KindName(FloorKind)}" + (EventId != null ? $" 「{TowerEvents.Find(EventId)?.Title ?? EventId}」" : "");
+                    return $"{Floor}층: {Tower.KindName(FloorKind)}" + (EventId != null ? $" 「{TowerEventList.Find(EventId)?.Title ?? EventId}」" : "");
                 case RunEventKind.ChipsGained:
                     return $"칩 +{Count} (보유 {Chips})";
                 case RunEventKind.ShopBought:
@@ -184,10 +194,19 @@ namespace DuelRoguelike.Run
                     return $"보스 보상: 봉인된 카드 {Count}장 중 1장을 골라 봉인 해제";
                 case RunEventKind.EventResolved:
                 {
-                    var ev = TowerEvents.Find(EventId ?? "");
-                    string choice = ev != null && Count >= 0 && Count < ev.Choices.Count ? ev.Choices[Count] : $"선택지 {Count + 1}";
+                    var ev = TowerEventList.Find(EventId ?? "");
+                    string choice = Count < 0 ? "그냥 지나감"
+                        : ev != null && Count < ev.Choices.Count ? ev.Choices[Count].Label : $"선택지 {Count + 1}";
                     return $"이벤트 「{ev?.Title ?? EventId}」: {choice}";
                 }
+                case RunEventKind.ChipsLost:
+                    return $"칩 -{Count} (보유 {Chips})";
+                case RunEventKind.EventCardGained:
+                    return $"이벤트로 받음: {cardName(Code)} → 사이드 덱";
+                case RunEventKind.CardLost:
+                    return $"잃음 ({PileName(Pile)}): {cardName(Code)}";
+                case RunEventKind.EventGold:
+                    return $"골드 +{Count}";
                 case RunEventKind.GoldSettled:
                     return $"골드 정산 {Count} (도달 {Floor}층 + 10층 보너스 {RunRules.SettlementFloorBonus(Floor)} + " +
                            $"얻은 칩 {ChipsEarned}÷{RunRules.SettlementEarnedChipsDivisor} + 남은 칩 {Chips}÷{RunRules.SettlementHeldChipsDivisor})";
@@ -205,6 +224,7 @@ namespace DuelRoguelike.Run
                 case LpRestoreReason.Win: return $"승리 +{RunRules.WinLpBonus}";
                 case LpRestoreReason.BossCleared: return "보스 격파";
                 case LpRestoreReason.Rest: return "휴식";
+                case LpRestoreReason.Event: return "이벤트";
                 default: return reason.ToString();
             }
         }

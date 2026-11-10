@@ -273,6 +273,9 @@ namespace DuelRoguelike.UI
 
         void OnDuelLeft(DuelState state)
         {
+            var eventBattle = _run.CurrentDuel != null && _run.CurrentDuel.IsEventBattle ? _run.CurrentEvent : null;
+            var eventChoice = eventBattle != null ? _run.PendingEventBattle : null;
+            int mark = _run.Events.Count, floor = _run.Floor;
             try
             {
                 _run.FinishDuel(state);
@@ -280,6 +283,17 @@ namespace DuelRoguelike.UI
             catch (Exception e)
             {
                 Debug.LogException(e);
+            }
+            if (eventBattle != null && eventChoice != null)
+            {
+                var happened = _run.Events.Skip(mark).ToList();
+                bool won = happened.Any(e => e.Kind == RunEventKind.DuelWon);
+                _eventResult = new EventResultView(eventBattle, eventChoice, floor, won, happened);
+                if (_run.Floor != floor)
+                {
+                    _moveNotice = $"{floor}층 이벤트 전투 {(won ? "승리" : "패배")} → {_run.Floor}층 {Tower.KindName(_run.FloorKind)}";
+                    _moveNoticeIsError = false;
+                }
             }
             Persist(); // 보상 후보·봉인이 정해진 상태로 저장. 런이 끝났으면 여기서 정리된다 (골드 누적, 진행 중인 런에서 뺌)
             var lastResult = _run.Events.LastOrDefault(e => e.Kind == RunEventKind.DuelWon || e.Kind == RunEventKind.DuelLost);
@@ -417,10 +431,14 @@ namespace DuelRoguelike.UI
                 case RunEventKind.RewardGold:
                 case RunEventKind.ChipsGained:
                 case RunEventKind.CardUnsealed:
+                case RunEventKind.EventCardGained:
+                case RunEventKind.EventGold:
                     return Positive;
                 case RunEventKind.DuelLost:
                 case RunEventKind.DuelForfeited:
                 case RunEventKind.CardSealed:
+                case RunEventKind.ChipsLost:
+                case RunEventKind.CardLost:
                     return UiStyle.Opponent;
                 case RunEventKind.MovedToDeck:
                 case RunEventKind.MovedToSide:

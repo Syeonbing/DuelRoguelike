@@ -60,6 +60,11 @@ namespace DuelRoguelike.UI
             rules.style.flexShrink = 1;
             rules.style.whiteSpace = WhiteSpace.Normal;
             title.Add(rules);
+            var codex = UiStyle.Button($"이벤트 도감 ({_save.Codex.SeenCount}/{TowerEventList.All.Count})", OpenCodex, 16);
+            codex.name = "open-codex";
+            codex.style.marginLeft = StyleKeyword.Auto;
+            codex.style.flexShrink = 0;
+            title.Add(codex);
             _root.Add(title);
 
             if (_saveNotice != null)
@@ -143,6 +148,7 @@ namespace DuelRoguelike.UI
             _deckScrollOffset = Vector2.zero;
             // 층에 들어가면 한 번 뜨는 창(이벤트·휴식·칩교환소)은 런마다, 이어하기마다 다시 센다.
             _eventShownFloor = _restShownFloor = _shopShownFloor = 0;
+            _eventResult = null;
             _shopProduct = null;
             _shopRelease = 0;
         }

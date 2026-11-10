@@ -26,7 +26,7 @@ namespace DuelRoguelike.Run
         static readonly string[] ProfileKeys = { "format", "gold", "last-start-deck" };
         static readonly string[] RepeatableProfileKeysV2 = { "card", "last-side-deck" };
         static readonly string[] ProfileKeysV1 = { "format", "points", "last-start-deck" };
-        static readonly string[] RepeatableProfileKeys = { "card", "recipe", "recipe-deck", "recipe-side" };
+        static readonly string[] RepeatableProfileKeys = { "card", "recipe", "recipe-deck", "recipe-side", "event-seen" };
 
         /// <summary>새로 만든 레시피 Id의 앞부분 (뒤에 번호).</summary>
         public const string NewRecipePrefix = "deck-";
@@ -36,6 +36,9 @@ namespace DuelRoguelike.Run
         GameSave(CardCollection collection) => Collection = collection;
 
         public CardCollection Collection { get; }
+
+        /// <summary>이벤트 도감 (런을 넘어 모음). 진행 중인 런의 기록은 저장할 때와 런을 정리할 때 더한다.</summary>
+        public EventCodex Codex { get; } = new EventCodex();
 
         /// <summary>골드 누적 (끝난 런의 Gold를 더한 것). 진행 중인 런의 골드는 런이 끝날 때 더한다.</summary>
         public int Gold { get; private set; }
@@ -125,6 +128,7 @@ namespace DuelRoguelike.Run
         {
             if (Run == null || Run.Phase != RunPhase.Ended)
                 return false;
+            Codex.Absorb(Run);
             Gold += Run.Gold + Run.SettlementGold;
             Run = null;
             return true;
@@ -151,6 +155,8 @@ namespace DuelRoguelike.Run
             w.Comment($"컬렉션 {Collection.Cards.Count}종 {Collection.TotalCount}장: card 카드코드 장수");
             foreach (var pair in Collection.Cards.OrderBy(p => p.Key))
                 w.Line("card", pair.Key, pair.Value);
+            Codex.Absorb(Run);
+            Codex.Write(w);
             if (Run != null)
             {
                 w.Comment(Run.Phase == RunPhase.InDuel ? "진행 중인 런 (듀얼 중: 이대로 읽으면 그 듀얼은 패배)" : "진행 중인 런");
@@ -243,6 +249,8 @@ namespace DuelRoguelike.Run
                 ReadRecipesV2(profile, r, save);
             else
                 ReadRecipes(profile, r, save);
+            foreach (var line in profile.Where(l => l.Key == "event-seen"))
+                save.Codex.Read(line, r);
             if (runLines != null)
                 save.Run = RunState.ReadFrom(runLines, r, database, rarities, collection, version);
             if (save.Run != null && save.Run.Phase == RunPhase.InDuel)

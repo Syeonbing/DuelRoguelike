@@ -60,14 +60,25 @@ namespace DuelRoguelike.UI
             _renderDetail = RenderHubDetail;
             ShowDetail(_selectedPile, _selectedCode, pinned: true);
 
-            if (_run.Phase == RunPhase.ChoosingReward)
+            if (_eventResult != null)
+                OpenEventResult(); // 확인을 누르면 ShowHub가 다시 불려 아래 창들이 이어서 열린다
+            else if (_run.Phase == RunPhase.ChoosingReward)
                 OpenReward();
             else if (_run.Phase == RunPhase.ChoosingUnseal)
                 OpenUnseal();
             else if (_run.Phase == RunPhase.NeedsRefill)
                 OpenRefill();
             else if (_run.FloorKind == FloorKind.Event && _eventShownFloor != _run.Floor)
-                OpenEvent(); // 이벤트 층에 처음 왔을 때 한 번
+            {
+                // 이벤트 층에 처음 왔을 때 한 번 (불러온 런이 이벤트 전투를 기다리면 그 창)
+                if (_run.EventBattlePending)
+                {
+                    _eventShownFloor = _run.Floor;
+                    OpenEventBattle();
+                }
+                else if (!_run.EventDone)
+                    OpenEvent();
+            }
             else if (_run.FloorKind == FloorKind.Rest && _restShownFloor != _run.Floor)
                 OpenRest(); // 휴식 층도 이벤트처럼 처음 왔을 때 한 번
             else if (_run.FloorKind == FloorKind.ChipExchange && _shopShownFloor != _run.Floor)

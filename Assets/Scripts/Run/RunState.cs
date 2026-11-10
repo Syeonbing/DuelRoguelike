@@ -125,11 +125,14 @@ namespace DuelRoguelike.Run
         public CoinToss Toss { get; }
         public bool PlayerGoesFirst { get; }
 
+        /// <summary>이벤트 전투인지 (이기면 이벤트 결과만 받고, 이기든 지든 다음 층으로 간다).</summary>
+        public bool IsEventBattle { get; }
+
         /// <summary>엔진에서 플레이어의 팀 (선공 = 0, 후공 = 1).</summary>
         public int PlayerTeam => PlayerGoesFirst ? 0 : 1;
 
         internal RunDuel(int duelNumber, int floor, DeckRecipe opponent, int playerLp, IReadOnlyList<uint> playerDeck,
-            IReadOnlyList<ulong> engineSeed, int deckShuffleSeed, CoinToss toss, bool playerGoesFirst)
+            IReadOnlyList<ulong> engineSeed, int deckShuffleSeed, CoinToss toss, bool playerGoesFirst, bool isEventBattle = false)
         {
             DuelNumber = duelNumber;
             Floor = floor;
@@ -141,6 +144,7 @@ namespace DuelRoguelike.Run
             DeckShuffleSeed = deckShuffleSeed;
             Toss = toss;
             PlayerGoesFirst = playerGoesFirst;
+            IsEventBattle = isEventBattle;
         }
 
         /// <summary>이 듀얼의 엔진 설정 (덱, 시작 LP, 시드). 팀 0이 선공이다.</summary>
@@ -354,7 +358,7 @@ namespace DuelRoguelike.Run
         public RunDuel BeginDuel(bool playerFirst = true)
         {
             RequirePhase(RunPhase.Ready, "듀얼을 시작할");
-            if (!Tower.IsBattle(FloorKind))
+            if (!Tower.IsBattle(FloorKind) && !EventBattlePending)
                 throw new InvalidOperationException($"듀얼을 시작할 수 없습니다: {Floor}층은 {Tower.KindName(FloorKind)} 층");
             int number = DuelsPlayed + 1;
             var toss = CoinTossFor(number);
@@ -374,7 +378,7 @@ namespace DuelRoguelike.Run
         public CoinToss NextCoinToss()
         {
             RequirePhase(RunPhase.Ready, "코인 토스를 할");
-            if (!Tower.IsBattle(FloorKind))
+            if (!Tower.IsBattle(FloorKind) && !EventBattlePending)
                 throw new InvalidOperationException($"코인 토스를 할 수 없습니다: {Floor}층은 {Tower.KindName(FloorKind)} 층");
             return CoinTossFor(DuelsPlayed + 1);
         }
@@ -395,7 +399,7 @@ namespace DuelRoguelike.Run
         /// <summary>듀얼 번호로 상대와 엔진 시드를 정한다 (같은 런 시드·번호면 늘 같다). 저장 파일의 "듀얼 중" 런을 읽을 때도 쓴다.</summary>
         internal RunDuel CreateDuel(int number, bool playerGoesFirst)
         {
-            var opponent = OpponentFor(number);
+            var opponent = EventBattlePending ? StarterDecks.Find(PendingEventBattle.BattleDeckId) : OpponentFor(number);
             var random = RunRandom.For(Seed, number, RunRandomPurpose.Duel);
             var engineSeed = new ulong[4];
             for (int i = 0; i < engineSeed.Length; i++)
@@ -404,7 +408,7 @@ namespace DuelRoguelike.Run
                 engineSeed[0] = 1; // 엔진은 시드가 모두 0이면 듀얼을 만들지 못한다
             int shuffleSeed = random.NextSeed();
             return new RunDuel(number, Floor, opponent, Lp, _main.Concat(_extra).ToArray(), engineSeed, shuffleSeed,
-                CoinTossFor(number), playerGoesFirst);
+                CoinTossFor(number), playerGoesFirst, EventBattlePending);
         }
 
         /// <summary>듀얼 번호의 상대 덱 (런 시드와 번호로 정해진다).</summary>
@@ -427,6 +431,11 @@ namespace DuelRoguelike.Run
             CurrentDuel = null;
             DuelsPlayed = duel.DuelNumber;
             Phase = RunPhase.Ready;
+            if (duel.IsEventBattle)
+            {
+                FinishEventBattle(duel, result, playerLp);
+                return;
+            }
 
             if (result == DuelResult.Win)
             {
@@ -448,6 +457,13 @@ namespace DuelRoguelike.Run
                 return;
             }
 
+            ApplyLoss(duel, result, playerLp);
+            CheckMainDeckSize();
+        }
+
+        /// <summary>패배(무승부 포함): 연패 +1, 봉인, LP 전부 회복. 전투 층과 이벤트 전투가 같이 쓴다.</summary>
+        void ApplyLoss(RunDuel duel, DuelResult result, int playerLp)
+        {
             if (result == DuelResult.Draw)
                 Draws++;
             else
@@ -464,7 +480,6 @@ namespace DuelRoguelike.Run
             Lp = Math.Max(0, playerLp);
             if (playerLp < RunRules.FullLp)
                 ChangeLp(RunRules.FullLp, LpRestoreReason.Loss, duel.DuelNumber);
-            CheckMainDeckSize();
         }
 
         /// <summary>

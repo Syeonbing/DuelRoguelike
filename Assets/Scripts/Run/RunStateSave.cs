@@ -69,7 +69,14 @@ namespace DuelRoguelike.Run
             if (_shop != null)
                 w.Line("shop", _shop.Select(o => (object)Invariant($"{o.Product}:{o.Price}:{(o.Sold ? 1 : 0)}")));
             if (CurrentEventId != null)
-                w.Line("floor-event", CurrentEventId);
+            {
+                if (EventBattlePending)
+                    w.Line("floor-event", CurrentEventId, "battle", _eventBattleChoice);
+                else if (EventDone)
+                    w.Line("floor-event", CurrentEventId, "done");
+                else
+                    w.Line("floor-event", CurrentEventId);
+            }
             if (_bossBonusPending)
                 w.Line("boss-bonus");
             if (PendingReward != null)
@@ -255,13 +262,53 @@ namespace DuelRoguelike.Run
             return run;
         }
 
+        /// <summary>
+        /// floor-event 줄: 이벤트 Id, 그 뒤에 "done"(선택지를 골랐고 층에 남아 있음, 보충 뒤 등) 또는 "battle 번호"(이벤트 전투를 기다림·하는 중).
+        /// 형식 4까지는 Id만 있다.
+        /// </summary>
+        static void ReadFloorEvent(SaveLine line, SaveReader r, RunState run)
+        {
+            if (line.Values.Length < 1)
+                throw r.Error(line, "이벤트 Id가 없음");
+            var ev = TowerEventList.Find(line.Values[0]);
+            if (ev == null)
+                throw r.Error(line, $"모르는 이벤트 \"{line.Values[0]}\"");
+            run.CurrentEventId = ev.Id;
+            if (line.Values.Length == 1)
+            {
+                if (run.Phase != RunPhase.Ready && run.Phase != RunPhase.Ended)
+                    throw r.Error(line, $"이벤트 선택지를 고르기 전인데 {run.Phase}");
+                return;
+            }
+            switch (line.Values[1])
+            {
+                case "done":
+                    r.ExpectCount(line, 2);
+                    run.EventDone = true;
+                    break;
+                case "battle":
+                    r.ExpectCount(line, 3);
+                    int index = r.Int(line, line.Values[2], 0);
+                    if (index >= ev.Choices.Count || !ev.Choices[index].IsBattle)
+                        throw r.Error(line, $"「{ev.Title}」의 선택지 {index}는 이벤트 전투가 아님");
+                    if (run.Phase != RunPhase.Ready && run.Phase != RunPhase.InDuel)
+                        throw r.Error(line, $"이벤트 전투를 기다리는데 {run.Phase}");
+                    run._eventBattleChoice = index;
+                    break;
+                default:
+                    throw r.Error(line, $"floor-event의 둘째 칸은 done 또는 battle이어야 함 (\"{line.Values[1]}\")");
+            }
+        }
+
         /// <summary>형식 4: floor-kind, chips, shop, floor-event, boss-bonus.</summary>
         static void ReadTower(Dictionary<string, SaveLine> map, SaveReader r, RunState run, SaveLine phaseLine)
         {
             var kindLine = r.Required(map, "floor-kind");
             r.ExpectCount(kindLine, 1);
             run.FloorKind = r.Enum<FloorKind>(kindLine, kindLine.Values[0]);
-            bool choosing = run.Phase == RunPhase.InDuel || run.Phase == RunPhase.ChoosingReward || run.Phase == RunPhase.ChoosingUnseal;
+            bool choosing = run.Phase == RunPhase.ChoosingReward || run.Phase == RunPhase.ChoosingUnseal;
+            if ((choosing || run.Phase == RunPhase.InDuel) && !Tower.IsBattle(run.FloorKind) && run.FloorKind != FloorKind.Event)
+                throw r.Error(kindLine, $"{run.Phase}인데 {run.FloorKind} 층");
             if (choosing && !Tower.IsBattle(run.FloorKind))
                 throw r.Error(kindLine, $"{run.Phase}인데 {run.FloorKind} 층");
 
@@ -287,13 +334,12 @@ namespace DuelRoguelike.Run
             {
                 if (!hasEvent)
                     throw r.Error(kindLine, "이벤트 층인데 floor-event 줄이 없음");
-                r.ExpectCount(eventLine, 1);
-                if (TowerEvents.Find(eventLine.Values[0]) == null)
-                    throw r.Error(eventLine, $"모르는 이벤트 \"{eventLine.Values[0]}\"");
-                run.CurrentEventId = eventLine.Values[0];
+                ReadFloorEvent(eventLine, r, run);
             }
             else if (hasEvent)
                 throw r.Error(eventLine, $"이벤트 층이 아닌데 floor-event 줄이 있음 ({run.FloorKind})");
+            if (run.Phase == RunPhase.InDuel && run.FloorKind == FloorKind.Event && !run.EventBattlePending)
+                throw r.Error(kindLine, "이벤트 층에서 듀얼 중인데 이벤트 전투가 아님");
 
             if (map.TryGetValue("boss-bonus", out var bonusLine))
             {

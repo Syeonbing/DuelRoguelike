@@ -151,6 +151,10 @@ if ($chainTotal -gt 0) {
 }
 Write-Host "    LP: 휴식 층에서 8000으로 맞춤 $($s.RestHeals)번, 보스 격파 $($s.BossClears)번, 패배 회복 $($s.LossHeals)번, 8000보다 높은 LP로 시작한 듀얼 $($s.DuelsAboveFullLp)판"
 Write-Host "    코인 토스: 내가 이김 $($s.CoinTossWins)번 / 듀얼 $($r.Duels)판 ($(Percent $s.CoinTossWins $r.Duels)), 상대가 이겨 선공 고름 $($s.OpponentChoseFirst)번, 후공 듀얼 $($s.SecondDuels)판 (승 $($s.SecondWins), 승률 $(Percent $s.SecondWins $s.SecondDuels))"
+$evTotal = $s.EventTendencies[0] + $s.EventTendencies[1] + $s.EventTendencies[2]
+Write-Host "    이벤트: 나옴 $($evTotal)번 (긍정 $($s.EventTendencies[0]) $(Percent $s.EventTendencies[0] $evTotal), 무성향 $($s.EventTendencies[1]) $(Percent $s.EventTendencies[1] $evTotal), 부정 $($s.EventTendencies[2]) $(Percent $s.EventTendencies[2] $evTotal); 기대 35:15:50, 후보 없는 성향은 빠짐)"
+Write-Host "      고름 $($s.EventChoices), 지나감 $($s.EventPasses), 강제 $($s.EventForced), 이벤트 전투 $($s.EventBattles)판 (승 $($s.EventBattleWins)), 카드 받음 $($s.EventCardsGained)·잃음 $($s.EventCardsLost), 봉인 $($s.EventSeals), 봉인 해제 $($s.EventUnseals), 칩 +$($s.EventChipsGained)/-$($s.EventChipsLost)"
+Write-Host "      이벤트별: $($s.EventsSeenText)"
 $kindNames = '전투', '이벤트', '칩교환소', '휴식', '보스'
 Write-Host ("    탑: 들어간 층 " + ((0..4 | ForEach-Object { "$($kindNames[$_]) $($s.FloorVisits[$_])" }) -join ', '))
 $randomFloors = @(1, 2, 3, 4, 7, 8) | ForEach-Object { "{0}층 {1}/{2}" -f $_, $s.RandomEventFloors[$_], $s.RandomFloorVisits[$_] }
