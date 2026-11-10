@@ -1,5 +1,6 @@
 // 화면 없이 로그라이크 런을 처음부터 끝까지 돌린다 (tools/headless-run.ps1).
-// 플레이어 0(시험 플레이어)이 런을 하고, 층마다 WindBot이 상대 덱을 맡는다. 승리 보상(후보·빈 자리)과 보충할 카드는 무작위로 고른다.
+// 플레이어 0(시험 플레이어)이 런을 하고, 전투 층마다 WindBot이 상대 덱을 맡는다. 승리 보상(후보·빈 자리), 보스 보상의 봉인 해제,
+// 보충할 카드, 이벤트 선택지는 무작위로 고르고, 칩교환소에서는 살 수 있는 상품을 반쯤의 확률로 무작위로 산 뒤 떠난다.
 // 확인하는 것:
 // - 듀얼마다 화면 밖 듀얼 시험과 같은 점검 (엔진 오류·예외·대체 응답·거절된 응답·해석하지 않은 메시지 0)
 // - 단계마다 런 규칙 점검 (RunRuleChecker: 보상 후보·골드·봉인·LP·보충·종료)
@@ -96,9 +97,9 @@ namespace DuelRoguelike.Dev
             var checker = new RunRuleChecker(run, _db, _rarities, report.Rules, runTag);
             CheckSaveRoundTrip(report, save, runTag);
             var picks = RunRandom.For((ulong)seed, 0, RunRandomPurpose.External);
-            var outcomes = new List<(DuelResult Result, int Lp)>();
-            var refills = new List<uint>();
-            var rewardSlots = new List<int>();
+            // 런을 바꾼 걸음(듀얼 결과, 고르기, 칩교환소 구매 등)을 차례로 적어 두고, 재현 시험에서 그대로 다시 한다.
+            var steps = new List<Action<RunState>>();
+            int refillCards = 0;
             (DuelSessionOptions Options, int PlayerSeed, HeadlessDuelRun.DuelOutcome Outcome)? first = null;
 
             while (run.Phase != RunPhase.Ended)
@@ -110,7 +111,18 @@ namespace DuelRoguelike.Dev
                     checker.BeforeStep();
                     run.ChooseReward(slot);
                     checker.AfterChooseReward(slot);
-                    rewardSlots.Add(slot);
+                    steps.Add(r => r.ChooseReward(slot));
+                    CheckSaveRoundTrip(report, save, runTag);
+                    continue;
+                }
+                if (run.Phase == RunPhase.ChoosingUnseal)
+                {
+                    var sealedCards = run.SealedCards();
+                    uint unseal = sealedCards[picks.Next(sealedCards.Count)];
+                    checker.BeforeStep();
+                    run.ChooseUnseal(unseal);
+                    checker.AfterChooseUnseal(unseal);
+                    steps.Add(r => r.ChooseUnseal(unseal));
                     CheckSaveRoundTrip(report, save, runTag);
                     continue;
                 }
@@ -127,7 +139,38 @@ namespace DuelRoguelike.Dev
                     checker.BeforeStep();
                     run.MoveToDeck(code);
                     checker.AfterMoveToDeck(code);
-                    refills.Add(code);
+                    steps.Add(r => r.MoveToDeck(code));
+                    refillCards++;
+                    CheckSaveRoundTrip(report, save, runTag);
+                    continue;
+                }
+                if (!Tower.IsBattle(run.FloorKind))
+                {
+                    checker.BeforeStep();
+                    if (run.FloorKind == FloorKind.Event)
+                    {
+                        int choice = picks.Next(run.CurrentEvent.Choices.Count);
+                        run.ChooseEventOption(choice);
+                        checker.AfterEventChoice(choice);
+                        steps.Add(r => r.ChooseEventOption(choice));
+                    }
+                    else if (run.FloorKind == FloorKind.ChipExchange && PickPurchase(run, picks) is (ShopProduct product, uint release, uint newSeal))
+                    {
+                        Action<RunState> buy = r =>
+                        {
+                            if (product == ShopProduct.Unseal) r.BuyUnseal(release);
+                            else r.BuySwap(product, release, newSeal);
+                        };
+                        buy(run);
+                        checker.AfterBuy(product, release, newSeal);
+                        steps.Add(buy);
+                    }
+                    else
+                    {
+                        run.LeaveFloor();
+                        checker.AfterLeaveFloor();
+                        steps.Add(r => r.LeaveFloor());
+                    }
                     CheckSaveRoundTrip(report, save, runTag);
                     continue;
                 }
@@ -161,7 +204,12 @@ namespace DuelRoguelike.Dev
                 checker.BeforeStep();
                 run.FinishDuel(result, outcome.Lp[0]);
                 checker.AfterFinishDuel(duel, result, outcome.Lp[0]);
-                outcomes.Add((result, outcome.Lp[0]));
+                int endLp = outcome.Lp[0];
+                steps.Add(r =>
+                {
+                    r.BeginDuel();
+                    r.FinishDuel(result, endLp);
+                });
                 CheckSaveRoundTrip(report, save, runTag);
 
                 report.Duels++;
@@ -184,42 +232,68 @@ namespace DuelRoguelike.Dev
             byDeck[3] += run.Floor;
 
             _log($"    {runTag} {run.Floor}층, 듀얼 {run.DuelsPlayed} (승 {run.Wins} 패 {run.Losses + run.Draws}), " +
-                 $"사이드 {run.SideDeck.Count}장, 봉인 {run.SealedMain.Count}+{run.SealedExtra.Count}장, 골드 {run.Gold}, " +
-                 $"보충 {refills.Count}장, {(run.Phase == RunPhase.Ended ? "런 종료" : $"멈춤 ({run.Phase})")}");
+                 $"사이드 {run.SideDeck.Count}장, 봉인 {run.SealedMain.Count}+{run.SealedExtra.Count}장, 골드 {run.Gold} + 정산 {run.SettlementGold}, " +
+                 $"칩 {run.Chips} (얻은 칩 {run.ChipsEarned}), 보충 {refillCards}장, {(run.Phase == RunPhase.Ended ? "런 종료" : $"멈춤 ({run.Phase})")}");
             if (print)
                 foreach (var e in run.Events)
                     _log($"      #{e.DuelNumber,-3} {e.Describe(_duels.CardName)}");
 
-            CheckRuleReplay(report, setup, run, outcomes, refills, rewardSlots, runTag);
-            CheckSaveReplay(report, setup, save, outcomes, refills, rewardSlots, runTag);
+            CheckRuleReplay(report, setup, run, steps, runTag);
+            CheckSaveReplay(report, setup, save, steps, runTag);
             if (first.HasValue)
                 CheckEngineReplay(report, first.Value.Options, first.Value.PlayerSeed, first.Value.Outcome, runTag, player, maxTurns, hides);
         }
 
-        /// <summary>같은 시드·같은 듀얼 결과·같은 보상·보충 선택으로 런 규칙만 다시 돌려, 이벤트가 모두 같은지 본다.</summary>
-        void CheckRuleReplay(Report report, RunSetup setup, RunState original, List<(DuelResult Result, int Lp)> outcomes,
-            List<uint> refills, List<int> rewardSlots, string runTag)
+        /// <summary>
+        /// 칩교환소: 살 수 있는 상품이 있으면 반쯤의 확률로 하나를 무작위로 고른다 (풀 카드·새로 봉인할 카드도 무작위). 사지 않으면 null.
+        /// </summary>
+        static (ShopProduct Product, uint Release, uint NewSeal)? PickPurchase(RunState run, RunRandom picks)
+        {
+            var buyable = run.Shop.Where(o => run.CanBuy(o.Product, out _)).Select(o => o.Product).ToList();
+            if (buyable.Count == 0 || picks.Next(2) == 0)
+                return null;
+            var product = buyable[picks.Next(buyable.Count)];
+            var releases = run.ReleaseCandidates(product);
+            uint release = releases[picks.Next(releases.Count)];
+            uint newSeal = 0;
+            if (ChipExchange.ChoosesNewSeal(product))
+            {
+                var targets = run.NewSealCandidates(product, release);
+                newSeal = targets[picks.Next(targets.Count)];
+            }
+            return (product, release, newSeal);
+        }
+
+        /// <summary>적어 둔 걸음을 차례로 다시 한다. 런이 먼저 끝나거나 걸음이 거절되면 그 이유를 돌려준다.</summary>
+        static string Replay(Func<RunState> run, List<Action<RunState>> steps, Action beforeStep = null)
+        {
+            for (int i = 0; i < steps.Count; i++)
+            {
+                beforeStep?.Invoke();
+                if (run().Phase == RunPhase.Ended)
+                    return $"{i}번째 걸음 전에 런이 끝남";
+                try
+                {
+                    steps[i](run());
+                }
+                catch (Exception e) when (e is InvalidOperationException || e is ArgumentException)
+                {
+                    return $"{i}번째 걸음이 거절됨: {e.Message}";
+                }
+            }
+            return null;
+        }
+
+        /// <summary>같은 시드·같은 듀얼 결과·같은 고르기로 런 규칙만 다시 돌려, 이벤트가 모두 같은지 본다.</summary>
+        void CheckRuleReplay(Report report, RunSetup setup, RunState original, List<Action<RunState>> steps, string runTag)
         {
             var replay = RunState.Start(setup, _db, _rarities, CardCollection.FromRecipes(StarterDecks.All));
-            int nextOutcome = 0, nextRefill = 0, nextReward = 0;
-            while (replay.Phase != RunPhase.Ended)
+            string failed = Replay(() => replay, steps);
+            if (failed != null)
             {
-                if (replay.Phase == RunPhase.ChoosingReward)
-                {
-                    if (nextReward >= rewardSlots.Count) break;
-                    replay.ChooseReward(rewardSlots[nextReward++]);
-                    continue;
-                }
-                if (replay.Phase == RunPhase.NeedsRefill)
-                {
-                    if (nextRefill >= refills.Count) break;
-                    replay.MoveToDeck(refills[nextRefill++]);
-                    continue;
-                }
-                if (nextOutcome >= outcomes.Count) break;
-                replay.BeginDuel();
-                var (result, lp) = outcomes[nextOutcome++];
-                replay.FinishDuel(result, lp);
+                report.RuleReplayMismatches++;
+                report.Problems.Add($"{runTag} 런 규칙 재현 실패: {failed}");
+                return;
             }
             var a = original.Events.Select(e => e.ToString()).ToList();
             var b = replay.Events.Select(e => e.ToString()).ToList();
@@ -294,34 +368,26 @@ namespace DuelRoguelike.Dev
         /// 같은 결과·같은 보상·보충 선택으로 런 규칙만 다시 돌리되, 걸음(듀얼·보상·보충)마다 저장 파일을 읽은 런으로 이어 간다.
         /// 끝난 뒤의 저장 글(컬렉션·런 상태·이벤트 전부)이 원래 런과 같아야 한다.
         /// </summary>
-        void CheckSaveReplay(Report report, RunSetup setup, GameSave original, List<(DuelResult Result, int Lp)> outcomes,
-            List<uint> refills, List<int> rewardSlots, string runTag)
+        void CheckSaveReplay(Report report, RunSetup setup, GameSave original, List<Action<RunState>> steps, string runTag)
         {
             if (original.Run.Phase == RunPhase.InDuel)
                 return; // 듀얼이 끝나지 않아 멈춘 런 (따로 중단으로 센다)
             var save = GameSave.NewGame();
             save.StartRun(setup, _db, _rarities);
-            int nextOutcome = 0, nextRefill = 0, nextReward = 0;
-            while (save.Run.Phase != RunPhase.Ended)
+            string failed;
+            try
             {
-                save = GameSave.Parse(save.Write(), _db, _rarities, "시험");
-                var run = save.Run;
-                if (run.Phase == RunPhase.ChoosingReward)
-                {
-                    if (nextReward >= rewardSlots.Count) break;
-                    run.ChooseReward(rewardSlots[nextReward++]);
-                    continue;
-                }
-                if (run.Phase == RunPhase.NeedsRefill)
-                {
-                    if (nextRefill >= refills.Count) break;
-                    run.MoveToDeck(refills[nextRefill++]);
-                    continue;
-                }
-                if (nextOutcome >= outcomes.Count) break;
-                run.BeginDuel();
-                var (result, lp) = outcomes[nextOutcome++];
-                run.FinishDuel(result, lp);
+                failed = Replay(() => save.Run, steps, () => save = GameSave.Parse(save.Write(), _db, _rarities, "시험"));
+            }
+            catch (FormatException e)
+            {
+                failed = "저장 읽기 실패: " + e.Message;
+            }
+            if (failed != null)
+            {
+                report.SaveReplayMismatches++;
+                report.Problems.Add($"{runTag} 저장하며 이어 간 런 재현 실패: {failed}");
+                return;
             }
             string a = original.Write(), b = save.Write();
             if (a != b)

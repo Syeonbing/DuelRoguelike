@@ -1,6 +1,6 @@
 // 저장 (규칙 결정 문서 "저장·무작위 결과"). 파일 하나에 다음을 담는다:
 // - 컬렉션: 한 번이라도 얻은 카드와 장수 (영구). 처음에는 스타터 덱 4개를 지급한 것으로 시작한다.
-// - 골드: 영구 재화. 끝난 런들에서 얻은 골드를 더한 것 (쓰는 곳은 아직 없다).
+// - 골드: 영구 재화. 끝난 런들에서 얻은 골드(보상 빈 자리·등급 대체 + 런 종료 정산)를 더한 것 (쓰는 곳은 아직 없다).
 // - 덱 레시피 (PlayerRecipe): 이름, 메인·엑스트라 덱, 시작 사이드 덱. 새 게임에는 스타터 덱 4개가 레시피로 들어 있다. 마지막으로 런을 시작한 레시피.
 // - 진행 중인 런 (있으면, RunStateSave.cs). 듀얼 중에 저장된 런을 읽으면 그 듀얼을 패배로 처리한다 (ForfeitedDuel).
 // 화면은 층을 오를 때, 듀얼을 시작할 때, 보상 후보를 뽑았을 때(듀얼 결과), 보상을 골랐을 때(컬렉션), 교환·보충마다, 레시피를 저장·지울 때 저장한다.
@@ -8,6 +8,7 @@
 // 파일 형식은 SaveText.cs (줄 단위 텍스트). 파일 위치는 부르는 쪽이 정한다 (게임: 유니티 persistentDataPath).
 // 형식 1(포인트 대체 횟수, 기절)도 읽는다: 포인트는 골드 환산표로 골드로 바꾸고, 기절은 봉인으로 옮긴다.
 // 형식 2까지(레시피 없음)는 스타터 덱 4개를 레시피로 만들고, 시작 덱별 마지막 시작 사이드 덱(last-side-deck)을 그 레시피의 사이드 덱으로 옮긴다.
+// 형식 3까지(탑 구조·칩 없음)의 런은 칩 0, 지금 층은 전투 층(10층마다 보스 층)으로 읽는다 (RunStateSave.cs).
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -20,7 +21,7 @@ namespace DuelRoguelike.Run
     public sealed class GameSave
     {
         /// <summary>저장 파일 형식 버전. 형식을 바꾸면 올리고, 이전 버전 파일을 읽는 길을 남긴다.</summary>
-        public const int FormatVersion = 3;
+        public const int FormatVersion = 4;
 
         static readonly string[] ProfileKeys = { "format", "gold", "last-start-deck" };
         static readonly string[] RepeatableProfileKeysV2 = { "card", "last-side-deck" };
@@ -119,12 +120,12 @@ namespace DuelRoguelike.Run
             CloseEndedRun();
         }
 
-        /// <summary>런이 끝났으면 그 런의 골드를 누적에 더하고 진행 중인 런을 비운다. 정리했으면 true.</summary>
+        /// <summary>런이 끝났으면 그 런의 골드(보상 골드 + 종료 정산)를 누적에 더하고 진행 중인 런을 비운다. 정리했으면 true.</summary>
         public bool CloseEndedRun()
         {
             if (Run == null || Run.Phase != RunPhase.Ended)
                 return false;
-            Gold += Run.Gold;
+            Gold += Run.Gold + Run.SettlementGold;
             Run = null;
             return true;
         }

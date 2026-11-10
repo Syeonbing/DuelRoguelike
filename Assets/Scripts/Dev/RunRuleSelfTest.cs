@@ -36,7 +36,10 @@ namespace DuelRoguelike.Dev
                          ("확률표", test.RewardTableRows),
                          ("등급 뽑기 분포", test.RewardRollDistribution),
                          ("엑스트라 덱 연쇄 봉인", test.ExtraSealChain),
+                         ("탑 구조", test.TowerStructure),
                          ("봉인 장수·LP·층 진행", test.ScriptedRun),
+                         ("칩교환소", test.ChipExchangeShop),
+                         ("보스 보상과 골드 정산", test.BossBonusAndSettlement),
                          ("런 종료와 보충", test.EndAndRefill),
                          ("사이드 덱 교환 규칙", test.ExchangeRules),
                          ("승리 보상 고르기", test.RewardChoice),
@@ -153,27 +156,296 @@ namespace DuelRoguelike.Dev
             Expect(RunRules.RollExtraSealCount(random, 0) == 0, "엑스트라 덱이 비면 0장");
         }
 
-        // --- 정해 둔 결과로 런 진행 ---
-
-        RunState NewRun(DeckRecipe deck, ulong seed = 42, IReadOnlyList<uint> side = null, RarityTable rarities = null,
-            CardCollection collection = null) =>
-            RunState.Start(new RunSetup { Seed = seed, StartDeck = deck, SideDeck = side ?? Array.Empty<uint>() },
-                _db, rarities ?? _rarities, collection ?? CardCollection.FromRecipes(StarterDecks.All));
-
-        /// <summary>승리 보상을 고르는 중이면 그 자리를 고른다.</summary>
-        static void Choose(RunState run, int slot = 0)
+        /// <summary>탑 구조: 끝자리로 정해지는 층, 확률 이벤트 층의 비율, 최소 전투 층, 칩교환소 진열 확률.</summary>
+        void TowerStructure()
         {
-            if (run.Phase == RunPhase.ChoosingReward)
-                run.ChooseReward(slot);
+            Expect(Tower.Position(1) == 1 && Tower.Position(10) == 10 && Tower.Position(11) == 1 && Tower.Position(105) == 5 && Tower.BlockStart(25) == 21,
+                "10층 묶음 안의 자리");
+            Expect(Tower.FixedKind(5) == FloorKind.ChipExchange && Tower.FixedKind(16) == FloorKind.Event && Tower.FixedKind(29) == FloorKind.Rest
+                   && Tower.FixedKind(50) == FloorKind.Boss && Tower.FixedKind(101) == FloorKind.Battle && Tower.FixedKind(8) == FloorKind.Battle,
+                "끝자리 5 칩교환소, 6 이벤트, 9 휴식, 0 보스, 나머지 전투");
+            ExpectThrows<ArgumentOutOfRangeException>(() => Tower.Position(0), "0층");
+
+            const int blocks = 40000;
+            var events = new int[11];
+            var perBlock = new int[4];
+            int badFixed = 0, noBattle = 0, mismatch = 0;
+            for (int b = 0; b < blocks; b++)
+            {
+                ulong seed = 5000 + (ulong)b;
+                int start = 1 + (b % 12) * 10;
+                var kinds = Tower.Block(seed, start + b % 10);
+                int count = 0;
+                for (int p = 1; p <= 10; p++)
+                {
+                    var kind = kinds[p - 1];
+                    bool random = Tower.RandomEventPercent(start + p - 1) > 0;
+                    if (random ? kind != FloorKind.Battle && kind != FloorKind.Event : kind != Tower.FixedKind(start + p - 1))
+                        badFixed++;
+                    if (random && kind == FloorKind.Event)
+                    {
+                        events[p]++;
+                        count++;
+                    }
+                }
+                perBlock[Math.Min(3, count)]++;
+                if (kinds.Take(4).All(k => k != FloorKind.Battle) || kinds.Skip(6).Take(2).All(k => k != FloorKind.Battle))
+                    noBattle++;
+                if (Tower.KindOf(seed, start + b % 10) != kinds[b % 10] || Tower.KindOf(seed, start + 3) != Tower.Block(seed, start)[3])
+                    mismatch++;
+            }
+            Expect(badFixed == 0, $"정해진 층(5·6·9·10)이 바뀌거나 1~4·7~8층이 전투·이벤트가 아님: {badFixed}번");
+            Expect(noBattle == 0, $"1~4층 또는 7~8층에 전투 층이 없는 묶음 {noBattle}개");
+            Expect(mismatch == 0, $"같은 시드·층인데 종류가 다름 {mismatch}번");
+            foreach (int p in new[] { 1, 2, 3, 4, 7, 8 })
+            {
+                double percent = events[p] * 100.0 / blocks;
+                int expected = Tower.RandomEventPercent(p);
+                Expect(Math.Abs(percent - expected) < 0.7, $"{p}층 이벤트 비율 {percent:F2}% (규칙 {expected}%)");
+            }
+            // 규칙 결정 문서의 시뮬레이션: 10층 묶음당 확률 이벤트 0개 46%, 1개 40%, 2개 12%, 3개 이상 2%.
+            double[] share = perBlock.Select(n => n * 100.0 / blocks).ToArray();
+            Expect(Math.Abs(share[0] - 46) < 1.2 && Math.Abs(share[1] - 40) < 1.2 && Math.Abs(share[2] - 12) < 1 && Math.Abs(share[3] - 2) < 0.6,
+                $"묶음당 확률 이벤트 개수 0/1/2/3+: {string.Join(" / ", share.Select(s => s.ToString("F1")))}%");
+            Expect(PlainSeed >= 42 && Enumerable.Range(1, 30).All(f => Tower.KindOf(PlainSeed, f) == Tower.FixedKind(f)), $"시험 기본 시드 {PlainSeed}");
+
+            // 칩교환소 진열: 봉인 대상 교체 4종은 늘, 봉인 해제는 50%(임시). 같은 시드·층이면 같다.
+            int unseal = 0;
+            for (int floor = 5; floor < 5 + 10 * 4000; floor += 10)
+            {
+                var stock = ChipExchange.Stock(77, floor);
+                if (stock.Count < 4 || stock.Take(4).Any(o => !ChipExchange.IsSwap(o.Product) || o.Price != RunRules.ShopPrice(o.Product) || o.Sold))
+                {
+                    Expect(false, $"{floor}층 칩교환소 진열이 이상함");
+                    break;
+                }
+                if (stock.Any(o => o.Product == ShopProduct.Unseal))
+                    unseal++;
+            }
+            Expect(Math.Abs(unseal / 40.0 - RunRules.UnsealOfferPercent) < 2.5, $"봉인 해제 진열 {unseal / 40.0:F1}% (임시 {RunRules.UnsealOfferPercent}%)");
+            Expect(ChipExchange.Stock(77, 15).Select(o => o.Product).SequenceEqual(ChipExchange.Stock(77, 15).Select(o => o.Product)), "같은 시드·층이면 같은 진열");
         }
 
-        /// <summary>보상 고르기·보충이 남았으면 끝내고 (보충은 첫 후보), 듀얼 하나를 정한 결과로 끝낸다. 이기면 rewardSlot 자리를 고른다.</summary>
+        /// <summary>칩교환소: 진열, 가격, 칩 모자람, 봉인 대상 교체(같은 레어도·완전, 무작위·직접), 봉인 해제, 한 번만, 저장·읽기, 교체 뒤 보충.</summary>
+        void ChipExchangeShop()
+        {
+            // 1층 2연패로 봉인 3장 (1 + 2), 그리고 4번 이겨 5층 칩교환소에 칩 80.
+            var save = GameSave.NewGame();
+            var run = save.StartRun(new RunSetup { Seed = PlainSeed, StartDeck = StarterDecks.Yugi }, _db, _rarities);
+            Play(run, DuelResult.Loss, 0);
+            Play(run, DuelResult.Loss, 0);
+            for (int i = 0; i < 4; i++)
+                Play(run, DuelResult.Win, 8000);
+            int chips = 4 * RunRules.ChipsPerWin;
+            Expect(run.Floor == 5 && run.FloorKind == FloorKind.ChipExchange && run.Chips == chips && run.SealedCount == 3 && run.MainDeck.Count == 47,
+                $"5층 칩교환소: {run.Floor}층 {run.FloorKind}, 칩 {run.Chips}, 봉인 {run.SealedCount}, 메인 {run.MainDeck.Count}");
+            var products = run.Shop.Select(o => o.Product).ToList();
+            Expect(products.Take(4).SequenceEqual(new[] { ShopProduct.SwapSameRarity, ShopProduct.SwapSameRarityChosen, ShopProduct.SwapAny, ShopProduct.SwapAnyChosen })
+                   && run.Shop.All(o => o.Price == RunRules.ShopPrice(o.Product) && !o.Sold), "진열: 봉인 대상 교체 4종 (+ 봉인 해제는 확률), 임시 가격");
+            Expect(RunRules.ShopPrice(ShopProduct.SwapSameRarity) < RunRules.ShopPrice(ShopProduct.SwapSameRarityChosen)
+                   && RunRules.ShopPrice(ShopProduct.SwapAny) < RunRules.ShopPrice(ShopProduct.SwapAnyChosen)
+                   && RunRules.ShopPrice(ShopProduct.SwapAnyChosen) < RunRules.ShopPrice(ShopProduct.Unseal), "직접 고르는 교체가 더 비싸고, 봉인 해제가 가장 비쌈");
+            if (products.Contains(ShopProduct.Unseal))
+                Expect(!run.CanBuy(ShopProduct.Unseal, out string poor) && poor.Contains("칩이 모자람"), "칩이 모자라면 봉인 해제를 못 삼");
+
+            Rarity? RarityOf(uint code) => _rarities.TryGet(code, out var r) ? r : (Rarity?)null;
+
+            // 같은 레어도, 무작위 (30): 고른 봉인 카드는 사이드 덱으로, 같은 레어도의 메인 덱 카드 하나가 대신 봉인.
+            Expect(run.ReleaseCandidates(ShopProduct.SwapSameRarity).Count > 0, "같은 레어도 교체로 풀 수 있는 카드가 있음");
+            uint release = run.ReleaseCandidates(ShopProduct.SwapSameRarity)[0];
+            int side = run.SideDeck.Count;
+            int mark = run.Events.Count;
+            ExpectThrows<ArgumentException>(() => run.BuySwap(ShopProduct.SwapSameRarity, release, run.MainDeck[0]), "무작위 교체에 새 봉인 카드를 줌");
+            run.BuySwap(ShopProduct.SwapSameRarity, release);
+            chips -= RunRules.ShopPrice(ShopProduct.SwapSameRarity);
+            var sealedNow = run.Events.Skip(mark).Where(e => e.Kind == RunEventKind.CardSealed).ToList();
+            Expect(run.Chips == chips && run.SealedCount == 3 && run.SideDeck.Count == side + 1 && run.SideDeck.Last() == release && run.MainDeck.Count == 46
+                   && sealedNow.Count == 1 && RarityOf(sealedNow[0].Code) == RarityOf(release) && run.SealedMain.Contains(sealedNow[0].Code),
+                $"같은 레어도 교체: 칩 {run.Chips}, 봉인 {run.SealedCount}, 사이드 {run.SideDeck.Count}, 메인 {run.MainDeck.Count}");
+            var bought = run.Events.Skip(mark).ToList();
+            Expect(bought.Count == 3 && bought[0].Kind == RunEventKind.ShopBought && bought[0].Product == ShopProduct.SwapSameRarity && bought[0].Count == 30 && bought[0].Chips == chips
+                   && bought[1].Kind == RunEventKind.CardUnsealed && bought[1].Code == release && !bought[1].IsBonus && bought[2].Kind == RunEventKind.CardSealed,
+                "교체 이벤트: 구매 → 봉인 해제 → 봉인");
+            Expect(!run.CanBuy(ShopProduct.SwapSameRarity, out string again) && again.Contains("이미") && run.Shop[0].Sold, $"같은 상품은 한 번만 ({again})");
+            Expect(!run.CanBuy(ShopProduct.SwapAnyChosen, out string costly) && costly.Contains("칩이 모자람"), $"칩 {run.Chips}로 완전 교체(직접)는 못 삼");
+
+            // 같은 레어도, 직접 고름 (50): 새로 봉인할 카드를 고른다.
+            uint release2 = run.ReleaseCandidates(ShopProduct.SwapSameRarityChosen)[0];
+            var targets = run.NewSealCandidates(ShopProduct.SwapSameRarityChosen, release2);
+            Expect(targets.Count > 0 && targets.All(c => RarityOf(c) == RarityOf(release2) && run.MainDeck.Contains(c)), "직접 고를 후보: 같은 레어도의 메인 덱 카드");
+            ExpectThrows<InvalidOperationException>(() => run.BuySwap(ShopProduct.SwapSameRarityChosen, release2), "직접 고르는 교체에 새 봉인 카드 없음");
+            Expect(run.Chips == chips, "실패한 구매는 칩을 쓰지 않음");
+            uint target = targets.Last();
+            run.BuySwap(ShopProduct.SwapSameRarityChosen, release2, target);
+            chips -= RunRules.ShopPrice(ShopProduct.SwapSameRarityChosen);
+            Expect(run.Chips == chips && chips == 0 && run.SealedMain.Contains(target) && run.SideDeck.Contains(release2) && run.MainDeck.Count == 45,
+                $"직접 고른 교체: 칩 {run.Chips}, {target} 봉인");
+            Expect(!run.CanBuy(ShopProduct.SwapAny, out string none) && none.Contains("칩이 모자람"), "칩 0");
+
+            // 저장·읽기: 진열과 산 것이 그대로. 떠나면 진열이 사라진다.
+            var loaded = GameSave.Parse(save.Write(), _db, _rarities);
+            Expect(loaded.Write() == save.Write() && loaded.Run.Shop.Count(o => o.Sold) == 2 && loaded.Run.FloorKind == FloorKind.ChipExchange, "칩교환소 저장·읽기");
+            run.LeaveFloor();
+            Expect(run.Floor == 6 && run.Shop.Count == 0 && !run.CanBuy(ShopProduct.SwapAny, out string gone) && gone.Contains("칩교환소가 아님"), "칩교환소를 떠나면 살 수 없음");
+
+            // 40장 덱: 교체하면 메인 덱이 39장이 되어 보충한다 (풀린 카드가 사이드 덱에 있어 채울 수 있다).
+            var forty = new DeckRecipe("Test40", "시험 덱 40장", StarterDecks.Yugi.Entries.Take(40).ToList());
+            var spare = StarterDecks.Yugi.Entries.Skip(40).Take(1).Select(e => e.Code).ToList();
+            var thin = NewRun(forty, side: spare);
+            Play(thin, DuelResult.Loss, 0);
+            Play(thin, DuelResult.Win, 8000); // 보충(사이드 덱 1장) 뒤 1층 승리
+            while (thin.Floor < 5)
+                Play(thin, DuelResult.Win, 8000);
+            Expect(thin.Floor == 5 && thin.MainDeck.Count == 40 && thin.SealedCount == 1 && thin.Chips == 80,
+                $"40장 덱 5층: 메인 {thin.MainDeck.Count}, 사이드 {thin.SideDeck.Count}, 봉인 {thin.SealedCount}, 칩 {thin.Chips}");
+            uint x = thin.SealedCards()[0];
+            Expect(thin.CanBuy(ShopProduct.SwapAny, out string why) && thin.ReleaseCandidates(ShopProduct.SwapAny).SequenceEqual(new[] { x }), $"40장 덱도 교체 가능 ({why})");
+            thin.BuySwap(ShopProduct.SwapAny, x);
+            Expect(thin.Phase == RunPhase.NeedsRefill && thin.RefillNeeded == 1 && thin.RefillCandidates().Contains(x), $"교체 뒤 보충: {thin.Phase}, {thin.RefillNeeded}장");
+            Expect(!thin.CanLeaveFloor(out _) && !thin.CanBuy(ShopProduct.SwapAnyChosen, out _), "보충 중에는 떠나거나 살 수 없음");
+            thin.MoveToDeck(x);
+            Expect(thin.Phase == RunPhase.Ready && thin.MainDeck.Count == 40 && thin.CanLeaveFloor(out _), "보충하면 다시 칩교환소");
+
+            // 봉인 해제 (150): 칩을 모아 진열된 칩교환소에서 산다.
+            var rich = NewRun(StarterDecks.Yugi);
+            Play(rich, DuelResult.Loss, 0);
+            Play(rich, DuelResult.Loss, 0); // 봉인 3장: 10층 보스 보상으로 1장 풀려도 남는다
+            while (rich.Phase != RunPhase.Ended && rich.Floor < 120 && !(rich.FloorKind == FloorKind.ChipExchange && rich.Shop.Any(o => o.Product == ShopProduct.Unseal) && rich.Chips >= 150))
+                Play(rich, DuelResult.Win, 8000);
+            bool reached = rich.FloorKind == FloorKind.ChipExchange && rich.CanBuy(ShopProduct.Unseal, out _);
+            Expect(reached, $"봉인 해제를 살 칩교환소에 닿음 ({rich.Floor}층)");
+            if (!reached)
+                return;
+            uint u = rich.SealedCards()[0];
+            int unsealSide = rich.SideDeck.Count, unsealSealed = rich.SealedCount, unsealChips = rich.Chips;
+            rich.BuyUnseal(u);
+            Expect(rich.SideDeck.Count == unsealSide + 1 && rich.SealedCount == unsealSealed - 1 && rich.Chips == unsealChips - RunRules.ShopPrice(ShopProduct.Unseal)
+                   && rich.Events.Last().Kind == RunEventKind.CardUnsealed && rich.Events.Last().Code == u, "봉인 해제: 사이드 덱으로, 칩 -150");
+            ExpectThrows<InvalidOperationException>(() => rich.BuyUnseal(rich.SealedCards().FirstOrDefault()), "봉인 해제는 한 번만");
+        }
+
+        /// <summary>보스 보상(봉인된 카드가 없으면 보상 1장 더, 있으면 봉인 해제 고르기)과 런 종료 골드 정산.</summary>
+        void BossBonusAndSettlement()
+        {
+            var save = GameSave.NewGame();
+            var run = save.StartRun(new RunSetup { Seed = PlainSeed, StartDeck = StarterDecks.Yugi }, _db, _rarities);
+            while (run.Floor < 9)
+                Play(run, DuelResult.Win, 8000);
+            PassFloors(run);
+            Expect(run.SealedCount == 0 && run.FloorKind == FloorKind.Boss && run.Chips == 6 * RunRules.ChipsPerWin, $"10층: 봉인 {run.SealedCount}, {run.FloorKind}, 칩 {run.Chips}");
+            int mark = run.Events.Count;
+            Begin(run);
+            run.FinishDuel(DuelResult.Win, 3000);
+            if (run.Phase == RunPhase.ChoosingReward && !run.PendingReward.IsBossBonus)
+            {
+                Expect(save.Write().Contains("\nboss-bonus\n") && RoundTrip(save) == save.Write(), "보스 승리 보상을 고르는 중: boss-bonus 저장·읽기");
+                run.ChooseReward(0);
+            }
+            var bonus = run.Events.Skip(mark).Where(e => (e.Kind == RunEventKind.RewardOffered || e.Kind == RunEventKind.RewardSubstituted) && e.IsBonus).ToList();
+            Expect(bonus.Count == 1 && bonus[0].Floor == 10, "봉인된 카드가 없으면 보스 보상으로 보상 1장 더");
+            if (run.Phase == RunPhase.ChoosingReward)
+            {
+                string text = save.Write();
+                Expect(run.PendingReward.IsBossBonus && text.Contains("\nreward-bonus\n") && !text.Contains("\nboss-bonus\n") && RoundTrip(save) == text,
+                    "보스 보상 1장 더: reward-bonus 저장·읽기");
+                Expect(run.Events.Last().Describe(c => "").StartsWith("보스 보상 1장 더"), "보스 보상 후보 로그");
+                run.ChooseReward(0);
+            }
+            Expect(run.Floor == 11 && run.Phase == RunPhase.Ready && run.Chips == 6 * RunRules.ChipsPerWin + RunRules.ChipsPerBossWin
+                   && !run.Events.Any(e => e.Kind == RunEventKind.UnsealOffered), $"보스 보상 뒤 11층: {run.Floor}층, LP {run.Lp}, 칩 {run.Chips}");
+
+            // 봉인된 카드가 있으면 봉인 해제 고르기 (ChoosingUnseal): 저장·읽기, 고르기 전에는 듀얼·교환 불가.
+            Play(run, DuelResult.Loss, 0);
+            while (run.Floor < 19)
+                Play(run, DuelResult.Win, 8000);
+            PassFloors(run);
+            Begin(run);
+            run.FinishDuel(DuelResult.Win, 8000);
+            if (run.Phase == RunPhase.ChoosingReward)
+                run.ChooseReward(0);
+            Expect(run.Phase == RunPhase.ChoosingUnseal && run.Floor == 20 && save.Write().Contains("\nphase ChoosingUnseal\n"), $"20층 보스: {run.Phase}");
+            var loaded = GameSave.Parse(save.Write(), _db, _rarities);
+            Expect(loaded.Write() == save.Write() && loaded.Run.Phase == RunPhase.ChoosingUnseal, "봉인 해제 고르는 중 저장·읽기");
+            ExpectThrows<InvalidOperationException>(() => loaded.Run.BeginDuel(), "봉인 해제를 고르기 전에 듀얼");
+            Expect(!loaded.Run.CanMoveToSide(loaded.Run.MainDeck[0], out string busy) && busy.Contains("봉인 해제"), $"봉인 해제를 고르기 전에 교환 ({busy})");
+            uint code = loaded.Run.SealedCards().Last();
+            loaded.Run.ChooseUnseal(code);
+            Expect(loaded.Run.Floor == 21 && loaded.Run.SideDeck.Last() == code && loaded.Run.Phase == RunPhase.Ready, "읽은 런에서 봉인 해제 → 21층");
+
+            // 정산 공식 (규칙 결정 문서의 예: 13층 14, 31층 37, 51층 66, 101층 156)
+            Expect(RunRules.SettlementGold(13, 0, 0) == 14 && RunRules.SettlementGold(31, 0, 0) == 37 && RunRules.SettlementGold(51, 0, 0) == 66
+                   && RunRules.SettlementGold(101, 0, 0) == 156 && RunRules.SettlementGold(1, 0, 0) == 1 && RunRules.SettlementGold(10, 0, 0) == 10
+                   && RunRules.SettlementGold(11, 0, 0) == 12, "정산: 도달 층 + 10층 단위 보너스");
+            Expect(RunRules.SettlementGold(5, 250, 35) == 5 + 2 + 3 && RunRules.SettlementGold(5, 99, 9) == 5, "정산: 얻은 칩÷100 + 가진 칩÷10 (버림)");
+
+            // 봉인 해제를 고르는 중에 포기: 런 종료, 정산 이벤트, 누적 = 런 골드 + 정산.
+            int before = save.Gold;
+            save.AbandonRun();
+            var settled = run.Events.Last();
+            Expect(run.Phase == RunPhase.Ended && settled.Kind == RunEventKind.GoldSettled && settled.Count == run.SettlementGold && settled.Chips == run.Chips
+                   && settled.ChipsEarned == run.ChipsEarned && run.SettlementGold == RunRules.SettlementGold(20, run.ChipsEarned, run.Chips),
+                $"정산 이벤트: {settled.Describe(c => "")}");
+            Expect(save.Gold == before + run.Gold + run.SettlementGold, $"누적 골드 {save.Gold} = {before} + 런 골드 {run.Gold} + 정산 {run.SettlementGold}");
+        }
+
+        // --- 정해 둔 결과로 런 진행 ---
+
+        /// <summary>1~30층에 확률 이벤트 층이 없는 시드 (42부터 찾음). 층 번호를 정해 두고 보는 시험의 기본 시드.</summary>
+        static readonly ulong PlainSeed = FindPlainSeed(42);
+
+        static ulong FindPlainSeed(ulong from)
+        {
+            for (ulong seed = from; ; seed++)
+                if (Enumerable.Range(1, 30).All(floor => Tower.KindOf(seed, floor) == Tower.FixedKind(floor)))
+                    return seed;
+        }
+
+        RunState NewRun(DeckRecipe deck, ulong? seed = null, IReadOnlyList<uint> side = null, RarityTable rarities = null,
+            CardCollection collection = null) =>
+            RunState.Start(new RunSetup { Seed = seed ?? PlainSeed, StartDeck = deck, SideDeck = side ?? Array.Empty<uint>() },
+                _db, rarities ?? _rarities, collection ?? CardCollection.FromRecipes(StarterDecks.All));
+
+        /// <summary>승리 보상을 고르는 중이면 그 자리를 고른다. 보스 보상(보상 1장 더, 봉인 해제는 첫 봉인 카드)까지.</summary>
+        static void Choose(RunState run, int slot = 0)
+        {
+            for (int i = 0; i < 2 && run.Phase == RunPhase.ChoosingReward; i++)
+                run.ChooseReward(slot);
+            if (run.Phase == RunPhase.ChoosingUnseal)
+                run.ChooseUnseal(run.SealedCards()[0]);
+        }
+
+        /// <summary>지금 층이 비전투 층이면 지나간다 (칩교환소·휴식은 떠나기, 이벤트는 첫 선택지). Ready일 때만.</summary>
+        static void PassFloors(RunState run)
+        {
+            while (run.Phase == RunPhase.Ready && !Tower.IsBattle(run.FloorKind))
+            {
+                if (run.FloorKind == FloorKind.Event)
+                    run.ChooseEventOption(0);
+                else
+                    run.LeaveFloor();
+            }
+        }
+
+        /// <summary>비전투 층을 지나 다음 전투 층의 듀얼을 시작한다.</summary>
+        static RunDuel Begin(RunState run)
+        {
+            PassFloors(run);
+            return run.BeginDuel();
+        }
+
+        /// <summary>런 종료 이벤트 (없으면 null). 종료 뒤에는 골드 정산 이벤트가 하나 더 온다.</summary>
+        /// <summary>마지막으로 고른 승리 보상 이벤트 (카드 또는 빈 자리 골드).</summary>
+        static RunEvent LastReward(RunState run) => run.Events.Last(e => e.Kind == RunEventKind.RewardGained || e.Kind == RunEventKind.RewardGold);
+
+        static RunEvent EndEvent(RunState run) => run.Events.LastOrDefault(e => e.Kind == RunEventKind.RunEnded);
+
+        /// <summary>보상 고르기·보충이 남았으면 끝내고 (보충은 첫 후보), 비전투 층을 지나 듀얼 하나를 정한 결과로 끝낸다. 이기면 rewardSlot 자리를 고른다.</summary>
         static RunDuel Play(RunState run, DuelResult result, int lp, int rewardSlot = 0)
         {
             Choose(run, rewardSlot);
             while (run.Phase == RunPhase.NeedsRefill)
                 run.MoveToDeck(run.RefillCandidates()[0]);
-            var duel = run.BeginDuel();
+            var duel = Begin(run);
             run.FinishDuel(result, lp);
             Choose(run, rewardSlot);
             return duel;
@@ -202,68 +474,114 @@ namespace DuelRoguelike.Dev
             Expect(run.LosingStreak == 2 && run.Draws == 1 && run.MainDeck.Count == 47, $"무승부는 패배로: 연패 {run.LosingStreak}, 메인 {run.MainDeck.Count}");
             Expect(CountNew(run, mark, RunEventKind.CardSealed, RunPile.Main) == 2, "1층 2연패는 2장 봉인");
 
-            // 승리: 연패 0, 다음 층, 남은 LP + 1000, 보상 1개 (후보 또는 골드 대체).
+            // 승리: 연패 0, 남은 LP + 1000, 칩 +20, 보상 1개 (후보 또는 골드 대체). 보상을 다 받으면 다음 층.
             mark = run.Events.Count;
-            run.BeginDuel();
+            Begin(run);
             run.FinishDuel(DuelResult.Win, 3000);
-            Expect(run.LosingStreak == 0 && run.Floor == 2 && run.Lp == 4000, $"승리 뒤: 연패 {run.LosingStreak}, {run.Floor}층, LP {run.Lp} (3000 + 1000)");
+            Expect(run.LosingStreak == 0 && run.Lp == 4000 && run.Chips == RunRules.ChipsPerWin && run.ChipsEarned == RunRules.ChipsPerWin,
+                $"승리 뒤: 연패 {run.LosingStreak}, LP {run.Lp} (3000 + 1000), 칩 {run.Chips}");
             Expect(HasNew(run, mark, e => e.Kind == RunEventKind.DuelWon && e.Lp == 3000) && HasNew(run, mark, e => IsLp(e, LpRestoreReason.Win, 3000, 4000)),
                 "승리 이벤트(남은 LP 3000)와 LP +1000 이벤트");
+            Expect(HasNew(run, mark, e => e.Kind == RunEventKind.ChipsGained && e.Count == RunRules.ChipsPerWin && e.Chips == RunRules.ChipsPerWin), "칩 이벤트");
             Expect(CountNew(run, mark, RunEventKind.RewardOffered) + CountNew(run, mark, RunEventKind.RewardSubstituted) == 1, "승리 보상 1개");
+            Expect(run.Phase == RunPhase.ChoosingReward ? run.Floor == 1 : run.Floor == 2, $"보상을 고르기 전에는 이긴 층: {run.Phase}, {run.Floor}층");
             Choose(run);
-            var duel = run.BeginDuel();
+            Expect(run.Floor == 2 && run.FloorKind == FloorKind.Battle && HasNew(run, mark, e => e.Kind == RunEventKind.FloorEntered && e.Floor == 2),
+                $"보상을 받은 뒤 2층 전투 층: {run.Floor}층 {run.FloorKind}");
+            var duel = Begin(run);
             Expect(duel.PlayerLp == 4000 && duel.CreateSessionOptions().Team1.StartingLP == 4000, "다음 층은 남은 LP + 1000으로 시작");
             run.FinishDuel(DuelResult.Win, 2000);
             Choose(run);
 
-            // 9층까지: 남은 LP 1000으로 이기면 다음 층은 2000으로 시작한다 (보스 층 말고는 맞추지 않는다).
-            while (run.Floor < 10)
+            // 4층까지: 남은 LP 1000으로 이기면 다음 층은 2000으로 시작한다.
+            while (run.Floor < 5)
             {
                 int floor = run.Floor;
-                duel = run.BeginDuel();
+                duel = Begin(run);
                 Expect(duel.PlayerLp == (floor == 3 ? 3000 : 2000), $"{floor}층 시작 LP {duel.PlayerLp}");
                 run.FinishDuel(DuelResult.Win, 1000);
                 Choose(run);
             }
 
-            // 10층(보스 층): 시작 직전에 8000으로 맞추고, 이기면 남은 LP와 상관없이 8000.
+            // 5층 칩교환소 (듀얼 없음) → 6층 이벤트 (선택지를 골라야 지나감, 지금 이벤트는 아무 일도 없음) → 7층.
+            int chips = 4 * RunRules.ChipsPerWin;
+            Expect(run.Floor == 5 && run.FloorKind == FloorKind.ChipExchange && run.Shop.Count >= 4 && run.Chips == chips && run.Lp == 2000,
+                $"5층 칩교환소: {run.Floor}층 {run.FloorKind}, 진열 {run.Shop.Count}, 칩 {run.Chips}");
+            ExpectThrows<InvalidOperationException>(() => run.BeginDuel(), "칩교환소에서 듀얼 시작");
+            ExpectThrows<InvalidOperationException>(() => run.ChooseEventOption(0), "칩교환소에서 이벤트 선택지");
+            run.LeaveFloor();
+            Expect(run.Floor == 6 && run.FloorKind == FloorKind.Event && run.CurrentEvent == TowerEvents.QuietFloor && run.Shop.Count == 0,
+                $"6층 이벤트: {run.Floor}층 {run.FloorKind} {run.CurrentEventId}");
+            ExpectThrows<InvalidOperationException>(() => run.LeaveFloor(), "이벤트 층은 선택지로만 떠남");
+            ExpectThrows<ArgumentOutOfRangeException>(() => run.ChooseEventOption(1), "없는 선택지");
             mark = run.Events.Count;
-            duel = run.BeginDuel();
-            Expect(duel.PlayerLp == 8000 && run.Lp == 8000, $"10층 직전 LP 맞춤: LP {duel.PlayerLp}");
-            Expect(HasNew(run, mark, e => IsLp(e, LpRestoreReason.BossFloor, 2000, 8000)), "10층 LP 맞춤 이벤트");
+            run.ChooseEventOption(0);
+            Expect(run.Floor == 7 && run.FloorKind == FloorKind.Battle && run.Lp == 2000 && run.Chips == chips && run.CurrentEventId == null
+                   && HasNew(run, mark, e => e.Kind == RunEventKind.EventResolved && e.EventId == TowerEvents.QuietFloor.Id),
+                $"꽝 이벤트는 아무 일 없이 7층: {run.Floor}층, LP {run.Lp}, 칩 {run.Chips}");
+
+            // 7~8층을 남은 LP 1000으로 이기면 9층 휴식에 들어가며 LP 2000 → 8000.
+            Play(run, DuelResult.Win, 1000);
+            mark = run.Events.Count;
+            Play(run, DuelResult.Win, 1000);
+            chips += 2 * RunRules.ChipsPerWin;
+            Expect(run.Floor == 9 && run.FloorKind == FloorKind.Rest && run.Lp == 8000 && HasNew(run, mark, e => IsLp(e, LpRestoreReason.Rest, 2000, 8000)),
+                $"9층 휴식: {run.Floor}층 {run.FloorKind}, LP {run.Lp}");
+            ExpectThrows<InvalidOperationException>(() => run.BeginDuel(), "휴식 층에서 듀얼 시작");
+            run.LeaveFloor();
+
+            // 10층(보스 층): 휴식으로 8000. 이기면 남은 LP와 상관없이 8000, 칩 +50, 보상 뒤에 봉인된 카드 1장 봉인 해제 (사이드 덱으로).
+            mark = run.Events.Count;
+            duel = Begin(run);
+            Expect(duel.PlayerLp == 8000 && run.FloorKind == FloorKind.Boss && CountNew(run, mark, RunEventKind.LpRestored) == 0,
+                $"10층 보스: 시작 LP {duel.PlayerLp}, {run.FloorKind}");
             mark = run.Events.Count;
             run.FinishDuel(DuelResult.Win, 2500);
-            Expect(run.Floor == 11 && run.Lp == 8000, $"10층 승리 뒤 8000: {run.Floor}층 LP {run.Lp}");
+            chips += RunRules.ChipsPerBossWin;
+            Expect(run.Floor == 10 && run.Lp == 8000 && run.Chips == chips, $"10층 승리 뒤 8000: {run.Floor}층 LP {run.Lp}, 칩 {run.Chips} (기대 {chips})");
             Expect(HasNew(run, mark, e => IsLp(e, LpRestoreReason.BossCleared, 2500, 8000)) && CountNew(run, mark, RunEventKind.LpRestored) == 1,
                 "보스 격파 LP 이벤트 (+1000은 없음)");
-            Choose(run);
+            if (run.Phase == RunPhase.ChoosingReward)
+                run.ChooseReward(0);
+            Expect(run.Phase == RunPhase.ChoosingUnseal && run.Floor == 10 && run.SealedCount == 3 && HasNew(run, mark, e => e.Kind == RunEventKind.UnsealOffered && e.Count == 3),
+                $"보스 보상: 봉인 해제 고르기 ({run.Phase}, 봉인 {run.SealedCount}장)");
+            ExpectThrows<InvalidOperationException>(() => run.ChooseUnseal(run.MainDeck[0]), "봉인되지 않은 카드를 봉인 해제");
+            uint unsealed = run.SealedCards()[0];
+            int sideBefore = run.SideDeck.Count;
+            mark = run.Events.Count;
+            run.ChooseUnseal(unsealed);
+            Expect(run.Floor == 11 && run.Phase == RunPhase.Ready && run.SealedCount == 2 && run.SideDeck.Count == sideBefore + 1 && run.SideDeck.Last() == unsealed
+                   && HasNew(run, mark, e => e.Kind == RunEventKind.CardUnsealed && e.Code == unsealed && e.IsBonus && e.Pile == RunPile.Main),
+                $"보스 보상 봉인 해제 → 사이드 덱, 11층 ({run.Floor}층, 봉인 {run.SealedCount}장)");
 
             // 11층: 7500으로 이기면 8500 (8000을 넘을 수 있다). 12층은 8500으로 시작.
-            Expect(run.BeginDuel().PlayerLp == 8000, "11층은 8000 그대로");
+            Expect(Begin(run).PlayerLp == 8000, "11층은 8000 그대로");
             run.FinishDuel(DuelResult.Win, 7500);
             Choose(run);
             Expect(run.Lp == 8500, $"승리 LP는 8000을 넘을 수 있음: {run.Lp}");
-            Expect(run.BeginDuel().PlayerLp == 8500, "12층은 8500으로 시작");
+            Expect(Begin(run).PlayerLp == 8500, "12층은 8500으로 시작");
 
-            // 12층 패배: 1 + 12÷10 = 2장, LP 8000으로 회복.
+            // 12층 패배: 1 + 12÷10 = 2장, LP 8000으로 회복. 칩은 잃지 않는다.
             mark = run.Events.Count;
+            chips = run.Chips;
             run.FinishDuel(DuelResult.Loss, 0);
-            Expect(CountNew(run, mark, RunEventKind.CardSealed, RunPile.Main) == 2 && run.Lp == 8000, "12층 1연패는 2장 봉인, LP 회복");
+            Expect(CountNew(run, mark, RunEventKind.CardSealed, RunPile.Main) == 2 && run.Lp == 8000 && run.Chips == chips, "12층 1연패는 2장 봉인, LP 회복, 칩 그대로");
 
-            // 20층(보스 층) 직전: LP가 8000보다 높아도 8000으로 맞춘다 (9층 휴식이 생길 때까지 임시).
-            while (run.Floor < 20)
+            // 19층 휴식: LP가 8000보다 높아도 8000으로 맞춘다. 20층(보스)은 8000으로 시작.
+            while (run.Floor < 18)
                 Play(run, DuelResult.Win, 7500);
-            Expect(run.Lp == 8500, $"19층을 7500으로 이긴 LP {run.Lp}");
             mark = run.Events.Count;
-            Expect(run.BeginDuel().PlayerLp == 8000 && HasNew(run, mark, e => IsLp(e, LpRestoreReason.BossFloor, 8500, 8000)),
-                "8000보다 높아도 보스 층 직전에는 8000");
+            Play(run, DuelResult.Win, 7500);
+            Expect(run.Floor == 19 && run.Lp == 8000 && HasNew(run, mark, e => IsLp(e, LpRestoreReason.Rest, 8500, 8000)),
+                $"19층 휴식: 8000보다 높아도 8000 ({run.Floor}층 LP {run.Lp})");
+            Expect(Begin(run).PlayerLp == 8000 && run.Floor == 20, "20층 보스는 8000으로 시작");
             mark = run.Events.Count;
             run.FinishDuel(DuelResult.Win, 8000);
             Expect(run.Lp == 8000 && CountNew(run, mark, RunEventKind.LpRestored) == 0, "보스 층을 LP 8000으로 이기면 LP 이벤트 없음");
             Choose(run);
 
-            // 25층 3연패: 3, 4, 5장 (규칙 문서 예: 25층 3연패째 5장).
-            while (run.Floor < 25)
+            // 24층 3연패: 3, 4, 5장 (연패 + 24÷10).
+            while (run.Floor < 24)
                 Play(run, DuelResult.Win, 5000);
             for (int streak = 1; streak <= 3; streak++)
             {
@@ -273,7 +591,7 @@ namespace DuelRoguelike.Dev
                 int mainBefore = run.Phase == RunPhase.NeedsRefill ? 40 : run.MainDeck.Count;
                 Play(run, DuelResult.Loss, 0);
                 int sealedCount = CountNew(run, mark, RunEventKind.CardSealed, RunPile.Main);
-                Expect(sealedCount == Math.Min(streak + 2, mainBefore), $"25층 {streak}연패: {sealedCount}장 봉인 (기대 {streak + 2}장)");
+                Expect(sealedCount == Math.Min(streak + 2, mainBefore), $"24층 {streak}연패: {sealedCount}장 봉인 (기대 {streak + 2}장)");
             }
             Expect(RunRules.MainSealCount(3, 25) == 5 && RunRules.MainSealCount(1, 9) == 1 && RunRules.MainSealCount(1, 10) == 2,
                 "봉인 장수 공식");
@@ -287,7 +605,8 @@ namespace DuelRoguelike.Dev
             // 사이드 덱이 비어 있으면 첫 패배로 런 종료.
             var run = NewRun(forty);
             Play(run, DuelResult.Loss, 0);
-            Expect(run.Phase == RunPhase.Ended && run.EndReason == RunEndReason.DeckBelowMinimum && run.Events.Last().Kind == RunEventKind.RunEnded,
+            Expect(run.Phase == RunPhase.Ended && run.EndReason == RunEndReason.DeckBelowMinimum && EndEvent(run) != null
+                   && run.Events.Last().Kind == RunEventKind.GoldSettled,
                 $"보충할 카드가 없으면 런 종료 ({run.Phase})");
             ExpectThrows<InvalidOperationException>(() => run.BeginDuel(), "끝난 런에서 듀얼 시작");
 
@@ -370,7 +689,7 @@ namespace DuelRoguelike.Dev
             Expect(run.ExtraDeck.Count == 2 && run.Events.Last().Pile == RunPile.Extra, "사이드 → 엑스트라");
 
             // 듀얼 중에는 덱을 바꿀 수 없다.
-            run.BeginDuel();
+            Begin(run);
             Expect(!run.CanMoveToSide(run.MainDeck[0], out _) && !run.CanMoveToDeck(fusion, out _), "듀얼 중 교환");
             ExpectThrows<InvalidOperationException>(() => run.MoveToSide(run.MainDeck[0]), "듀얼 중 교환 예외");
             ExpectThrows<InvalidOperationException>(() => run.BeginDuel(), "듀얼 중 다시 시작");
@@ -401,7 +720,7 @@ namespace DuelRoguelike.Dev
         {
             for (int i = 0; i < 30; i++)
             {
-                run.BeginDuel();
+                Begin(run);
                 run.FinishDuel(DuelResult.Win, 8000);
                 if (run.Phase == RunPhase.ChoosingReward)
                     return run.PendingReward;
@@ -433,8 +752,8 @@ namespace DuelRoguelike.Dev
                 $"후보: [{offer.Rarity}] {string.Join(",", offer.Cards)}, 빈 자리 {offer.EmptySlots}, 골드 {offer.Gold}");
             var offered = run.Events.Last(e => e.Kind == RunEventKind.RewardOffered);
             Expect(offered.Codes.SequenceEqual(offer.Cards) && offered.Count == offer.Gold && offered.DuelNumber == run.DuelsPlayed
-                   && offered.Floor == run.Floor - 1, "보상 후보 이벤트 (이긴 층)");
-            Expect(run.Phase == RunPhase.ChoosingReward && run.Floor == offer.Floor + 1, "고르기 전에도 층은 이미 올라감");
+                   && offered.Floor == run.Floor, "보상 후보 이벤트 (이긴 층)");
+            Expect(run.Phase == RunPhase.ChoosingReward && run.Floor == offer.Floor, "보상을 고르기 전에는 이긴 층 그대로 (다 받으면 오름)");
             ExpectThrows<InvalidOperationException>(() => run.BeginDuel(), "보상을 고르기 전에 듀얼 시작");
             Expect(!run.CanMoveToSide(run.MainDeck[0], out string why) && why.Contains("보상"), $"보상을 고르기 전에 교환 ({why})");
             ExpectThrows<ArgumentOutOfRangeException>(() => run.ChooseReward(RunRules.RewardChoices), "없는 자리");
@@ -445,7 +764,7 @@ namespace DuelRoguelike.Dev
             int side = run.SideDeck.Count;
             run.ChooseReward(1);
             Expect(run.Phase == RunPhase.Ready && run.PendingReward == null && run.Gold == gold + offer.Gold && run.SideDeck.Count == side
-                   && run.Events.Last().Kind == RunEventKind.RewardGold && run.Events.Last().Count == offer.Gold, "빈 자리 → 골드");
+                   && LastReward(run).Kind == RunEventKind.RewardGold && LastReward(run).Count == offer.Gold && run.Floor == offer.Floor + 1, "빈 자리 → 골드, 다음 층");
             ExpectThrows<InvalidOperationException>(() => run.ChooseReward(0), "고른 뒤 다시 고르기");
 
             // 다음 블랙홀 후보에서 카드를 고른다: 사이드 덱과 컬렉션에 들어가고, 덱에 이미 3장이라 덱에는 넣을 수 없다.
@@ -459,7 +778,7 @@ namespace DuelRoguelike.Dev
             gold = run.Gold;
             run.ChooseReward(0);
             Expect(run.SideDeck.Count(c => c == DarkHole) == 1 && run.Collection.Count(DarkHole) == owned + 1 && run.Gold == gold
-                   && run.Events.Last().Kind == RunEventKind.RewardGained && run.Events.Last().Code == DarkHole, "카드 자리 → 사이드 덱과 컬렉션");
+                   && LastReward(run).Kind == RunEventKind.RewardGained && LastReward(run).Code == DarkHole, "카드 자리 → 사이드 덱과 컬렉션");
             Expect(!run.CanMoveToDeck(DarkHole, out string reason) && reason.Contains("같은 카드명"), $"같은 카드명은 덱에 3장까지 ({reason})");
 
             // 사이드 덱에는 같은 카드명 제한이 없다: 덱에서 하나 빼면 사이드 덱 2장 + 덱 2장 = 4장.
@@ -481,7 +800,9 @@ namespace DuelRoguelike.Dev
             var offered = run.Events.Where(e => e.Kind == RunEventKind.RewardOffered).ToList();
             var gained = run.Events.Where(e => e.Kind == RunEventKind.RewardGained).ToList();
             var substituted = run.Events.Where(e => e.Kind == RunEventKind.RewardSubstituted).ToList();
-            Expect(offered.Count + substituted.Count == 40, "승리 40번, 보상 40개");
+            int bossWins = run.Events.Count(e => e.Kind == RunEventKind.DuelWon && e.Floor % 10 == 0);
+            Expect(offered.Count(e => !e.IsBonus) + substituted.Count(e => !e.IsBonus) == 40 && bossWins > 0
+                   && offered.Count(e => e.IsBonus) + substituted.Count(e => e.IsBonus) == bossWins, $"승리 40번, 보상 40개 + 보스 보상 {bossWins}개 (봉인된 카드가 없어 1장 더)");
             Expect(offered.All(e => e.Rarity == Rarity.SR && e.Codes.Count == 3 && e.Codes.Distinct().Count() == 3 && e.Count == 0)
                    && substituted.All(e => e.Rarity != Rarity.SR), "SR이면 서로 다른 후보 3장 (빈 자리 없음), 다른 등급은 대체");
             Expect(gained.Count == offered.Count && gained.All(e => e.Rarity == Rarity.SR), "후보마다 1장씩 얻음");
@@ -641,19 +962,21 @@ namespace DuelRoguelike.Dev
             var run = save.StartRun(new RunSetup { Seed = 7, StartDeck = StarterDecks.Kaiba }, _db, _rarities);
             ExpectThrows<InvalidOperationException>(() => save.StartRun(new RunSetup { Seed = 8, StartDeck = StarterDecks.Yugi }, _db, _rarities),
                 "진행 중인 런이 있는데 새 런 시작");
-            run.BeginDuel();
+            Begin(run);
             ExpectThrows<InvalidOperationException>(() => run.Abandon(), "듀얼 중 포기");
             run.FinishDuel(DuelResult.Win, 4000);
             Expect(run.Phase == RunPhase.ChoosingReward, $"1층 승리 뒤 보상 고르기 ({run.Phase})");
             int events = run.Events.Count;
             save.AbandonRun();
-            Expect(run.Phase == RunPhase.Ended && run.EndReason == RunEndReason.Abandoned && run.Events.Count == events + 1 && run.PendingReward == null
-                   && run.Events.Last().Kind == RunEventKind.RunEnded && run.Events.Last().Describe(c => "") == "런 종료: 포기",
+            Expect(run.Phase == RunPhase.Ended && run.EndReason == RunEndReason.Abandoned && run.Events.Count == events + 2 && run.PendingReward == null
+                   && EndEvent(run).Describe(c => "") == "런 종료: 포기" && run.Events.Last().Kind == RunEventKind.GoldSettled,
                 $"보상을 고르는 중에도 포기하면 런 종료 ({run.Phase}, {run.EndReason})");
             Expect(save.Run == null, "포기한 런은 저장에서 빠짐");
             int gained = run.Events.Count(e => e.Kind == RunEventKind.RewardGained);
             Expect(save.Collection.TotalCount == CardCollection.FromRecipes(StarterDecks.All).TotalCount + gained, "포기해도 얻은 카드는 컬렉션에 남음");
-            Expect(save.Gold == run.Gold, "포기한 런의 골드도 누적에 더함");
+            Expect(run.SettlementGold == RunRules.SettlementGold(1, RunRules.ChipsPerWin, RunRules.ChipsPerWin) && run.SettlementGold > 0
+                   && run.Events.Last().Count == run.SettlementGold, $"포기한 런도 골드 정산 ({run.SettlementGold})");
+            Expect(save.Gold == run.Gold + run.SettlementGold, "포기한 런의 골드(보상 골드 + 정산)도 누적에 더함");
             var next = save.StartRun(new RunSetup { Seed = 8, StartDeck = StarterDecks.Yugi }, _db, _rarities);
             Expect(next.Phase == RunPhase.Ready && save.Run == next && save.LastStartDeckId == "Yugi", "포기한 뒤 새 런 시작");
         }
@@ -697,7 +1020,7 @@ namespace DuelRoguelike.Dev
                         run.MoveToDeck(run.SideDeck[0]);
                     if (run.CanMoveToSide(run.MainDeck[0], out _))
                         run.MoveToSide(run.MainDeck[0]);
-                    run.BeginDuel();
+                    Begin(run);
                     run.FinishDuel(result, lp);
                 }
                 step++;
@@ -726,12 +1049,13 @@ namespace DuelRoguelike.Dev
             var forty = new DeckRecipe("Test40", "시험 덱 40장", StarterDecks.Yugi.Entries.Take(40).ToList());
             var endRun = ended.StartRun(new RunSetup { Seed = 5, StartDeck = forty }, _db, _rarities);
             Expect(!ended.CloseEndedRun(), "끝나지 않은 런은 정리하지 않음");
-            endRun.BeginDuel();
+            Begin(endRun);
             endRun.FinishDuel(DuelResult.Loss, 0);
             Expect(endRun.Phase == RunPhase.Ended, "40장 덱 첫 패배로 런 종료");
             Expect(RoundTrip(ended) == ended.Write(), "끝난 런도 저장·읽기 (스타터 덱이 아닌 시작 덱 Id도 그대로)");
             int before = ended.Gold;
-            Expect(ended.CloseEndedRun() && ended.Run == null && ended.Gold == before + endRun.Gold, "끝난 런 정리: 골드 누적, 런 빠짐");
+            Expect(ended.CloseEndedRun() && ended.Run == null && ended.Gold == before + endRun.Gold + endRun.SettlementGold && endRun.SettlementGold == 1,
+                "끝난 런 정리: 골드(보상 골드 + 1층 정산 1) 누적, 런 빠짐");
             Expect(GameSave.Parse(ended.Write(), _db, _rarities).Gold == ended.Gold, "골드 저장·읽기");
         }
 
@@ -740,11 +1064,11 @@ namespace DuelRoguelike.Dev
         {
             var save = GameSave.NewGame();
             var run = save.StartRun(new RunSetup { Seed = 21, StartDeck = StarterDecks.Kaiba }, _db, _rarities);
-            run.BeginDuel();
+            Begin(run);
             run.FinishDuel(DuelResult.Win, 7600);
             Choose(run);
             Expect(run.Lp == 8600, $"1층을 7600으로 이겨 LP {run.Lp}");
-            var duel = run.BeginDuel();
+            var duel = Begin(run);
             string text = save.Write();
             Expect(text.Contains("\nphase InDuel\n") && text.Contains("듀얼 중"), "듀얼 중에도 저장 (주석에 패배 처리 안내)");
 
@@ -772,7 +1096,7 @@ namespace DuelRoguelike.Dev
 
             // 런 시작 직후 첫 듀얼 중에 꺼진 경우도 같다.
             var first = GameSave.NewGame();
-            first.StartRun(new RunSetup { Seed = 22, StartDeck = StarterDecks.Joey }, _db, _rarities).BeginDuel();
+            Begin(first.StartRun(new RunSetup { Seed = 22, StartDeck = StarterDecks.Joey }, _db, _rarities));
             var firstLoaded = GameSave.Parse(first.Write(), _db, _rarities, "시험");
             Expect(firstLoaded.ForfeitedDuel == 1 && firstLoaded.Run.Losses == 1 && firstLoaded.Run.Floor == 1 && firstLoaded.Run.Phase == RunPhase.Ready,
                 "첫 듀얼 중에 꺼짐");
@@ -784,8 +1108,8 @@ namespace DuelRoguelike.Dev
         void SaveFormatErrors()
         {
             var save = GameSave.NewGame();
-            var run = save.StartRun(new RunSetup { Seed = 3, StartDeck = StarterDecks.Pegasus }, _db, _rarities);
-            run.BeginDuel();
+            var run = save.StartRun(new RunSetup { Seed = PlainSeed, StartDeck = StarterDecks.Pegasus }, _db, _rarities);
+            Begin(run);
             run.FinishDuel(DuelResult.Win, 6000);
             string choosing = run.Phase == RunPhase.ChoosingReward ? save.Write() : null;
             Choose(run);
@@ -795,10 +1119,38 @@ namespace DuelRoguelike.Dev
 
             string Replace(string line, string with) => good.Replace("\n" + line + "\n", "\n" + with + "\n");
             Broken("", "빈 파일");
-            Broken(good.Replace("format 3\n", ""), "format 줄 없음");
-            Broken(good.Replace("format 3\n", "format 4\n"), "새 버전 형식");
-            Broken(good.Replace("format 3\n", "format 3\nunknown 3\n"), "모르는 키");
-            Broken(good.Replace("format 3\n", "format 3\nformat 3\n"), "같은 키 두 번");
+            Broken(good.Replace("format 4\n", ""), "format 줄 없음");
+            Broken(good.Replace("format 4\n", "format 5\n"), "새 버전 형식");
+            Broken(good.Replace("format 4\n", "format 4\nunknown 3\n"), "모르는 키");
+            Broken(good.Replace("format 4\n", "format 4\nformat 4\n"), "같은 키 두 번");
+            Broken(good.Replace("format 4\n", "format 3\n"), "형식 3에 형식 4의 줄 (floor-kind, chips)");
+            // 형식 4: 지금 층 종류, 칩, 칩교환소 진열, 이벤트 층의 이벤트, 보스 보상
+            string chipsLine = $"chips {run.Chips} {run.ChipsEarned}";
+            Expect(run.Chips == RunRules.ChipsPerWin && good.Contains("\n" + chipsLine + "\n") && good.Contains("\nfloor-kind Battle\n"), "칩·층 종류 줄");
+            Broken(Replace("floor-kind Battle", ""), "floor-kind 줄 없음");
+            Broken(Replace("floor-kind Battle", "floor-kind Lobby"), "모르는 층 종류");
+            Broken(Replace(chipsLine, "chips 30 20"), "가진 칩이 얻은 칩보다 많음");
+            Broken(Replace(chipsLine, "chips -1 20"), "칩 음수");
+            Broken(Replace(chipsLine, "chips 20"), "chips 칸 수");
+            Broken(Replace("floor-kind Battle", "floor-kind ChipExchange"), "칩교환소인데 shop 줄 없음");
+            Broken(good.Replace("\nend-run\n", "\nshop Unseal:150:0\nend-run\n"), "칩교환소가 아닌데 shop 줄");
+            string shop = Replace("floor-kind Battle", "floor-kind ChipExchange\nshop SwapAny:50:0 Unseal:150:1");
+            Expect(GameSave.Parse(shop, _db, _rarities).Run.Shop.Select(o => $"{o.Product}{o.Price}{o.Sold}").SequenceEqual(new[] { "SwapAny50False", "Unseal150True" }),
+                "shop 줄 읽기 (진열·가격·산 것)");
+            Broken(shop.Replace("Unseal:150:1", "Unseal:150:2"), "shop 샀는지가 0·1이 아님");
+            Broken(shop.Replace("Unseal:150:1", "SwapAny:150:1"), "shop 같은 상품 두 번");
+            Broken(shop.Replace("Unseal:150:1", "Lottery:1:0"), "shop 모르는 상품");
+            Broken(shop.Replace("Unseal:150:1", "Unseal:150"), "shop 칸 꼴");
+            Broken(Replace("floor-kind Battle", "floor-kind Event"), "이벤트 층인데 floor-event 줄 없음");
+            Broken(Replace("floor-kind Battle", "floor-kind Event\nfloor-event nowhere"), "모르는 이벤트");
+            Broken(good.Replace("\nend-run\n", "\nfloor-event quiet-floor\nend-run\n"), "이벤트 층이 아닌데 floor-event 줄");
+            Expect(GameSave.Parse(Replace("floor-kind Battle", "floor-kind Event\nfloor-event quiet-floor"), _db, _rarities).Run.CurrentEvent == TowerEvents.QuietFloor,
+                "floor-event 줄 읽기");
+            Broken(good.Replace("\nend-run\n", "\nboss-bonus\nend-run\n"), "보스 보상을 고르는 중이 아닌데 boss-bonus");
+            Broken(Replace("phase Ready", "phase ChoosingUnseal"), "봉인된 카드 없이 보스 보상 봉인 해제");
+            Broken(Replace("floor-kind Battle", "floor-kind Rest").Replace("\nphase Ready\n", "\nphase InDuel\n"), "휴식 층에서 듀얼 중");
+            Broken(good.Replace("event FloorEntered duel=0 floor=1", "event FloorEntered duel=0 floor=1 kind=Lobby"), "이벤트의 모르는 층 종류");
+            Broken(good.Replace("event FloorEntered duel=0 floor=1", "event FloorEntered duel=0 floor=1 bonus=2"), "이벤트 bonus가 1이 아님");
             Broken(good.Replace("\nend-run\n", "\n"), "end-run 없음");
             Broken(Replace("floor 2", "floor 0"), "0층");
             Broken(Replace("floor 2", "floor 이층"), "층이 숫자가 아님");
@@ -807,13 +1159,13 @@ namespace DuelRoguelike.Dev
             Broken(Replace("phase Ready", "phase Ended"), "끝났는데 종료 이유 없음");
             Broken(Replace("wins 1", "wins 2"), "전적이 듀얼 수와 다름");
             Broken(Replace("opponents Yugi Kaiba Joey Pegasus", "opponents Yugi Nobody"), "모르는 상대 덱");
-            Broken(Replace("seed 3", ""), "seed 줄 없음");
+            Broken(Replace($"seed {PlainSeed}", ""), "seed 줄 없음");
             Broken(good.Replace("\nsealed-main\n", "\nsealed-main 99999999\n"), "카드 DB에 없는 카드");
-            Broken(good.Replace("\nsealed-main\n", "\nfainted-main\n"), "형식 3에 fainted-main");
+            Broken(good.Replace("\nsealed-main\n", "\nfainted-main\n"), "형식 4에 fainted-main");
             Broken(good.Replace("event DuelWon duel=1", "event DuelWon duel=x"), "이벤트 칸 숫자 아님");
             Broken(good.Replace("event DuelWon duel=1", "event DuelWon wins=1 duel=1"), "모르는 이벤트 칸");
             Broken(good.Replace("event DuelWon duel=1 floor=1", "event DuelWon duel=1"), "이벤트에 floor 없음");
-            Broken(good.Replace("format 3\ngold 0\n", "format 3\ngold -1\n"), "골드 음수");
+            Broken(good.Replace("format 4\ngold 0\n", "format 4\ngold -1\n"), "골드 음수");
             Broken(good.Replace("\nrecipe Kaiba ", "\nrecipe Yugi "), "레시피 Id 두 번");
             Broken(good.Replace("\nrecipe-side Joey", "\nrecipe-side Nobody"), "recipe 줄에 없는 레시피의 사이드 덱");
             Broken(Regex.Replace(good, @"\nrecipe-deck Pegasus [^\n]*", ""), "recipe-deck 줄 없음");
@@ -821,8 +1173,8 @@ namespace DuelRoguelike.Dev
             Broken(good.Replace("\nrecipe Yugi ", "\nrecipe Yugi %2 "), "레시피 줄 칸 수");
             Broken(good.Replace("\nrecipe Yugi ", "\nrecipe Yugi %zz"), "이름의 % 표기 틀림");
             Broken(good.Replace("\nrecipe-deck Yugi ", "\nrecipe-deck Yugi 99999x "), "레시피 카드 코드가 숫자 아님");
-            Broken("format 3\nrecipe-deck a 53129443\n", "recipe 없이 recipe-deck");
-            Broken(good.Replace("format 3\n", "format 3\nlast-side-deck Yugi\n"), "형식 3에 last-side-deck");
+            Broken("format 4\nrecipe-deck a 53129443\n", "recipe 없이 recipe-deck");
+            Broken(good.Replace("format 4\n", "format 4\nlast-side-deck Yugi\n"), "형식 4에 last-side-deck");
             Broken("format 2\ncard 53129443 0\n", "컬렉션 0장");
             Broken("format 2\ncard 53129443 1\ncard 53129443 2\n", "컬렉션에 같은 카드 두 번");
             Broken("format 2\npoints 1 2 3 4 5\n", "형식 2에 points");
@@ -843,6 +1195,28 @@ namespace DuelRoguelike.Dev
             Broken(choosing.Replace(rewardLine, rewardLine + " " + fields[5]), "후보에 같은 카드 두 번 (또는 4장)");
             Broken(choosing.Replace(rewardLine, string.Join(" ", fields.Take(5)) + " 99999999"), "후보 카드가 카드 DB에 없음");
             Broken(choosing.Replace(rewardLine, string.Join(" ", fields.Take(5).Select((f, i) => i == 3 ? "XR" : f))), "보상 등급이 이상함");
+            Broken(choosing.Replace(rewardLine, "reward 1 2 " + string.Join(" ", fields.Skip(3))), "보상의 층이 지금 층과 다름");
+            Broken(good.Replace("\nend-run\n", "\nreward-bonus\nend-run\n"), "reward 줄 없이 reward-bonus");
+            Broken(choosing.Replace("\nfloor-kind Battle\n", "\nfloor-kind ChipExchange\nshop Unseal:150:0\n"), "보상을 고르는 중인데 칩교환소");
+
+            // 형식 3의 보상 고르는 중 런: 층이 이미 올라가 있었으므로 1 내려 읽는다. 칩은 0, 층은 전투 층.
+            string v3Choosing = StripV4(choosing).Replace("\nformat ?\n", "\nformat 3\n").Replace("\nfloor 1\n", "\nfloor 2\n");
+            var fromV3 = GameSave.Parse(v3Choosing, _db, _rarities);
+            Expect(fromV3.Run.Floor == 1 && fromV3.Run.Phase == RunPhase.ChoosingReward && fromV3.Run.FloorKind == FloorKind.Battle && fromV3.Run.Chips == 0
+                   && StripV4(fromV3.Write()) == StripV4(choosing),
+                $"형식 3의 보상 고르는 중 런: {fromV3.Run.Floor}층 {fromV3.Run.Phase} " + FirstDifference(StripV4(choosing), StripV4(fromV3.Write())));
+            fromV3.Run.ChooseReward(0);
+            Expect(fromV3.Run.Floor == 2 && fromV3.Run.Phase == RunPhase.Ready, $"형식 3에서 읽은 런의 보상을 고르면 2층: {fromV3.Run.Floor}층");
+            Broken(v3Choosing.Replace("\nfloor 2\n", "\nfloor 1\n"), "형식 3의 보상 고르는 중인데 1층");
+        }
+
+        /// <summary>형식 4에서 생긴 줄·이벤트·이벤트 칸을 지우고 format 줄을 "format ?"로 바꾼다 (옛 형식의 글을 만들거나 비교할 때).</summary>
+        static string StripV4(string text)
+        {
+            text = Regex.Replace(text, @"\n(floor-kind|chips|shop|floor-event|boss-bonus|reward-bonus)( [^\n]*)?(?=\n)", "");
+            text = Regex.Replace(text, @"\nevent (FloorEntered|ChipsGained|ShopBought|CardUnsealed|UnsealOffered|EventResolved|GoldSettled) [^\n]*", "");
+            text = Regex.Replace(text, @" (kind|chips|chips-earned|product|event-id|bonus)=[^ \n]+", "");
+            return Regex.Replace(text, @"\nformat \d+\n", "\nformat ?\n");
         }
 
         /// <summary>형식 1(2026-11-10 규칙 전) 저장 파일: 포인트는 골드로, 기절은 봉인으로 바꿔 읽는다.</summary>
@@ -851,8 +1225,8 @@ namespace DuelRoguelike.Dev
             var profile = GameSave.Parse("format 1\npoints 1 2 0 0 1\nlast-start-deck Yugi\n", _db, _rarities);
             int expectedGold = RunRules.GoldFor(Rarity.N) + 2 * RunRules.GoldFor(Rarity.R) + RunRules.GoldFor(Rarity.FR);
             Expect(profile.Gold == expectedGold && profile.LastStartDeckId == "Yugi", $"포인트 → 골드 {profile.Gold} (기대 {expectedGold})");
-            Expect(profile.Write().StartsWith("# ", StringComparison.Ordinal) && profile.Write().Contains("\nformat 3\n") && !profile.Write().Contains("points")
-                   && profile.Recipes.Count == StarterDecks.All.Count, "형식 1을 읽어 쓰면 형식 3 (스타터 덱 레시피 4개)");
+            Expect(profile.Write().StartsWith("# ", StringComparison.Ordinal) && profile.Write().Contains($"\nformat {GameSave.FormatVersion}\n") && !profile.Write().Contains("points")
+                   && profile.Recipes.Count == StarterDecks.All.Count, "형식 1을 읽어 쓰면 지금 형식 (스타터 덱 레시피 4개)");
             Broken("format 1\npoints 1 2 3\n", "포인트 칸 수");
             Broken("format 1\ngold 3\n", "형식 1에 gold");
 
@@ -867,16 +1241,16 @@ namespace DuelRoguelike.Dev
                 Play(run, result, lp);
             Expect(run.Phase == RunPhase.Ready && run.Gold > 0 && run.SealedMain.Count > 0 && !run.Events.Any(e => e.Kind == RunEventKind.RewardOffered),
                 $"시험 런: {run.Phase}, 골드 {run.Gold}, 봉인 {run.SealedMain.Count}");
-            string v3 = save.Write();
+            string v4 = save.Write();
 
             // 같은 런을 형식 1 글로 바꾼다.
             var substituted = new int[RarityTable.RarityCount];
             foreach (var e in run.Events.Where(e => e.Kind == RunEventKind.RewardSubstituted))
                 substituted[(int)e.Rarity]++;
-            // 형식 3에 새로 생긴 줄(레시피, 시작 덱 이름)과 이벤트 칸(deck-name)은 형식 1에 없다.
-            string v1 = Regex.Replace(v3, @"\n(recipe|recipe-deck|recipe-side|start-deck-name) [^\n]*", "");
+            // 형식 3·4에 새로 생긴 줄(레시피, 시작 덱 이름, 탑·칩)과 이벤트 칸(deck-name 등)은 형식 1에 없다.
+            string v1 = Regex.Replace(StripV4(v4), @"\n(recipe|recipe-deck|recipe-side|start-deck-name) [^\n]*", "");
             v1 = Regex.Replace(v1, @" deck-name=[^ \n]+", "")
-                .Replace("\nformat 3\ngold 0\n", "\nformat 1\npoints 0 0 0 0 0\n")
+                .Replace("\nformat ?\ngold 0\n", "\nformat 1\npoints 0 0 0 0 0\n")
                 .Replace($"\ngold {run.Gold}\n", $"\nsubstituted {string.Join(" ", substituted)}\n")
                 .Replace("\nsealed-main", "\nfainted-main")
                 .Replace("\nsealed-extra", "\nfainted-extra")
@@ -885,7 +1259,8 @@ namespace DuelRoguelike.Dev
             Expect(v1.Contains("\nformat 1\n") && v1.Contains("\nsubstituted ") && v1.Contains("event CardFainted ")
                    && !Regex.IsMatch(v1, @"event RewardSubstituted [^\n]*count="), "형식 1 글 만들기");
             var fromV1 = GameSave.Parse(v1, _db, allFr, "시험");
-            Expect(fromV1.Write() == v3, "형식 1을 읽어 형식 3으로 쓰면 원래 글과 같음: " + FirstDifference(v3, fromV1.Write()));
+            Expect(StripV4(fromV1.Write()) == StripV4(v4) && fromV1.Run.Chips == 0,
+                "형식 1을 읽어 지금 형식으로 쓰면 원래 글과 같음 (탑·칩 줄 빼고): " + FirstDifference(StripV4(v4), StripV4(fromV1.Write())));
             Expect(fromV1.Run.Gold == run.Gold && fromV1.Run.SealedMain.SequenceEqual(run.SealedMain), "골드와 봉인 카드");
 
             Broken(v1.Replace("\nphase Ready\n", "\nphase InDuel\n"), "형식 1에는 듀얼 중 상태가 없음", allFr);
@@ -909,13 +1284,13 @@ namespace DuelRoguelike.Dev
             Broken("format 2\nrecipe a b\n", "형식 2에 recipe");
 
             // 형식 2의 런(시작 덱 이름 줄 없음): 이름은 스타터 덱 이름, 런 시작 이벤트에도 채운다.
-            var v3 = GameSave.NewGame();
-            v3.StartRun(new RunSetup { Seed = 8, StartDeck = StarterDecks.Pegasus }, _db, _rarities);
-            string v2Text = Regex.Replace(v3.Write(), @"\n(recipe|recipe-deck|recipe-side|start-deck-name) [^\n]*", "");
-            v2Text = Regex.Replace(v2Text, @" deck-name=[^ \n]+", "").Replace("\nformat 3\n", "\nformat 2\n");
+            var v4 = GameSave.NewGame();
+            v4.StartRun(new RunSetup { Seed = 8, StartDeck = StarterDecks.Pegasus }, _db, _rarities);
+            string v2Text = Regex.Replace(StripV4(v4.Write()), @"\n(recipe|recipe-deck|recipe-side|start-deck-name) [^\n]*", "");
+            v2Text = Regex.Replace(v2Text, @" deck-name=[^ \n]+", "").Replace("\nformat ?\n", "\nformat 2\n");
             var fromV2 = GameSave.Parse(v2Text, _db, _rarities);
-            Expect(fromV2.Run.StartDeckName == StarterDecks.Pegasus.Name && fromV2.Write() == v3.Write(),
-                "형식 2의 런을 읽어 쓰면 형식 3과 같음: " + FirstDifference(v3.Write(), fromV2.Write()));
+            Expect(fromV2.Run.StartDeckName == StarterDecks.Pegasus.Name && StripV4(fromV2.Write()) == StripV4(v4.Write()),
+                "형식 2의 런을 읽어 쓰면 지금 형식과 같음 (탑·칩 줄 빼고): " + FirstDifference(StripV4(v4.Write()), StripV4(fromV2.Write())));
         }
 
         /// <summary>덱 레시피: 저장 규칙, 편집기, 저장 파일, 레시피로 런 시작, 지금 덱을 레시피로.</summary>
@@ -1006,11 +1381,11 @@ namespace DuelRoguelike.Dev
                 "레시피로 런 시작: 덱·사이드 덱·시작 덱 이름");
             Expect(run.Events[0].Describe(c => c.ToString()).Contains(oddName), "런 로그의 시작 줄에 레시피 이름: " + run.Events[0].Describe(c => c.ToString()));
             save.DeleteRecipe(odd.Id);
-            run.BeginDuel();
+            Begin(run);
             run.FinishDuel(DuelResult.Win, 5000);
             Choose(run);
             var again = GameSave.Parse(save.Write(), _db, _rarities);
-            Expect(again.Run != null && again.Run.StartDeckName == oddName && again.Run.Floor == 2 && again.FindRecipe(odd.Id) == null,
+            Expect(again.Run != null && again.Run.StartDeckName == oddName && again.Run.Floor == run.Floor && again.FindRecipe(odd.Id) == null,
                 "레시피를 지워도 런은 이어지고, 다시 읽어도 시작 덱 이름이 남음");
             Expect(again.Run.Events[0].Describe(c => c.ToString()) == run.Events[0].Describe(c => c.ToString()), "다시 읽은 런 시작 줄");
 
@@ -1089,7 +1464,7 @@ namespace DuelRoguelike.Dev
                 save.StartRun(new RunSetup { Seed = 11, StartDeck = StarterDecks.Joey }, _db, _rarities);
                 GameSaveFile.Save(save, dir);
                 Expect(!File.Exists(GameSaveFile.BackupPath(dir)), "처음 저장에는 .bak이 없음");
-                save.Run.BeginDuel();
+                Begin(save.Run);
                 save.Run.FinishDuel(DuelResult.Win, 7000);
                 GameSaveFile.Save(save, dir);
                 Expect(File.Exists(GameSaveFile.BackupPath(dir)) && !File.Exists(GameSaveFile.FilePath(dir) + ".tmp"), "두 번째 저장: 이전 파일은 .bak, 임시 파일은 남지 않음");

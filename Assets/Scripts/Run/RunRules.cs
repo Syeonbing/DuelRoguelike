@@ -1,5 +1,5 @@
-// 로그라이크 진행 수치 (규칙 결정 문서 2026-11-10: "런 진행", "LP 규칙", "승리 보상", "봉인", "재화").
-// 수치를 바꿀 때는 여기만 고친다. 정하지 않은 값은 임시 기본값이고 주석에 그렇게 적는다.
+// 로그라이크 진행 수치 (규칙 결정 문서 2026-11-10: "탑 구조", "런 진행", "LP 규칙", "승리 보상", "봉인", "재화", "칩교환소").
+// 수치를 바꿀 때는 여기만 고친다. 정하지 않은 값은 임시 기본값이고 주석에 "(임시)"라고 적는다.
 using System;
 using DuelRoguelike.Engine.Data;
 
@@ -14,11 +14,60 @@ namespace DuelRoguelike.Run
         public const int WinLpBonus = 1000;
 
         /// <summary>
-        /// 이 층의 배수(10, 20, 30…)는 보스 층이다. 보스를 이기면 LP를 FullLp로 맞춘다 (보너스 대신, 넘쳤어도 낮춘다).
-        /// 보스 층 듀얼 직전에도 LP를 FullLp로 맞춘다: 9층 휴식(LP를 8000으로 조정)이 탑 구조와 함께 생길 때까지의 임시 규칙.
-        /// 보스 상대 덱과 보스 보상(봉인 해제)은 아직 없다.
+        /// 이 층의 배수(10, 20, 30…)는 보스 층이다 (탑 구조 10층 묶음의 끝, Tower). 보스를 이기면 LP를 FullLp로 맞춘다 (보너스 대신, 넘쳤어도 낮춘다).
+        /// 보스 보상: 보통 승리 보상에 더해 봉인된 카드 1장을 골라 봉인 해제, 봉인된 카드가 없으면 보상 후보를 한 번 더.
+        /// 보스 상대 덱은 아직 따로 없다 (일반 전투 층처럼 무작위).
         /// </summary>
         public const int BossFloorInterval = 10;
+
+        /// <summary>
+        /// 층이 확률로 이벤트 층이 될 확률(%). 칸은 10층 묶음 안의 자리(끝자리) 0~10, 0은 쓰지 않는다.
+        /// 1~3층 10%, 4층 30%, 7~8층 5%. 5층 칩교환소, 6층 이벤트(반드시), 9층 휴식, 10층 보스는 정해져 있다.
+        /// </summary>
+        internal static readonly int[] RandomEventPercent = { 0, 10, 10, 10, 30, 0, 0, 5, 5, 0, 0 };
+
+        // ---------------- 칩 (런 재화) ----------------
+        // 획득량과 가격은 규칙 결정 문서에서 아직 정하지 않았다 ("미정"). 아래 값은 모두 임시 값이다.
+
+        /// <summary>전투 층 듀얼에서 이기면 받는 칩 (임시). 지면 칩을 잃지 않는다.</summary>
+        public const int ChipsPerWin = 20;
+
+        /// <summary>보스를 이기면 받는 칩 (임시, ChipsPerWin 대신).</summary>
+        public const int ChipsPerBossWin = 50;
+
+        /// <summary>칩교환소 상품 가격 (임시). 순서는 ShopProduct와 같다.</summary>
+        static readonly int[] ShopPrices =
+        {
+            30,  // 봉인 대상 교체: 같은 레어도, 새로 봉인할 카드는 무작위
+            50,  // 봉인 대상 교체: 같은 레어도, 새로 봉인할 카드를 직접 고름
+            50,  // 봉인 대상 교체: 레어도 상관없음, 무작위
+            80,  // 봉인 대상 교체: 레어도 상관없음, 직접 고름
+            150, // 봉인 해제 (매우 귀하게)
+        };
+
+        /// <summary>칩교환소에 봉인 해제가 나올 확률(%) (임시, 등장 빈도는 미정). 봉인 대상 교체는 늘 나온다.</summary>
+        public const int UnsealOfferPercent = 50;
+
+        public static int ShopPrice(ShopProduct product) => ShopPrices[(int)product];
+
+        // ---------------- 런 종료 골드 정산 ----------------
+
+        /// <summary>정산의 "런 동안 얻은 칩 ÷ 이 값" 항.</summary>
+        public const int SettlementEarnedChipsDivisor = 100;
+
+        /// <summary>정산의 "종료 때 가진 칩 ÷ 이 값" 항.</summary>
+        public const int SettlementHeldChipsDivisor = 10;
+
+        /// <summary>10층 단위 보너스: 10층을 클리어했으면 +1, 20층 +2, 30층 +3 …을 모두 더한다. floor는 런이 끝난 층.</summary>
+        public static int SettlementFloorBonus(int floor)
+        {
+            int cleared = Math.Max(0, floor - 1) / BossFloorInterval;
+            return cleared * (cleared + 1) / 2;
+        }
+
+        /// <summary>런 종료 골드 = 도달 층 + 10층 단위 보너스 + (얻은 칩 ÷ 100) + (가진 칩 ÷ 10). 나머지는 버린다.</summary>
+        public static int SettlementGold(int floor, int chipsEarned, int chipsHeld) =>
+            floor + SettlementFloorBonus(floor) + chipsEarned / SettlementEarnedChipsDivisor + chipsHeld / SettlementHeldChipsDivisor;
 
         /// <summary>봉인 장수 = 연패 횟수 + 층 ÷ 이 값 (버림).</summary>
         public const int SealFloorStep = 10;
