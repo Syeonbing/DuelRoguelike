@@ -2,7 +2,8 @@
     "name": "DuelRoguelike.PlayModeTests",
     "rootNamespace": "DuelRoguelike.Tests",
     "references": [
-        "UnityEngine.TestRunner"
+        "UnityEngine.TestRunner",
+        "Unity.InputSystem"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
