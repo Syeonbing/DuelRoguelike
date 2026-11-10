@@ -188,7 +188,7 @@ namespace DuelRoguelike.UI
                 level.Add(number);
                 art.Add(level);
             }
-            if (_rarities != null && _rarities.TryGet(code, out var rarity) && rarity != Rarity.N)
+            if (_rarities != null && _rarities.TryGet(code, out var rarity))
             {
                 var chip = Chip(rarity.ToString(), 13, RarityColor(rarity));
                 chip.style.right = 3;
