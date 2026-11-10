@@ -165,6 +165,86 @@ namespace DuelRoguelike.UI
                 AutoPlayStep();
             else
                 AdvancePlayback();
+            UpdateStatusBadge();
+        }
+
+        // ================= 모서리 상태 표시 =================
+
+        Label _statusBadge;
+        bool _spaceHeld;
+        string _badgeText;
+        float _badgeUntil;
+        const float BadgeLingerSeconds = 0.6f;
+
+        /// <summary>선택 창(예·아니오, 카드 고르기)을 닫고 필드를 보는 중인지.</summary>
+        bool InFieldView => !_autoPlay && _interaction != null && !_modalOpen
+            && (_interaction.Dialog != null || (_interaction.Selection != null && _interaction.Selection.NeedsWindow && _windowHidden));
+
+        /// <summary>
+        /// 필드 오른쪽 위 모서리에 지금 상태를 띄운다: 건너뛰는 중(엔터·필드 누르기) / 가속 중(스페이스) / 필드 확인 중(선택 창을 닫고 필드를 볼 때).
+        /// 건너뛰기는 한두 프레임에 끝날 수도 있어서 잠깐 더 남겨 둔다.
+        /// </summary>
+        void UpdateStatusBadge()
+        {
+            if (_statusBadge == null)
+                return;
+            bool playing = _session != null && !_autoPlay && !_stalled && (_focus != null || _session.CanStep);
+            string text = null;
+            Color color = UiStyle.Accent;
+            if (playing && _skipping)
+                text = SkipText;
+            else if (playing && _spaceHeld)
+                text = "가속 중 · 스페이스";
+            else if (_session != null && InFieldView)
+            {
+                text = "필드 확인 중 · Esc로 선택 창 다시 열기";
+                color = Selectable;
+            }
+
+            float now = Time.realtimeSinceStartup;
+            if (text != null)
+                _badgeUntil = now + BadgeLingerSeconds;
+            else if (now < _badgeUntil && _badgeText != null && !_badgeText.StartsWith("필드"))
+                return; // 건너뛰기·가속 표시는 잠깐 남긴다
+            SetBadge(text, color);
+        }
+
+        const string SkipText = "건너뛰는 중 · 다음 입력까지";
+
+        /// <summary>다음 입력까지 남은 연출을 건너뛴다 (엔터·필드 누르기·건너뛰기 버튼). 한 프레임에 끝나도 표시가 보이게 바로 띄운다.</summary>
+        void BeginSkip()
+        {
+            _skipping = true;
+            _badgeUntil = Time.realtimeSinceStartup + BadgeLingerSeconds;
+            SetBadge(SkipText, UiStyle.Accent);
+        }
+
+        void SetBadge(string text, Color color)
+        {
+            if (_statusBadge == null)
+                return;
+            if (text != null)
+                _statusBadge.style.backgroundColor = color;
+            if (text == _badgeText)
+                return;
+            _badgeText = text;
+            _statusBadge.text = text ?? "";
+            _statusBadge.style.display = text == null ? DisplayStyle.None : DisplayStyle.Flex;
+        }
+
+        Label BuildStatusBadge()
+        {
+            var badge = UiStyle.Label("", 15, UiStyle.Background, bold: true);
+            badge.name = "status-badge";
+            badge.pickingMode = PickingMode.Ignore;
+            badge.style.position = Position.Absolute;
+            badge.style.top = 8;
+            badge.style.right = 8;
+            badge.style.paddingLeft = badge.style.paddingRight = 10;
+            badge.style.paddingTop = badge.style.paddingBottom = 4;
+            UiStyle.Radius(badge, 5);
+            badge.style.display = DisplayStyle.None;
+            return badge;
         }
 
         /// <summary>
@@ -173,22 +253,35 @@ namespace DuelRoguelike.UI
         /// </summary>
         void HandleKeys()
         {
+            _spaceHeld = false;
 #if ENABLE_INPUT_SYSTEM // 유니티 밖(헤드리스 컴파일)에는 Input System이 없다
             var keyboard = UnityEngine.InputSystem.Keyboard.current;
             if (keyboard == null || _session == null || _docRoot == null || _docRoot.style.display == DisplayStyle.None)
                 return;
-            if (keyboard.spaceKey.isPressed && _focus != null)
+            _spaceHeld = keyboard.spaceKey.isPressed;
+            if (_spaceHeld && _focus != null)
                 _holdUntil = 0;
             if ((keyboard.enterKey.wasPressedThisFrame || keyboard.numpadEnterKey.wasPressedThisFrame) && !_autoPlay
                 && (_focus != null || _session.CanStep))
-                _skipping = true;
+                BeginSkip();
             if (keyboard.escapeKey.wasPressedThisFrame)
             {
-                CloseMenu();
-                if (_modalOpen)
+                // 메뉴가 있으면 메뉴만, 창이 있으면 창을 닫고(필드 확인), 필드 확인 중이면 선택 창을 다시 연다.
+                if (_menuLayer != null && _menuLayer.style.display == DisplayStyle.Flex)
+                    CloseMenu();
+                else if (_modalOpen)
                 {
                     _windowHidden = true;
                     CloseModal();
+                    Render();
+                }
+                else if (InFieldView)
+                {
+                    _windowHidden = false;
+                    if (_interaction.Dialog != null)
+                        OpenDialog(_interaction.Dialog);
+                    else
+                        OpenSelectionWindow();
                     Render();
                 }
             }
@@ -467,7 +560,7 @@ namespace DuelRoguelike.UI
             if (_autoPlay || _session == null || (evt.target as VisualElement)?.name == "playback-speed")
                 return;
             if (_focus != null || _session.CanStep)
-                _skipping = true;
+                BeginSkip();
         }
 
         /// <summary>이 메시지에서 멈출지와 무엇을 강조할지. 멈추지 않으면 null.</summary>
@@ -776,7 +869,7 @@ namespace DuelRoguelike.UI
                 _promptLabel.style.color = _focus == null ? UiStyle.Accent : _focus.Actor == Opp ? OpponentLine : UiStyle.Text;
                 _promptDetail.text = _stalled ? "" : "필드를 누르면 다음 입력까지 건너뛴다";
                 if (!_stalled && (_focus != null || _session.CanStep))
-                    AddStripButton("건너뛰기", () => _skipping = true, false).name = "skip-playback";
+                    AddStripButton("건너뛰기", BeginSkip, false).name = "skip-playback";
                 AddSpeedButton();
                 return;
             }
@@ -1078,6 +1171,7 @@ namespace DuelRoguelike.UI
             row.style.justifyContent = Justify.FlexEnd;
             row.style.marginTop = 10;
             var view = UiStyle.Button("필드 보기", () => { CloseModal(); Render(); }, 14);
+            view.name = "field-view";
             view.style.color = UiStyle.TextDim;
             row.Add(view);
             panel.Add(row);
@@ -1125,6 +1219,7 @@ namespace DuelRoguelike.UI
                 row.Add(button);
             }
             var view = UiStyle.Button("필드 보기", () => { _windowHidden = true; CloseModal(); Render(); }, 14);
+            view.name = "field-view";
             view.style.marginLeft = 6;
             view.style.color = UiStyle.TextDim;
             row.Add(view);

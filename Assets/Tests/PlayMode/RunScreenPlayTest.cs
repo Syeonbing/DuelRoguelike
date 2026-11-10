@@ -56,6 +56,8 @@ namespace DuelRoguelike.Tests
         int _playbackTries;
         bool _playbackDone;
         bool _previewSeen;
+        bool _fieldViewSeen;
+        bool _skipSeen;
         const int MaxPlaybackTries = 3;
 
         string SaveFile => Path.Combine(_saveDir, "save.txt");
@@ -576,7 +578,7 @@ namespace DuelRoguelike.Tests
             int steps = 0;
             bool attack = false, battle = false;
             string last = null;
-            while (!(battle && _previewSeen) && Time.realtimeSinceStartup < until && Find<Button>(DuelUi, "leave-duel") == null)
+            while (!(battle && _previewSeen && _skipSeen) && Time.realtimeSinceStartup < until && Find<Button>(DuelUi, "leave-duel") == null)
             {
                 // 내가 공격 대상을 고를 때: 후보 몬스터 위의 예상 결과
                 var note = Root(DuelUi)?.Query<Label>("attack-preview").Where(l => l.style.display.value == DisplayStyle.Flex && !string.IsNullOrEmpty(l.text)).First();
@@ -607,12 +609,33 @@ namespace DuelRoguelike.Tests
                         }
                     }
                 }
+                // 선택 창의 "필드 보기" → 모서리에 "필드 확인 중" (선택 창이 뜰 때만)
+                var fieldView = Find<Button>(DuelUi, "field-view");
+                if (!_fieldViewSeen && fieldView != null)
+                {
+                    Click(fieldView);
+                    yield return null;
+                    string badge = Find<Label>(DuelUi, "status-badge")?.text ?? "";
+                    StringAssert.StartsWith("필드 확인 중", badge, "필드 보기를 눌렀는데 모서리 표시가 다르다");
+                    _fieldViewSeen = true;
+                    yield return Shot(DuelUi, "2h-field-view");
+                }
+                // 상대 공격을 본 뒤: 건너뛰기 → 모서리에 "건너뛰는 중"
+                var skip = Find<Button>(DuelUi, "skip-playback");
+                if (battle && !_skipSeen && skip != null)
+                {
+                    Click(skip);
+                    string badge = Find<Label>(DuelUi, "status-badge")?.text ?? "";
+                    StringAssert.StartsWith("건너뛰는 중", badge, "건너뛰기를 눌렀는데 모서리 표시가 다르다");
+                    _skipSeen = true;
+                    yield return Shot(DuelUi, "2i-skip");
+                }
                 var once = Find<Button>(DuelUi, "auto-once");
                 if (once != null)
                     Click(once);
                 yield return null;
             }
-            _playbackDone = battle && _previewSeen;
+            _playbackDone = battle && _previewSeen && _skipSeen;
             Assert.Greater(steps, 0, "자동(한 번)으로 답했는데 멈춰 보여 주는 단계가 없다");
             Debug.Log($"[런 화면 시험] 한 단계씩 보여 주기 ({_playbackTries}번째): 멈춘 단계 {steps}개, 상대 공격 {(attack ? "봄" : "못 봄")}, 그 뒤 데미지 계산 {(battle ? "봄" : "못 봄")}");
         }

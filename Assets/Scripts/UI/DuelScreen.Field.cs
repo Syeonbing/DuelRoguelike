@@ -201,6 +201,7 @@ namespace DuelRoguelike.UI
             // ---- 가운데: 필드 ----
             var center = UiStyle.Box("field");
             center.RegisterCallback<PointerDownEvent>(OnFieldPointerDown, TrickleDown.TrickleDown);
+            _statusBadge = BuildStatusBadge();
             center.style.flexGrow = 1;
             center.style.flexShrink = 0;
             center.style.minWidth = HalfWidth;
@@ -211,6 +212,7 @@ namespace DuelRoguelike.UI
             center.Add(CenterStrip());
             center.Add(FieldHalf(Me));
             center.Add(_handRows[Me] = HandRow(Me));
+            center.Add(_statusBadge); // 다른 것 위에 겹쳐 그린다 (오른쪽 위 모서리)
             _root.Add(center);
 
             // ---- 오른쪽: 로그 ----
