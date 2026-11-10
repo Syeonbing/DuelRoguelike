@@ -12,7 +12,8 @@
 // 층 사이 화면의 교환(사이드 덱 → 덱, 덱 → 사이드 덱)도 버튼·두 번 누르기·끌어다 놓기로 한 번씩 해 본다 (포인터 이벤트를 직접 보낸다).
 // 런 로그 창 열고 닫기, 덱 편집 화면의 거르기, 꽉 찬 시작 사이드 덱(3장)에 더 넣을 때의 알림도 본다.
 // 승리 보상 창은 자리 3개를 확인하고, 누르고 받기·두 번 누르기를 번갈아 하며, 빈 자리(골드)가 나오면 한 번 골드를 고른다.
-// 보충 고르기를 한 번 이상 거칠 때까지 런을 더 한다.
+// 보충 고르기를 한 번 이상 거칠 때까지 런을 더 한다. 비전투 층(칩교환소·휴식·이벤트)은 다음 층으로 지나가고, 보스 보상 창은 첫 카드를 고른다.
+// 탑·칩교환소 시험(TowerAndChipExchange): 저장 파일을 고쳐 5층 칩교환소로 가서 교체·봉인 해제를 사고, 이벤트 창, 휴식 → 보스, 보스 보상 창을 본다.
 // 듀얼 화면은 한 번, 6턴쯤에 자동 진행을 멈추고 카드에 마우스 올리기(왼쪽 카드 정보)와 묘지 누르기(카드 목록 창)를 해 본다.
 // 오류 로그(Debug.LogError·LogException)가 하나라도 나오면 실패한다.
 // 환경 변수 DUELROGUELIKE_SCREENSHOT_DIR에 폴더를 주면 화면마다 처음 한 번 1920×1080 PNG로 저장한다 (화면 모양 확인용).
@@ -56,6 +57,8 @@ namespace DuelRoguelike.Tests
         bool _goldChosen;
         int _duels;
         bool _exchanged;
+        int _floorsPassed;
+        int _unseals;
         bool _duelViewChecked;
         int _playbackTries;
         bool _playbackDone;
@@ -202,7 +205,7 @@ namespace DuelRoguelike.Tests
             Assert.IsTrue(startSide.worldBound.yMin >= startScroll.worldBound.yMax - 1, "시작 사이드 덱이 스크롤 아래에 고정돼 있지 않다");
             Click(Find<Button>(RunUi, "start-run"));
             yield return null;
-            Assert.IsNull(Find<Button>(RunUi, "next-duel"), "컬렉션보다 많은 레시피로 런이 시작됐다");
+            Assert.IsFalse(IsHub(), "컬렉션보다 많은 레시피로 런이 시작됐다");
             StringAssert.Contains("런을 시작할 수 없습니다", Find<Label>(RunUi, "start-error").text, "런 시작을 막은 까닭 알림이 없다");
             yield return Shot(RunUi, "1b-start-blocked");
             Debug.Log($"[런 화면 시험] 컬렉션 초과 레시피: {Find<Label>(RunUi, "start-error").text}");
@@ -271,7 +274,7 @@ namespace DuelRoguelike.Tests
             yield return Shot(RunUi, "1-start");
 
             Click(Find<Button>(RunUi, "start-run"));
-            yield return WaitFor(() => Find<Button>(RunUi, "next-duel") != null, 10, "층 사이 화면");
+            yield return WaitFor(IsHub, 10, "층 사이 화면");
             foreach (string code in picked)
                 Assert.IsNotNull(Find<VisualElement>(RunUi, "card-side-" + code), $"시작 사이드 덱 카드 {code}가 층 사이 화면 사이드 덱에 없다");
             Assert.IsTrue(File.Exists(SaveFile), "런을 시작했는데 저장 파일이 없다");
@@ -306,7 +309,7 @@ namespace DuelRoguelike.Tests
             for (int target = _duels + 2; _duels < target && Find<Button>(RunUi, "new-run") == null;)
                 yield return Step(1);
             yield return Settle(1);
-            Assert.IsNotNull(Find<Button>(RunUi, "next-duel"), "듀얼 2판 뒤에 층 사이 화면이 아니다 (런이 벌써 끝남?)");
+            Assert.IsTrue(IsHub(), "듀얼 2판 뒤에 층 사이 화면이 아니다 (런이 벌써 끝남?)");
 
             // ---- 처음 화면으로 → 이어하기 ----
             string hub = HubText();
@@ -328,6 +331,7 @@ namespace DuelRoguelike.Tests
             Assert.AreEqual(saved, File.ReadAllText(SaveFile), "읽기·이어하기만 했는데 저장 파일이 바뀌었다");
 
             // ---- 듀얼 도중에 끄기 → 그 듀얼은 패배 ----
+            yield return ToBattleFloor(1);
             int played = DuelsPlayed();
             Click(Find<Button>(RunUi, "next-duel"));
             yield return WaitFor(() => Find<Button>(DuelUi, "auto-to-end") != null || Find<Button>(DuelUi, "leave-duel") != null, LoadTimeout, "듀얼 화면");
@@ -368,7 +372,7 @@ namespace DuelRoguelike.Tests
             // ---- 진행 중인 런이 있을 때 새 런: 취소, 그리고 포기 ----
             SetSeed(2);
             Click(Find<Button>(RunUi, "start-run"));
-            yield return WaitFor(() => Find<Button>(RunUi, "next-duel") != null, 10, "층 사이 화면");
+            yield return WaitFor(IsHub, 10, "층 사이 화면");
             yield return Step(2);
             Click(Find<Button>(RunUi, "to-title"));
             yield return null;
@@ -376,7 +380,7 @@ namespace DuelRoguelike.Tests
             Click(Find<Button>(RunUi, "start-run"));
             yield return null;
             Assert.IsNotNull(Find<Button>(RunUi, "start-cancel"), "진행 중인 런이 있는데 포기 확인 없이 지나갔다");
-            Assert.IsNull(Find<Button>(RunUi, "next-duel"), "한 번 눌렀는데 새 런이 시작됐다");
+            Assert.IsFalse(IsHub(), "한 번 눌렀는데 새 런이 시작됐다");
             yield return Shot(RunUi, "8-abandon-confirm");
             Click(Find<Button>(RunUi, "start-cancel"));
             yield return null;
@@ -385,7 +389,7 @@ namespace DuelRoguelike.Tests
             Click(Find<Button>(RunUi, "start-run"));
             yield return null;
             Click(Find<Button>(RunUi, "start-run"));
-            yield return WaitFor(() => Find<Button>(RunUi, "next-duel") != null, 10, "포기 뒤 새 런의 층 사이 화면");
+            yield return WaitFor(IsHub, 10, "포기 뒤 새 런의 층 사이 화면");
             StringAssert.Contains("끝낸 듀얼 0", Find<Label>(RunUi, "run-summary").text, "포기 뒤 새 런이 처음부터가 아니다");
             Assert.IsFalse(File.ReadAllText(SaveFile).Contains("seed 2\n"), "포기한 런(시드 2)이 저장 파일에 남아 있다");
             Debug.Log("[런 화면 시험] 포기: 확인·취소·포기 뒤 새 런");
@@ -398,14 +402,169 @@ namespace DuelRoguelike.Tests
                 yield return WaitFor(() => Find<Button>(RunUi, "start-run") != null, 10, "새 런의 런 시작 화면");
                 SetSeed(seed);
                 Click(Find<Button>(RunUi, "start-run"));
-                yield return WaitFor(() => Find<Button>(RunUi, "next-duel") != null, 10, "층 사이 화면");
+                yield return WaitFor(IsHub, 10, "층 사이 화면");
                 yield return PlayToEnd(seed);
             }
 
-            Debug.Log($"[런 화면 시험] 듀얼 {_duels}판, 보상 {_rewards}번 (빈 자리 골드 {(_goldChosen ? "고름" : "나오지 않음")}), 보충 {_refills}번, 교환 {(_exchanged ? "함" : "못 함")}");
+            Debug.Log($"[런 화면 시험] 듀얼 {_duels}판, 보상 {_rewards}번 (빈 자리 골드 {(_goldChosen ? "고름" : "나오지 않음")}), 보충 {_refills}번, 보스 보상 봉인 해제 {_unseals}번, 비전투 층 {_floorsPassed}개, 교환 {(_exchanged ? "함" : "못 함")}");
             Assert.Greater(_rewards, 0, "승리 보상을 한 번도 고르지 않았다");
             Assert.Greater(_refills, 0, "보충 고르기를 한 번도 거치지 않았다");
             Assert.IsTrue(_exchanged, "사이드 덱 카드를 한 번도 교환하지 못했다");
+        }
+
+        /// <summary>
+        /// 탑·칩교환소·이벤트·휴식·보스 보상 화면. 런을 시작한 뒤 저장 파일을 고쳐 5층 칩교환소(칩 400, 메인 덱 카드 3장 봉인)로 만들고,
+        /// 교체(같은 레어도·무작위), 교체(레어도 상관없음·직접 고름), 봉인 해제를 산 뒤, 6층 이벤트, 9층 휴식 → 10층 보스,
+        /// 보스 보상 봉인 해제 창(저장 파일을 고쳐 보스를 이긴 상태로)을 거친다.
+        /// </summary>
+        [UnityTest, Timeout(600000)]
+        public IEnumerator TowerAndChipExchange()
+        {
+            yield return LoadRunScene();
+            Click(Find<Button>(RunUi, "recipe-Yugi"));
+            yield return null;
+            SetSeed(7);
+            Click(Find<Button>(RunUi, "start-run"));
+            yield return WaitFor(IsHub, 10, "층 사이 화면");
+            Assert.IsNotNull(Find<VisualElement>(RunUi, "tower-floor-1"), "층 사이 화면의 탑에 1층이 없다");
+            Assert.IsNotNull(Find<VisualElement>(RunUi, "tower-floor-10"), "층 사이 화면의 탑에 10층이 없다");
+            StringAssert.Contains("칩 0", Find<Label>(RunUi, "run-summary").text, "런 요약 줄에 칩이 없다");
+
+            yield return EditSave(text =>
+            {
+                text = SetLine(text, "floor", "5");
+                text = SetLine(text, "floor-kind", "ChipExchange");
+                text = SetLine(text, "chips", "400 400\nshop SwapSameRarity:30:0 SwapSameRarityChosen:50:0 SwapAny:50:0 SwapAnyChosen:80:0 Unseal:150:0");
+                text = Regex.Replace(text, @"\nfloor-event [^\n]*", "");
+                var main = Regex.Match(text, @"\nmain ([^\n]*)\n").Groups[1].Value.Split(' ');
+                text = SetLine(text, "main", string.Join(" ", main.Skip(3)));
+                return SetLine(text, "sealed-main", string.Join(" ", main.Take(3)));
+            });
+            Assert.AreEqual("5층 · 칩교환소", Find<Label>(RunUi, "floor-label")?.text, "5층 칩교환소가 아니다");
+            Assert.IsNull(Find<Button>(RunUi, "next-duel"), "칩교환소에 다음 듀얼 버튼이 있다");
+            Assert.IsNotNull(Find<Button>(RunUi, "leave-floor"), "칩교환소에 다음 층으로 버튼이 없다");
+            StringAssert.Contains("봉인 3장", HubText(), "봉인 3장이 보이지 않는다");
+            StringAssert.Contains("칩 400", Find<Label>(RunUi, "tower-chips")?.text ?? "", "탑 아래에 칩이 없다");
+            yield return Shot(RunUi, "11-tower");
+
+            Click(Find<Button>(RunUi, "open-shop"));
+            yield return null;
+            Assert.IsNotNull(Find<VisualElement>(RunUi, "chip-exchange"), "칩교환소 창이 열리지 않았다");
+            Assert.AreEqual("보유 칩 400", Find<Label>(RunUi, "shop-chips")?.text, "칩교환소의 보유 칩");
+            Assert.IsNotNull(Find<VisualElement>(RunUi, "shop-item-card"), "칩교환소에 아이템 카드 자리가 없다");
+            foreach (string product in new[] { "SwapSameRarity", "SwapSameRarityChosen", "SwapAny", "SwapAnyChosen", "Unseal" })
+                Assert.IsTrue(Find<Button>(RunUi, "shop-buy-" + product)?.enabledSelf == true, $"칩 400인데 {product}를 살 수 없다");
+            yield return Shot(RunUi, "12-shop");
+
+            yield return BuyInShop("SwapSameRarity", chooseSeal: false);
+            Assert.AreEqual("보유 칩 370", Find<Label>(RunUi, "shop-chips")?.text, "같은 레어도 교체(30) 뒤 칩");
+            var sold = Find<Button>(RunUi, "shop-buy-SwapSameRarity");
+            Assert.IsTrue(sold != null && !sold.enabledSelf && sold.text == "샀음", "산 상품을 또 살 수 있다");
+            StringAssert.Contains("봉인 3장", HubText(), "교체 뒤 봉인 장수가 바뀌었다");
+            yield return BuyInShop("SwapAnyChosen", chooseSeal: true);
+            Assert.AreEqual("보유 칩 290", Find<Label>(RunUi, "shop-chips")?.text, "직접 고르는 완전 교체(80) 뒤 칩");
+            yield return BuyInShop("Unseal", chooseSeal: false);
+            Assert.AreEqual("보유 칩 140", Find<Label>(RunUi, "shop-chips")?.text, "봉인 해제(150) 뒤 칩");
+            StringAssert.Contains("봉인 2장", HubText(), "봉인 해제 뒤 봉인 장수");
+            string saved = File.ReadAllText(SaveFile).Replace("\r\n", "\n");
+            StringAssert.Contains("SwapSameRarity:30:1", saved, "산 상품이 저장되지 않았다");
+            StringAssert.Contains("\nchips 140 400\n", saved, "칩이 저장되지 않았다");
+            Click(Find<Button>(RunUi, "shop-close"));
+            yield return null;
+            Assert.IsNull(Find<VisualElement>(RunUi, "chip-exchange"), "칩교환소 창이 닫히지 않았다");
+
+            // 6층 이벤트: 들어가면 창이 한 번 뜬다. 닫고 다시 열 수 있다.
+            Click(Find<Button>(RunUi, "leave-floor"));
+            yield return null;
+            Assert.AreEqual("6층 · 이벤트", Find<Label>(RunUi, "floor-label")?.text, "칩교환소 다음이 6층 이벤트가 아니다");
+            Assert.IsNotNull(Find<VisualElement>(RunUi, "tower-event"), "이벤트 층에 들어갔는데 이벤트 창이 뜨지 않았다");
+            Assert.AreEqual("고요한 층", Find<Label>(RunUi, "event-title")?.text, "이벤트 제목");
+            yield return Shot(RunUi, "14-event");
+            Click(Find<Button>(RunUi, "event-close"));
+            yield return null;
+            Assert.IsNull(Find<VisualElement>(RunUi, "tower-event"), "이벤트 창이 닫히지 않았다");
+            Click(Find<Button>(RunUi, "open-event"));
+            yield return null;
+            Click(Find<Button>(RunUi, "event-choice-0"));
+            yield return null;
+            StringAssert.StartsWith("7층", Find<Label>(RunUi, "floor-label")?.text ?? "", "이벤트 선택지를 고른 뒤 7층이 아니다");
+            StringAssert.Contains("event-id=quiet-floor", File.ReadAllText(SaveFile), "이벤트 결과가 저장되지 않았다");
+
+            // 9층 휴식 → 10층 보스
+            yield return EditSave(text =>
+            {
+                text = Regex.Replace(SetLine(text, "floor", "9"), @"\nfloor-event [^\n]*", "");
+                return SetLine(text, "floor-kind", "Rest");
+            });
+            Assert.AreEqual("9층 · 휴식", Find<Label>(RunUi, "floor-label")?.text, "9층 휴식이 아니다");
+            StringAssert.Contains("휴식", Find<Label>(RunUi, "floor-note")?.text ?? "", "휴식 층 안내가 없다");
+            yield return Shot(RunUi, "15-rest");
+            Click(Find<Button>(RunUi, "leave-floor"));
+            yield return null;
+            Assert.AreEqual("10층 · 보스", Find<Label>(RunUi, "floor-label")?.text, "휴식 다음이 10층 보스가 아니다");
+            Assert.AreEqual("보스 듀얼 시작", Find<Button>(RunUi, "next-duel")?.text, "보스 층의 듀얼 시작 버튼");
+            var bossFloor = Find<VisualElement>(RunUi, "tower-floor-10");
+            Assert.IsTrue(bossFloor != null && bossFloor.Query<Label>().ToList().Any(l => l.text == "지금"), "탑에 지금 층(10층) 표시가 없다");
+            yield return Shot(RunUi, "15b-boss");
+
+            // 보스를 이기고 봉인된 카드가 있으면: 보스 보상 봉인 해제 창
+            yield return EditSave(text => SetLine(text, "phase", "ChoosingUnseal"));
+            Assert.IsNotNull(Find<VisualElement>(RunUi, "unseal"), "보스 보상(봉인 해제) 창이 뜨지 않았다");
+            Assert.IsFalse(Find<Button>(RunUi, "next-duel").enabledSelf, "보스 보상을 고르기 전인데 듀얼 시작 버튼이 켜져 있다");
+            yield return ChooseUnseal();
+            StringAssert.StartsWith("11층", Find<Label>(RunUi, "floor-label")?.text ?? "", "보스 보상 뒤 11층이 아니다");
+            StringAssert.Contains("봉인 1장", HubText(), "보스 보상 봉인 해제 뒤 봉인 장수");
+            Assert.IsNotNull(Find<VisualElement>(RunUi, "tower-floor-20"), "11층인데 탑이 11~20층 묶음이 아니다");
+            Debug.Log("[런 화면 시험] 탑·칩교환소: 교체 2가지와 봉인 해제 구매, 이벤트 창, 휴식 → 보스, 보스 보상 봉인 해제");
+        }
+
+        /// <summary>칩교환소에서 상품 하나를 산다: 사기 → 풀 카드 → (직접 고르는 교체면 대신 봉인할 카드) → 사기. 산 뒤 칩교환소 창으로 돌아온다.</summary>
+        IEnumerator BuyInShop(string product, bool chooseSeal)
+        {
+            int sideBefore = Named("card-side-").Count;
+            Click(Find<Button>(RunUi, "shop-buy-" + product));
+            yield return null;
+            Assert.IsNotNull(Find<VisualElement>(RunUi, "shop-pick"), $"{product}: 카드를 고르는 창이 열리지 않았다");
+            var release = Named("card-shoprelease-");
+            Assert.Greater(release.Count, 0, $"{product}: 풀 카드 후보가 없다");
+            Click(release[0]);
+            yield return null;
+            yield return Shot(RunUi, "13-shop-pick");
+            Click(Find<Button>(RunUi, "shop-confirm"));
+            yield return null;
+            if (chooseSeal)
+            {
+                var seal = Named("card-shopseal-");
+                Assert.Greater(seal.Count, 0, $"{product}: 대신 봉인할 카드 후보가 없다");
+                Click(seal[seal.Count - 1]);
+                yield return null;
+                yield return Shot(RunUi, "13b-shop-pick-seal");
+                Click(Find<Button>(RunUi, "shop-confirm"));
+                yield return null;
+            }
+            Assert.IsNotNull(Find<VisualElement>(RunUi, "chip-exchange"), $"{product}: 산 뒤 칩교환소 창으로 돌아오지 않았다");
+            StringAssert.StartsWith("칩교환소:", Find<Label>(RunUi, "move-notice")?.text ?? "", $"{product}: 산 뒤 알림");
+            Assert.AreEqual(sideBefore + 1, Named("card-side-").Count, $"{product}: 풀린 카드가 사이드 덱에 더해지지 않았다");
+        }
+
+        /// <summary>처음 화면으로 가서 저장 파일을 고치고, 씬을 다시 불러 이어하기.</summary>
+        IEnumerator EditSave(Func<string, string> edit)
+        {
+            Click(Find<Button>(RunUi, "to-title"));
+            yield return null;
+            File.WriteAllText(SaveFile, edit(File.ReadAllText(SaveFile).Replace("\r\n", "\n")));
+            yield return LoadRunScene();
+            Click(Find<Button>(RunUi, "continue-run"));
+            yield return null;
+            Assert.IsTrue(IsHub(), "고친 저장 파일로 이어하기를 했는데 층 사이 화면이 아니다");
+        }
+
+        /// <summary>저장 파일의 "key 값…" 줄을 바꾼다 (값이 없는 줄도). 그 줄이 없으면 실패.</summary>
+        static string SetLine(string text, string key, string value)
+        {
+            var pattern = new Regex($@"\n{Regex.Escape(key)}( [^\n]*)?\n");
+            Assert.IsTrue(pattern.IsMatch(text), $"저장 파일에 {key} 줄이 없다");
+            return pattern.Replace(text, _ => $"\n{key} {value}\n", 1);
         }
 
         IEnumerator LoadRunScene()
@@ -507,26 +666,82 @@ namespace DuelRoguelike.Tests
             while (Find<Button>(RunUi, "new-run") == null)
             {
                 Assert.Less(duels, MaxDuelsPerRun, $"시드 {seed}: 듀얼 {MaxDuelsPerRun}판 안에 런이 끝나지 않았다");
-                if (Find<VisualElement>(RunUi, "refill") == null && Find<VisualElement>(RunUi, "reward") == null)
+                if (NoModal() && Find<Button>(RunUi, "next-duel") != null)
                     duels++;
                 yield return Step(seed);
             }
-            Debug.Log($"[런 화면 시험] 시드 {seed}: 런 종료, 보상 누적 {_rewards}번, 보충 누적 {_refills}번");
+            Debug.Log($"[런 화면 시험] 시드 {seed}: 런 종료, 보상 누적 {_rewards}번, 보충 누적 {_refills}번, 지나간 비전투 층 {_floorsPassed}개");
+            StringAssert.Contains("골드 정산", Find<Label>(RunUi, "run-settlement")?.text ?? "", "런 종료 화면에 골드 정산이 없다");
             yield return Shot(RunUi, "6-end");
         }
 
-        /// <summary>승리 보상 창·보충 창이 떠 있으면 처리해 층 사이 화면(또는 런 종료)으로 만든다.</summary>
+        /// <summary>승리 보상 창·보충 창·보스 보상 창이 떠 있으면 처리해 층 사이 화면(또는 런 종료)으로 만든다.</summary>
         IEnumerator Settle(int seed)
         {
-            for (int i = 0; i < 10 && (Find<VisualElement>(RunUi, "reward") != null || Find<VisualElement>(RunUi, "refill") != null); i++)
+            for (int i = 0; i < 10 && (Find<VisualElement>(RunUi, "reward") != null || Find<VisualElement>(RunUi, "refill") != null
+                                       || Find<VisualElement>(RunUi, "unseal") != null); i++)
                 yield return Step(seed);
             Assert.IsNull(Find<VisualElement>(RunUi, "reward"), "승리 보상 창이 닫히지 않는다");
             Assert.IsNull(Find<VisualElement>(RunUi, "refill"), "보충 창이 닫히지 않는다");
+            Assert.IsNull(Find<VisualElement>(RunUi, "unseal"), "보스 보상 창이 닫히지 않는다");
         }
 
-        /// <summary>승리 보상 창이 떠 있으면 하나 고르고, 보충 창이 떠 있으면 한 장 넣고, 아니면 듀얼 하나를 끝까지 한다.</summary>
+        /// <summary>층 사이 화면이 보이는지 (전투 층이 아니면 다음 듀얼 버튼이 없어서 상태 줄로 본다).</summary>
+        static bool IsHub() => Find<VisualElement>(RunUi, "run-status") != null;
+
+        /// <summary>층 사이 화면 위에 창(보상·보충·보스 보상·칩교환소·이벤트)이 떠 있지 않은지.</summary>
+        static bool NoModal() =>
+            new[] { "reward", "refill", "unseal", "chip-exchange", "shop-pick", "tower-event", "run-log" }.All(n => Find<VisualElement>(RunUi, n) == null);
+
+        /// <summary>전투 층(다음 듀얼 버튼이 있는 층)이 될 때까지 Step으로 창을 처리하고 비전투 층을 지나간다 (듀얼은 하지 않는다).</summary>
+        IEnumerator ToBattleFloor(int seed)
+        {
+            for (int i = 0; i < 20 && !(NoModal() && Find<Button>(RunUi, "next-duel") != null); i++)
+                yield return Step(seed);
+            Assert.IsNotNull(Find<Button>(RunUi, "next-duel"), "전투 층에 닿지 않았다");
+        }
+
+        /// <summary>보스 보상 창: 봉인된 카드 하나를 누르고 봉인 풀기.</summary>
+        IEnumerator ChooseUnseal()
+        {
+            var cards = Named("card-unseal-");
+            Assert.Greater(cards.Count, 0, "보스 보상 창에 봉인된 카드가 없다");
+            var next = Find<Button>(RunUi, "next-duel");
+            Assert.IsTrue(next == null || !next.enabledSelf, "보스 보상을 고르기 전인데 듀얼 시작 버튼이 켜져 있다");
+            Click(cards[0]);
+            yield return null;
+            yield return Shot(RunUi, "16-unseal");
+            Click(Find<Button>(RunUi, "unseal-confirm"));
+            yield return null;
+            Assert.IsNull(Find<VisualElement>(RunUi, "unseal"), "봉인 해제를 골랐는데 보스 보상 창이 닫히지 않았다");
+            StringAssert.StartsWith("보스 보상", Find<Label>(RunUi, "move-notice")?.text ?? "", "봉인 해제 뒤 알림");
+            _unseals++;
+        }
+
+        /// <summary>
+        /// 승리 보상 창이 떠 있으면 하나 고르고, 보충 창이 떠 있으면 한 장 넣고, 보스 보상 창이면 봉인을 풀고, 이벤트 창이면 첫 선택지,
+        /// 칩교환소 창이면 닫는다. 비전투 층(칩교환소·휴식·이벤트)이면 다음 층으로 가고, 전투 층이면 듀얼 하나를 끝까지 한다.
+        /// </summary>
         IEnumerator Step(int seed)
         {
+            if (Find<VisualElement>(RunUi, "unseal") != null)
+            {
+                yield return ChooseUnseal();
+                yield break;
+            }
+            if (Find<VisualElement>(RunUi, "tower-event") != null)
+            {
+                Click(Find<Button>(RunUi, "event-choice-0"));
+                _floorsPassed++;
+                yield return null;
+                yield break;
+            }
+            if (Find<VisualElement>(RunUi, "chip-exchange") != null || Find<VisualElement>(RunUi, "shop-pick") != null)
+            {
+                CloseShopForStep();
+                yield return null;
+                yield break;
+            }
             if (Find<VisualElement>(RunUi, "reward") != null)
             {
                 yield return ChooseReward();
@@ -547,6 +762,22 @@ namespace DuelRoguelike.Tests
 
             if (!_exchanged)
                 yield return Exchange();
+
+            var openEvent = Find<Button>(RunUi, "open-event");
+            if (openEvent != null)
+            {
+                Click(openEvent);
+                yield return null;
+                yield break;
+            }
+            var leave = Find<Button>(RunUi, "leave-floor");
+            if (leave != null)
+            {
+                Click(leave);
+                _floorsPassed++;
+                yield return null;
+                yield break;
+            }
 
             Click(Find<Button>(RunUi, "next-duel"));
             yield return WaitFor(() => Find<Button>(DuelUi, "auto-to-end") != null || Find<Button>(DuelUi, "leave-duel") != null,
@@ -571,9 +802,9 @@ namespace DuelRoguelike.Tests
             _duels++;
             yield return null;
             Assert.IsNull(Find<Button>(DuelUi, "leave-duel"), "결과 보기 뒤에도 듀얼 화면이 보인다");
-            Assert.IsTrue(Find<Button>(RunUi, "next-duel") != null || Find<Button>(RunUi, "new-run") != null,
+            Assert.IsTrue(IsHub() || Find<Button>(RunUi, "new-run") != null,
                 "결과 보기 뒤에 층 사이 화면이나 런 종료 화면이 아니다");
-            if (Find<Button>(RunUi, "next-duel") != null && Find<VisualElement>(RunUi, "reward") == null && Find<VisualElement>(RunUi, "refill") == null)
+            if (IsHub() && NoModal())
                 yield return Shot(RunUi, "4-hub");
         }
 
@@ -622,7 +853,12 @@ namespace DuelRoguelike.Tests
                 how = "카드 두 번 누르기";
             }
             yield return null;
-            Assert.IsNull(Find<VisualElement>(RunUi, "reward"), $"보상을 골랐는데({how}) 보상 창이 닫히지 않았다");
+            // 보스 층에서 봉인된 카드가 없으면 보스 보상으로 승리 보상 창이 한 번 더 뜬다 (제목이 "보스 보상"으로 시작).
+            var again = Find<VisualElement>(RunUi, "reward");
+            bool bonus = again != null && again.Query<Label>().ToList().Any(l => l.text.StartsWith("보스 보상"));
+            Assert.IsTrue(again == null || bonus, $"보상을 골랐는데({how}) 보상 창이 닫히지 않았다");
+            if (bonus)
+                yield return Shot(RunUi, "10c-reward-bonus");
             Assert.AreEqual(sideBefore + (gold ? 0 : 1), Named("card-side-").Count, $"보상({how}) 뒤 사이드 덱 장수");
             var notice = Find<Label>(RunUi, "move-notice");
             Assert.IsNotNull(notice, "보상을 고른 뒤 층 사이 화면에 알림 줄이 없다");
@@ -639,7 +875,7 @@ namespace DuelRoguelike.Tests
         /// </summary>
         IEnumerator Exchange()
         {
-            if (_exchanged || Find<Button>(RunUi, "next-duel") == null)
+            if (_exchanged || !IsHub() || !NoModal())
                 yield break;
             var side = Named("card-side-").FirstOrDefault();
             if (side == null)
@@ -1027,6 +1263,9 @@ namespace DuelRoguelike.Tests
         }
 
         /// <summary>"6턴 · …" → 6. 듀얼 준비 중이거나 없으면 0.</summary>
+        /// <summary>칩교환소 창(또는 사는 중인 창)을 닫는다. 사는 중이면 뒤로 한 번.</summary>
+        static void CloseShopForStep() => Click(Find<Button>(RunUi, "shop-back") ?? Find<Button>(RunUi, "shop-close"));
+
         static int TurnOf(Label label)
         {
             if (label == null)

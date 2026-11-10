@@ -19,6 +19,14 @@ namespace DuelRoguelike.Run
         Seal = 4,
         /// <summary>런 규칙 밖에서 쓰는 난수 (시험용 자동 플레이어 등)</summary>
         External = 5,
+        /// <summary>10층 묶음의 층 종류 (확률 이벤트 층). 번호 자리에 묶음 첫 층을 쓴다</summary>
+        Tower = 6,
+        /// <summary>칩교환소 진열 (봉인 해제가 나오는지). 번호 자리에 층을 쓴다</summary>
+        Shop = 7,
+        /// <summary>칩교환소 봉인 대상 교체에서 새로 봉인할 카드 (무작위 상품). 번호 자리에 층 × 8 + 상품</summary>
+        ShopSwap = 8,
+        /// <summary>보스 보상: 봉인된 카드가 없을 때 한 번 더 주는 승리 보상</summary>
+        BossBonusReward = 9,
     }
 
     public sealed class RunRandom

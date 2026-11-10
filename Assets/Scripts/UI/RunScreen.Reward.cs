@@ -50,7 +50,7 @@ namespace DuelRoguelike.UI
 
             var panel = OpenModal(1460);
             panel.name = "reward";
-            panel.Add(UiStyle.Label($"승리 보상 · {offer.Floor}층", 30, UiStyle.Accent, bold: true));
+            panel.Add(UiStyle.Label((offer.IsBossBonus ? "보스 보상 · 승리 보상 1장 더 · " : "승리 보상 · ") + $"{offer.Floor}층", 30, UiStyle.Accent, bold: true));
             string why = offer.EmptySlots > 0
                 ? $"상대 덱의 {offer.Rarity} 카드가 {offer.Cards.Count}종뿐이라 남은 {offer.EmptySlots}자리는 골드 {offer.Gold}입니다. "
                 : "";

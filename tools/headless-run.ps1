@@ -149,7 +149,14 @@ $chainTotal = ($s.ExtraChain | Measure-Object -Sum).Sum
 if ($chainTotal -gt 0) {
     Write-Host "      엑스트라 덱이 2장 이상일 때 패배 $chainTotal 번: 0장 $($s.ExtraChain[0]), 1장 $($s.ExtraChain[1]), 2장 $($s.ExtraChain[2]), 3장 이상 $($s.ExtraChain[3]) (1장 이상 $(Percent ($chainTotal - $s.ExtraChain[0]) $chainTotal), 기대 20%)"
 }
-Write-Host "    LP: 보스 층 직전 8000으로 맞춤 $($s.BossFloorAdjusts)번, 보스 격파 $($s.BossClears)번, 패배 회복 $($s.LossHeals)번, 8000보다 높은 LP로 시작한 듀얼 $($s.DuelsAboveFullLp)판"
+Write-Host "    LP: 휴식 층에서 8000으로 맞춤 $($s.RestHeals)번, 보스 격파 $($s.BossClears)번, 패배 회복 $($s.LossHeals)번, 8000보다 높은 LP로 시작한 듀얼 $($s.DuelsAboveFullLp)판"
+$kindNames = '전투', '이벤트', '칩교환소', '휴식', '보스'
+Write-Host ("    탑: 들어간 층 " + ((0..4 | ForEach-Object { "$($kindNames[$_]) $($s.FloorVisits[$_])" }) -join ', '))
+$randomFloors = @(1, 2, 3, 4, 7, 8) | ForEach-Object { "{0}층 {1}/{2}" -f $_, $s.RandomEventFloors[$_], $s.RandomFloorVisits[$_] }
+Write-Host "      확률 이벤트 층 (이벤트/들어감, 규칙 1~3층 10%, 4층 30%, 7~8층 5%): $($randomFloors -join ', ')"
+Write-Host "    칩 (임시 값): 얻음 $($s.ChipsEarned), 씀 $($s.ChipsSpent) / 봉인 해제 진열 $($s.UnsealStocked)곳 (칩교환소 $($s.FloorVisits[2])곳)"
+Write-Host "      구매: 교체(같은 레어도) $($s.Bought[0]), 교체(같은 레어도·직접) $($s.Bought[1]), 교체(레어도 상관없음) $($s.Bought[2]), 교체(레어도 상관없음·직접) $($s.Bought[3]), 봉인 해제 $($s.Bought[4])"
+Write-Host "    보스 보상: 봉인 해제 $($s.BossUnseals)번, 보상 1장 더 $($s.BossBonusRewards)번 / 런 종료 정산 골드 합 $($s.SettlementGold)"
 Write-Host "    보충: $($s.RefillsRequired)번, $($s.RefillCards)장 / 런 종료 기록 $($s.RunsEnded)번"
 Write-Host '    듀얼 시작 LP별 승률'
 for ($i = 0; $i -lt 5; $i++) {

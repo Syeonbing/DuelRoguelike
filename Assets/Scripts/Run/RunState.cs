@@ -1,18 +1,21 @@
-// 런 하나의 상태와 진행 규칙 (규칙 결정 문서 2026-11-10 "런 진행", "LP 규칙", "승리 보상", "봉인"). 듀얼을 직접 돌리지 않는다:
+// 런 하나의 상태와 진행 규칙 (규칙 결정 문서 2026-11-10 "탑 구조", "런 진행", "LP 규칙", "승리 보상", "봉인", "재화"). 듀얼을 직접 돌리지 않는다:
 // BeginDuel로 다음 듀얼의 설정(덱, LP, 시드)을 내주고, 화면이나 시험이 듀얼을 끝낸 뒤 FinishDuel로 결과를 받는다.
 //
-// 한 층 = 단판 듀얼 하나 (탑 구조의 비전투 층은 아직 없다). 이기면 다음 층으로, 지면(무승부 포함) 같은 층을 새로 뽑은 상대와 다시 한다.
-// - 승리: 연패 0. LP는 남은 LP + 1000 (8000을 넘을 수 있다), 보스 층(10층마다)을 이기면 8000으로 맞춘다.
+// 탑은 10층 묶음이 반복되고 층 번호의 끝자리로 층 종류(FloorKind)가 정해진다 (Tower.cs). 전투 층 = 단판 듀얼 하나.
+// 비전투 층(칩교환소·이벤트·휴식)의 일은 RunStateTower.cs에 있다.
+// - 전투 층에서 이기면 다음 층으로, 지면(무승부 포함) 같은 층을 새로 뽑은 상대와 다시 한다.
+// - 승리: 연패 0, 칩을 받는다. LP는 남은 LP + 1000 (8000을 넘을 수 있다), 보스 층(10층마다)을 이기면 8000으로 맞춘다.
 //         층별 확률표로 등급을 뽑고, 상대 덱의 그 등급 카드 중 서로 다른 카드 3장까지를 후보로 보여 준다 (ChoosingReward).
 //         플레이어가 ChooseReward로 1장을 고르면 사이드 덱과 컬렉션에 들어간다. 후보가 3장보다 적으면 빈 자리는 골드다.
 //         그 등급 카드가 상대 덱에 없으면 골드로 대신 준다 (고르기 없음).
-// - 패배: 연패 +1, 메인 덱에서 "연패 횟수 + 층÷10"장, 엑스트라 덱에서 20% 연쇄로 봉인. LP는 전부 회복한다.
+//         보스를 이기면 이어서 봉인된 카드 1장을 골라 봉인 해제한다 (ChoosingUnseal). 봉인된 카드가 없으면 보상 후보를 한 번 더 받는다.
+//         보상을 다 받으면 다음 층으로 올라간다 (그때까지 Floor는 이긴 층 그대로).
+// - 패배: 연패 +1, 메인 덱에서 "연패 횟수 + 층÷10"장, 엑스트라 덱에서 20% 연쇄로 봉인. LP는 전부 회복한다. 칩은 잃지 않는다.
 //         메인 덱이 40장 미만이면 사이드 덱에서 보충해야 하고(NeedsRefill), 보충할 카드가 모자라면 런이 끝난다.
-// - 보스 층 듀얼 직전에 LP를 8000으로 맞춘다 (9층 휴식이 생길 때까지의 임시 규칙, RunRules.BossFloorInterval).
 // - 듀얼 사이에는 사이드 덱과 메인·엑스트라 덱의 카드를 옮길 수 있다. 같은 카드명은 메인·엑스트라 덱에 3장까지 (카드 DB의 alias 기준),
 //   사이드 덱에는 제한이 없다. 봉인된 카드는 쓸 수 없다.
 // - 듀얼 중에 저장된 런을 읽으면 그 듀얼은 패배로 처리한다 (ForfeitDuel, GameSave.Parse가 부른다).
-// 골드는 영구 재화다. 런 안에서 얻은 골드(Gold)는 런이 끝나면 GameSave가 누적에 더한다.
+// 골드는 영구 재화다. 런 안에서 얻은 골드(Gold)와 런 종료 정산(SettlementGold)은 런이 끝나면 GameSave가 누적에 더한다.
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -32,6 +35,8 @@ namespace DuelRoguelike.Run
         ChoosingReward,
         /// <summary>메인 덱이 40장 미만이라 사이드 덱에서 보충해야 한다 (MoveToDeck).</summary>
         NeedsRefill,
+        /// <summary>보스 보상: 봉인된 카드 1장을 골라 봉인 해제해야 한다 (ChooseUnseal).</summary>
+        ChoosingUnseal,
         Ended,
     }
 
@@ -142,13 +147,17 @@ namespace DuelRoguelike.Run
 
         public int EmptySlots => RunRules.RewardChoices - Cards.Count;
 
-        internal RewardOffer(int duelNumber, int floor, Rarity rarity, IReadOnlyList<uint> cards, int gold)
+        /// <summary>보스 보상: 봉인된 카드가 없어 한 번 더 받는 승리 보상.</summary>
+        public bool IsBossBonus { get; }
+
+        internal RewardOffer(int duelNumber, int floor, Rarity rarity, IReadOnlyList<uint> cards, int gold, bool isBossBonus)
         {
             DuelNumber = duelNumber;
             Floor = floor;
             Rarity = rarity;
             Cards = cards;
             Gold = gold;
+            IsBossBonus = isBossBonus;
         }
 
         /// <summary>이 자리가 카드인지 (아니면 골드).</summary>
@@ -187,8 +196,17 @@ namespace DuelRoguelike.Run
         public RunPhase Phase { get; private set; } = RunPhase.Ready;
         public RunEndReason EndReason { get; private set; }
 
-        /// <summary>지금 층 (1부터). 이기면 1 오르고, 지면 그대로다.</summary>
+        /// <summary>지금 층 (1부터). 이기면 보상을 다 받은 뒤 1 오르고, 지면 그대로다. 비전투 층은 일을 마치면 오른다.</summary>
         public int Floor { get; private set; } = 1;
+
+        /// <summary>지금 층의 종류. 층에 들어갈 때 정한다 (Tower.KindOf).</summary>
+        public FloorKind FloorKind { get; private set; }
+
+        /// <summary>가진 칩 (런 재화). 런이 끝나면 사라지고 일부가 골드 정산에 들어간다.</summary>
+        public int Chips { get; private set; }
+
+        /// <summary>이 런 동안 얻은 칩의 합 (쓴 칩도 빼지 않는다. 골드 정산에 쓴다).</summary>
+        public int ChipsEarned { get; private set; }
 
         /// <summary>끝난 듀얼 수 = 마지막으로 끝난 듀얼 번호.</summary>
         public int DuelsPlayed { get; private set; }
@@ -285,19 +303,20 @@ namespace DuelRoguelike.Run
                 e.ExtraCount = run._extra.Count;
                 e.SideCount = run._side.Count;
             });
+            run.EnterFloor();
             return run;
         }
 
         /// <summary>
-        /// 지금 층의 듀얼을 시작한다 (Ready에서만). 보스 층이면 먼저 LP를 8000으로 맞추고, 상대 덱과 엔진 시드를 정한다.
+        /// 지금 층의 듀얼을 시작한다 (전투 층·보스 층에서 Ready일 때만). 상대 덱과 엔진 시드를 정한다.
         /// 듀얼이 끝나면 FinishDuel을 부른다.
         /// </summary>
         public RunDuel BeginDuel()
         {
             RequirePhase(RunPhase.Ready, "듀얼을 시작할");
+            if (!Tower.IsBattle(FloorKind))
+                throw new InvalidOperationException($"듀얼을 시작할 수 없습니다: {Floor}층은 {Tower.KindName(FloorKind)} 층");
             int number = DuelsPlayed + 1;
-            if (RunRules.IsBossFloor(Floor) && Lp != RunRules.FullLp)
-                ChangeLp(RunRules.FullLp, LpRestoreReason.BossFloor, number);
             CurrentDuel = CreateDuel(number);
             Phase = RunPhase.InDuel;
             AddEvent(RunEventKind.DuelStarted, number, e =>
@@ -311,7 +330,7 @@ namespace DuelRoguelike.Run
         /// <summary>듀얼 번호로 상대와 엔진 시드를 정한다 (같은 런 시드·번호면 늘 같다). 저장 파일의 "듀얼 중" 런을 읽을 때도 쓴다.</summary>
         RunDuel CreateDuel(int number)
         {
-            var opponent = Opponents[RunRandom.For(Seed, number, RunRandomPurpose.Opponent).Next(Opponents.Count)];
+            var opponent = OpponentFor(number);
             var random = RunRandom.For(Seed, number, RunRandomPurpose.Duel);
             var engineSeed = new ulong[4];
             for (int i = 0; i < engineSeed.Length; i++)
@@ -321,6 +340,9 @@ namespace DuelRoguelike.Run
             int shuffleSeed = random.NextSeed();
             return new RunDuel(number, Floor, opponent, Lp, _main.Concat(_extra).ToArray(), engineSeed, shuffleSeed);
         }
+
+        /// <summary>듀얼 번호의 상대 덱 (런 시드와 번호로 정해진다).</summary>
+        DeckRecipe OpponentFor(int number) => Opponents[RunRandom.For(Seed, number, RunRandomPurpose.Opponent).Next(Opponents.Count)];
 
         /// <summary>끝난 듀얼의 결과를 반영한다. 플레이어는 팀 0이다.</summary>
         public void FinishDuel(DuelState state) => FinishDuel(RunDuel.ResultOf(state), state.Players[0].Lp);
@@ -349,8 +371,10 @@ namespace DuelRoguelike.Run
                 }
                 else
                     ChangeLp(playerLp + RunRules.WinLpBonus, LpRestoreReason.Win, duel.DuelNumber);
-                OfferReward(duel);
-                Floor++;
+                GainChips(duel.IsBossFloor ? RunRules.ChipsPerBossWin : RunRules.ChipsPerWin, duel.DuelNumber);
+                _bossBonusPending = duel.IsBossFloor;
+                OfferReward(duel.DuelNumber, duel.Floor, duel.OpponentCards, bossBonus: false);
+                ContinueAfterWin();
                 return;
             }
 
@@ -386,7 +410,7 @@ namespace DuelRoguelike.Run
 
         /// <summary>
         /// 승리 보상 후보 중 하나를 고른다 (ChoosingReward에서만). slot이 카드 자리면 그 카드를 사이드 덱과 컬렉션에 넣고,
-        /// 빈 자리면 골드를 받는다. 고르면 Ready로 돌아간다.
+        /// 빈 자리면 골드를 받는다. 보스 보상이 남았으면 이어서 그것을, 아니면 다음 층으로 올라간다.
         /// </summary>
         public void ChooseReward(int slot)
         {
@@ -416,6 +440,7 @@ namespace DuelRoguelike.Run
                     e.Count = offer.Gold;
                 }, offer.Floor);
             }
+            ContinueAfterWin();
         }
 
         /// <summary>사이드 덱의 카드를 메인·엑스트라 덱(카드 종류에 따라)으로 옮길 수 있는지. 보충 중에는 메인 덱 카드만.</summary>
@@ -488,17 +513,14 @@ namespace DuelRoguelike.Run
         }
 
         /// <summary>
-        /// 런을 포기한다 (듀얼 사이에만: Ready, ChoosingReward, NeedsRefill). 런 종료로 처리한다:
-        /// 이미 얻은 카드는 컬렉션에 남고, 얻은 골드는 GameSave가 누적에 더한다. 고르는 중이던 보상은 받지 않는다.
+        /// 런을 포기한다 (듀얼 사이에만: Ready, ChoosingReward, NeedsRefill, ChoosingUnseal). 런 종료로 처리한다:
+        /// 이미 얻은 카드는 컬렉션에 남고, 얻은 골드와 정산 골드는 GameSave가 누적에 더한다. 고르는 중이던 보상은 받지 않는다.
         /// </summary>
         public void Abandon()
         {
-            if (Phase != RunPhase.Ready && Phase != RunPhase.ChoosingReward && Phase != RunPhase.NeedsRefill)
+            if (Phase != RunPhase.Ready && Phase != RunPhase.ChoosingReward && Phase != RunPhase.NeedsRefill && Phase != RunPhase.ChoosingUnseal)
                 throw new InvalidOperationException($"런을 포기할 수 없습니다: 지금 상태는 {Phase} (듀얼 사이에만 포기할 수 있음)");
-            PendingReward = null;
-            Phase = RunPhase.Ended;
-            EndReason = RunEndReason.Abandoned;
-            AddEvent(RunEventKind.RunEnded, DuelsPlayed, e => e.EndReason = EndReason);
+            EndRun(RunEndReason.Abandoned);
         }
 
         /// <summary>보충할 때 고를 수 있는 사이드 덱 카드 (같은 카드는 한 번, 사이드 덱 순서). NeedsRefill이 아니면 빈 목록.</summary>
@@ -510,12 +532,15 @@ namespace DuelRoguelike.Run
         }
 
         /// <summary>사이드 덱에서 메인 덱으로 지금 옮길 수 있는 최대 장수 (메인 덱 카드만, 같은 카드명 3장 제한).</summary>
-        public int RefillableCount()
+        public int RefillableCount() => RefillableCount(_side, _main.Count);
+
+        /// <summary>side가 사이드 덱이고 메인 덱이 mainCount장일 때 보충할 수 있는 장수 (같은 카드명 장수는 지금 덱 기준).</summary>
+        int RefillableCount(IEnumerable<uint> side, int mainCount)
         {
             int total = 0;
-            foreach (var group in _side.Where(code => !IsExtraDeckCard(code)).GroupBy(NameCode))
+            foreach (var group in side.Where(code => !IsExtraDeckCard(code)).GroupBy(NameCode))
                 total += Math.Max(0, Math.Min(group.Count(), RunRules.MaxCopies - DeckCopies(group.Key)));
-            return Math.Min(total, RunRules.MaxMainDeck - _main.Count);
+            return Math.Min(total, RunRules.MaxMainDeck - mainCount);
         }
 
         /// <summary>엑스트라 덱에 들어가는 카드인지 (카드 DB의 종류로 판단).</summary>
@@ -531,21 +556,23 @@ namespace DuelRoguelike.Run
             return _main.Count(c => NameCode(c) == name) + _extra.Count(c => NameCode(c) == name);
         }
 
-        void OfferReward(RunDuel duel)
+        /// <summary>승리 보상 (bossBonus면 보스 보상으로 한 번 더 주는 것: 난수를 따로 쓴다).</summary>
+        void OfferReward(int duelNumber, int floor, IReadOnlyList<uint> opponentCards, bool bossBonus)
         {
-            var random = RunRandom.For(Seed, duel.DuelNumber, RunRandomPurpose.Reward);
-            var rarity = RewardTable.Roll(duel.Floor, random);
+            var random = RunRandom.For(Seed, duelNumber, bossBonus ? RunRandomPurpose.BossBonusReward : RunRandomPurpose.Reward);
+            var rarity = RewardTable.Roll(floor, random);
             int gold = RunRules.GoldFor(rarity);
             // 등급은 지금 표에서 찾는다 (표가 바뀌면 다음 보상부터 바로 반영된다).
-            var pool = duel.OpponentCards.Where(code => _rarities.TryGet(code, out var r) && r == rarity).Distinct().ToList();
+            var pool = opponentCards.Where(code => _rarities.TryGet(code, out var r) && r == rarity).Distinct().ToList();
             if (pool.Count == 0)
             {
                 Gold += gold;
-                AddEvent(RunEventKind.RewardSubstituted, duel.DuelNumber, e =>
+                AddEvent(RunEventKind.RewardSubstituted, duelNumber, e =>
                 {
                     e.Rarity = rarity;
                     e.Count = gold;
-                }, duel.Floor);
+                    e.IsBonus = bossBonus;
+                }, floor);
                 return;
             }
             var cards = new List<uint>();
@@ -555,14 +582,15 @@ namespace DuelRoguelike.Run
                 cards.Add(pool[index]);
                 pool.RemoveAt(index);
             }
-            PendingReward = new RewardOffer(duel.DuelNumber, duel.Floor, rarity, cards, gold);
+            PendingReward = new RewardOffer(duelNumber, floor, rarity, cards, gold, bossBonus);
             Phase = RunPhase.ChoosingReward;
-            AddEvent(RunEventKind.RewardOffered, duel.DuelNumber, e =>
+            AddEvent(RunEventKind.RewardOffered, duelNumber, e =>
             {
                 e.Rarity = rarity;
                 e.Codes = cards.ToArray();
                 e.Count = PendingReward.EmptySlots > 0 ? gold : 0;
-            }, duel.Floor);
+                e.IsBonus = bossBonus;
+            }, floor);
         }
 
         void Seal(RunDuel duel)
@@ -608,9 +636,7 @@ namespace DuelRoguelike.Run
                 return;
             if (RefillableCount() < needed)
             {
-                Phase = RunPhase.Ended;
-                EndReason = RunEndReason.DeckBelowMinimum;
-                AddEvent(RunEventKind.RunEnded, DuelsPlayed, e => e.EndReason = EndReason);
+                EndRun(RunEndReason.DeckBelowMinimum);
                 return;
             }
             Phase = RunPhase.NeedsRefill;
@@ -628,6 +654,7 @@ namespace DuelRoguelike.Run
             : Phase == RunPhase.Ended ? "런이 끝났음"
             : Phase == RunPhase.NeedsRefill ? "보충을 먼저 끝내야 함"
             : Phase == RunPhase.ChoosingReward ? "승리 보상을 먼저 골라야 함"
+            : Phase == RunPhase.ChoosingUnseal ? "보스 보상(봉인 해제)을 먼저 골라야 함"
             : "지금은 덱을 바꿀 수 없음";
 
         void AddEvent(RunEventKind kind, int duelNumber, Action<RunEvent> fill, int? floor = null)

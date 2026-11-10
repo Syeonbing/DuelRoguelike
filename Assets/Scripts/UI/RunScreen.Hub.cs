@@ -53,6 +53,7 @@ namespace DuelRoguelike.UI
             center.Add(notice);
             center.Add(HubDeckPanel());
             body.Add(center);
+            body.Add(TowerPanel());
             _root.Add(body);
 
             _detail = detail;
@@ -61,8 +62,12 @@ namespace DuelRoguelike.UI
 
             if (_run.Phase == RunPhase.ChoosingReward)
                 OpenReward();
+            else if (_run.Phase == RunPhase.ChoosingUnseal)
+                OpenUnseal();
             else if (_run.Phase == RunPhase.NeedsRefill)
                 OpenRefill();
+            else if (_run.FloorKind == FloorKind.Event && _eventShownFloor != _run.Floor)
+                OpenEvent(); // 이벤트 층에 처음 왔을 때 한 번
         }
 
         VisualElement HubTopBar()
@@ -77,10 +82,11 @@ namespace DuelRoguelike.UI
             texts.style.flexShrink = 1;
             var head = Row();
             head.style.alignItems = Align.FlexEnd;
-            bool boss = RunRules.IsBossFloor(_run.Floor);
-            head.Add(UiStyle.Label($"{_run.Floor}층" + (boss ? " · 보스 층" : ""), 34, UiStyle.Accent, bold: true));
+            var floorLabel = UiStyle.Label($"{_run.Floor}층 · {Tower.KindName(_run.FloorKind)}", 34, UiStyle.Accent, bold: true);
+            floorLabel.name = "floor-label";
+            head.Add(floorLabel);
             string record = $"{_run.Wins}승 {_run.Losses}패" + (_run.Draws > 0 ? $" {_run.Draws}무" : "");
-            var summary = Text($"LP {_run.Lp} · 연패 {_run.LosingStreak} · {record} · 끝낸 듀얼 {_run.DuelsPlayed}", 19);
+            var summary = Text($"LP {_run.Lp} · 칩 {_run.Chips} · 연패 {_run.LosingStreak} · {record} · 끝낸 듀얼 {_run.DuelsPlayed}", 19);
             summary.name = "run-summary";
             summary.style.marginLeft = 16;
             summary.style.marginBottom = 4;
@@ -114,17 +120,11 @@ namespace DuelRoguelike.UI
             toTitle.style.marginRight = 10;
             toTitle.style.unityTextAlign = TextAnchor.MiddleCenter;
             buttons.Add(toTitle);
-            var next = UiStyle.Button("다음 듀얼 시작", StartNextDuel, 22);
-            next.name = "next-duel";
-            next.style.paddingLeft = next.style.paddingRight = 24;
-            next.style.unityTextAlign = TextAnchor.MiddleCenter;
-            next.SetEnabled(_run.Phase == RunPhase.Ready);
-            buttons.Add(next);
+            AddFloorButtons(buttons);
             right.Add(buttons);
-            string note = boss && _run.Lp != RunRules.FullLp
-                ? $"보스 층: 듀얼을 시작하기 직전에 LP를 {RunRules.FullLp}로 맞춥니다."
-                : "상대는 듀얼을 시작할 때 스타터 덱 4개 중에서 무작위로 정해집니다.";
-            right.Add(Text(note, 14, UiStyle.TextDim, top: 4));
+            var note = Text(FloorNote(), 14, UiStyle.TextDim, top: 4);
+            note.name = "floor-note";
+            right.Add(note);
             right.Add(Text("저절로 저장됩니다. 듀얼 도중에 게임을 끄면 그 듀얼은 패배로 처리됩니다.", 13, UiStyle.TextDim, top: 2));
             if (_forfeitNotice != null)
             {
@@ -138,13 +138,16 @@ namespace DuelRoguelike.UI
             return bar;
         }
 
-        /// <summary>직전 듀얼 한 줄: 결과 · 보상 · 봉인 … (런 로그의 그 듀얼 부분을 이어 붙인 것).</summary>
+        /// <summary>
+        /// 직전 듀얼 한 줄: 결과 · 칩 · 보상 · 봉인 … (런 로그의 그 듀얼 부분을 이어 붙인 것). 다음 층에 들어간 뒤의 일(칩교환소 등)은 넣지 않는다.
+        /// </summary>
         string LastDuelLine()
         {
             if (_run.DuelsPlayed == 0)
                 return "아직 듀얼하지 않았습니다. 1층부터 시작합니다.";
-            var events = _run.Events.Where(e => e.DuelNumber == _run.DuelsPlayed && e.Kind != RunEventKind.DuelStarted
-                                                && e.Kind != RunEventKind.MovedToDeck && e.Kind != RunEventKind.MovedToSide)
+            var events = _run.Events.Where(e => e.DuelNumber == _run.DuelsPlayed)
+                .TakeWhile(e => e.Kind != RunEventKind.FloorEntered)
+                .Where(e => e.Kind != RunEventKind.DuelStarted && e.Kind != RunEventKind.MovedToDeck && e.Kind != RunEventKind.MovedToSide)
                 .Select(e => e.Describe(_text.CardName)).ToList();
             return "직전 듀얼: " + string.Join(" · ", events);
         }

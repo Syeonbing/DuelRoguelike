@@ -4,8 +4,13 @@
 // 듀얼의 상대·시드는 (런 시드, 듀얼 번호)로 정해지므로 따로 적지 않는다.
 // 고르는 중인 승리 보상(ChoosingReward)은 후보까지 적어서, 다시 켜도 같은 후보에서 고른다.
 //
+// 칩교환소 진열(shop), 이벤트 층의 이벤트(floor-event), 남은 보스 보상(boss-bonus)도 적는다. 지금 층의 종류(floor-kind)도 적어 둔다
+// (나머지 층의 종류는 런 시드로 다시 계산한다).
+//
 // 형식 1 (2026-11-10 규칙 전): fainted-main·fainted-extra(기절), substituted(등급별 포인트 대체 횟수), 이벤트 CardFainted.
 // 읽을 때 봉인으로 옮기고, 포인트 대체 횟수는 골드 환산표(RunRules.GoldFor)로 골드로 바꾼다.
+// 형식 3까지: 탑 구조·칩이 없다. 칩 0, 지금 층은 전투 층(10층마다 보스 층)으로 읽는다. 보상을 고르는 중(ChoosingReward)이면
+// 층이 이미 올라가 있으므로 1 내린다 (형식 4부터는 보상을 다 받은 뒤에 층이 오른다).
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -17,6 +22,14 @@ namespace DuelRoguelike.Run
     public sealed partial class RunState
     {
         static readonly string[] RunKeys =
+        {
+            "seed", "start-deck", "opponents", "phase", "end-reason", "floor", "duels", "streak", "lp", "wins", "losses", "draws",
+            "main", "extra", "side", "sealed-main", "sealed-extra", "gold", "reward", "start-deck-name",
+            "floor-kind", "chips", "shop", "floor-event", "boss-bonus", "reward-bonus",
+        };
+
+        /// <summary>형식 2·3</summary>
+        static readonly string[] RunKeysV3 =
         {
             "seed", "start-deck", "opponents", "phase", "end-reason", "floor", "duels", "streak", "lp", "wins", "losses", "draws",
             "main", "extra", "side", "sealed-main", "sealed-extra", "gold", "reward", "start-deck-name",
@@ -51,10 +64,20 @@ namespace DuelRoguelike.Run
             w.Codes("sealed-main", _sealedMain);
             w.Codes("sealed-extra", _sealedExtra);
             w.Line("gold", Gold);
+            w.Line("floor-kind", FloorKind);
+            w.Line("chips", Chips, ChipsEarned);
+            if (_shop != null)
+                w.Line("shop", _shop.Select(o => (object)Invariant($"{o.Product}:{o.Price}:{(o.Sold ? 1 : 0)}")));
+            if (CurrentEventId != null)
+                w.Line("floor-event", CurrentEventId);
+            if (_bossBonusPending)
+                w.Line("boss-bonus");
             if (PendingReward != null)
             {
                 var o = PendingReward;
                 w.Line("reward", new object[] { o.DuelNumber, o.Floor, o.Rarity, o.Gold }.Concat(o.Cards.Cast<object>()));
+                if (o.IsBossBonus)
+                    w.Line("reward-bonus");
             }
             foreach (var e in _events)
                 w.Line("event", EventValues(e));
@@ -82,6 +105,12 @@ namespace DuelRoguelike.Run
             if (e.LpReason != default) yield return Invariant($"lp-reason={e.LpReason}");
             if (e.EndReason != default) yield return Invariant($"end-reason={e.EndReason}");
             if (e.IsRefill) yield return "refill=1";
+            if (e.FloorKind != default) yield return Invariant($"kind={e.FloorKind}");
+            if (e.Chips != 0) yield return Invariant($"chips={e.Chips}");
+            if (e.ChipsEarned != 0) yield return Invariant($"chips-earned={e.ChipsEarned}");
+            if (e.Product != default) yield return Invariant($"product={e.Product}");
+            if (e.EventId != null) yield return "event-id=" + SaveEscape.Encode(e.EventId);
+            if (e.IsBonus) yield return "bonus=1";
         }
 
         /// <param name="version">저장 파일 형식 버전 (GameSave.FormatVersion 이하).</param>
@@ -89,7 +118,8 @@ namespace DuelRoguelike.Run
             CardCollection collection, int version)
         {
             bool v1 = version < 2;
-            var map = r.Unique(lines, v1 ? RunKeysV1 : RunKeys, RepeatableRunKeys);
+            bool v4 = version >= 4;
+            var map = r.Unique(lines, v1 ? RunKeysV1 : v4 ? RunKeys : RunKeysV3, RepeatableRunKeys);
 
             var seedLine = r.Required(map, "seed");
             r.ExpectCount(seedLine, 1);
@@ -114,6 +144,8 @@ namespace DuelRoguelike.Run
             run.Phase = r.Enum<RunPhase>(phaseLine, phaseLine.Values[0]);
             if (v1 && (run.Phase == RunPhase.InDuel || run.Phase == RunPhase.ChoosingReward))
                 throw r.Error(phaseLine, $"형식 1에는 {run.Phase} 상태가 없음");
+            if (!v4 && run.Phase == RunPhase.ChoosingUnseal)
+                throw r.Error(phaseLine, $"형식 {version}에는 {run.Phase} 상태가 없음");
             if (map.TryGetValue("end-reason", out var reasonLine))
             {
                 r.ExpectCount(reasonLine, 1);
@@ -156,7 +188,8 @@ namespace DuelRoguelike.Run
             bool shortMain = run._main.Count < RunRules.MinMainDeck;
             if (run.Phase == RunPhase.NeedsRefill && !shortMain)
                 throw r.Error(phaseLine, $"보충 중인데 메인 덱이 {run._main.Count}장");
-            if ((run.Phase == RunPhase.Ready || run.Phase == RunPhase.InDuel || run.Phase == RunPhase.ChoosingReward) && shortMain)
+            if ((run.Phase == RunPhase.Ready || run.Phase == RunPhase.InDuel || run.Phase == RunPhase.ChoosingReward || run.Phase == RunPhase.ChoosingUnseal)
+                && shortMain)
                 throw r.Error(phaseLine, $"메인 덱이 {run._main.Count}장인데 보충 중이 아님");
 
             if (v1)
@@ -170,14 +203,37 @@ namespace DuelRoguelike.Run
                 run.Gold = Number("gold", 0);
 
             bool hasReward = map.TryGetValue("reward", out var rewardLine);
+            bool rewardBonus = map.TryGetValue("reward-bonus", out var rewardBonusLine);
+            if (rewardBonus)
+            {
+                r.ExpectCount(rewardBonusLine, 0);
+                if (!hasReward)
+                    throw r.Error(rewardBonusLine, "reward 줄 없이 reward-bonus가 있음");
+            }
             if (run.Phase == RunPhase.ChoosingReward)
             {
                 if (!hasReward)
                     throw r.Error(phaseLine, "보상을 고르는 중인데 reward 줄이 없음");
-                run.PendingReward = ReadReward(rewardLine, r, database, run);
+                run.PendingReward = ReadReward(rewardLine, r, database, run, rewardBonus);
             }
             else if (hasReward)
                 throw r.Error(rewardLine, $"보상을 고르는 중이 아닌데 reward 줄이 있음 ({run.Phase})");
+
+            if (v4)
+                ReadTower(map, r, run, phaseLine);
+            else
+            {
+                // 형식 3까지: 보상을 고르는 중에도 층이 이미 올라가 있었다. 지금 층은 전투 층으로 둔다.
+                if (run.Phase == RunPhase.ChoosingReward)
+                {
+                    if (run.Floor < 2)
+                        throw r.Error(phaseLine, $"보상을 고르는 중인데 {run.Floor}층");
+                    run.Floor--;
+                }
+                run.FloorKind = RunRules.IsBossFloor(run.Floor) ? FloorKind.Boss : FloorKind.Battle;
+            }
+            if (run.PendingReward != null && run.PendingReward.Floor != run.Floor)
+                throw r.Error(rewardLine, $"보상의 층 {run.PendingReward.Floor}이 지금 층 {run.Floor}과 다름");
 
             foreach (var line in lines.Where(l => l.Key == "event"))
             {
@@ -193,8 +249,80 @@ namespace DuelRoguelike.Run
             return run;
         }
 
-        /// <summary>reward 듀얼번호 층 등급 골드 카드…</summary>
-        static RewardOffer ReadReward(SaveLine line, SaveReader r, CardDatabase database, RunState run)
+        /// <summary>형식 4: floor-kind, chips, shop, floor-event, boss-bonus.</summary>
+        static void ReadTower(Dictionary<string, SaveLine> map, SaveReader r, RunState run, SaveLine phaseLine)
+        {
+            var kindLine = r.Required(map, "floor-kind");
+            r.ExpectCount(kindLine, 1);
+            run.FloorKind = r.Enum<FloorKind>(kindLine, kindLine.Values[0]);
+            bool choosing = run.Phase == RunPhase.InDuel || run.Phase == RunPhase.ChoosingReward || run.Phase == RunPhase.ChoosingUnseal;
+            if (choosing && !Tower.IsBattle(run.FloorKind))
+                throw r.Error(kindLine, $"{run.Phase}인데 {run.FloorKind} 층");
+
+            var chipsLine = r.Required(map, "chips");
+            r.ExpectCount(chipsLine, 2);
+            run.Chips = r.Int(chipsLine, chipsLine.Values[0], 0);
+            run.ChipsEarned = r.Int(chipsLine, chipsLine.Values[1], 0);
+            if (run.Chips > run.ChipsEarned)
+                throw r.Error(chipsLine, $"가진 칩 {run.Chips}이 얻은 칩 {run.ChipsEarned}보다 많음");
+
+            bool hasShop = map.TryGetValue("shop", out var shopLine);
+            if (run.FloorKind == FloorKind.ChipExchange)
+            {
+                if (!hasShop)
+                    throw r.Error(kindLine, "칩교환소인데 shop 줄이 없음");
+                run._shop = ReadShop(shopLine, r);
+            }
+            else if (hasShop)
+                throw r.Error(shopLine, $"칩교환소가 아닌데 shop 줄이 있음 ({run.FloorKind})");
+
+            bool hasEvent = map.TryGetValue("floor-event", out var eventLine);
+            if (run.FloorKind == FloorKind.Event)
+            {
+                if (!hasEvent)
+                    throw r.Error(kindLine, "이벤트 층인데 floor-event 줄이 없음");
+                r.ExpectCount(eventLine, 1);
+                if (TowerEvents.Find(eventLine.Values[0]) == null)
+                    throw r.Error(eventLine, $"모르는 이벤트 \"{eventLine.Values[0]}\"");
+                run.CurrentEventId = eventLine.Values[0];
+            }
+            else if (hasEvent)
+                throw r.Error(eventLine, $"이벤트 층이 아닌데 floor-event 줄이 있음 ({run.FloorKind})");
+
+            if (map.TryGetValue("boss-bonus", out var bonusLine))
+            {
+                r.ExpectCount(bonusLine, 0);
+                if (run.Phase != RunPhase.ChoosingReward || run.FloorKind != FloorKind.Boss || run.PendingReward.IsBossBonus)
+                    throw r.Error(bonusLine, $"보스 승리 보상을 고르는 중이 아닌데 boss-bonus가 있음 ({run.Phase}, {run.FloorKind})");
+                run._bossBonusPending = true;
+            }
+            if (run.Phase == RunPhase.ChoosingUnseal && (run.FloorKind != FloorKind.Boss || run.SealedCount == 0))
+                throw r.Error(phaseLine, $"보스 보상(봉인 해제)을 고르는 중인데 {run.FloorKind} 층, 봉인 {run.SealedCount}장");
+        }
+
+        /// <summary>shop 상품:가격:샀는지(0·1) …</summary>
+        static List<ShopOffer> ReadShop(SaveLine line, SaveReader r)
+        {
+            r.ExpectAtLeast(line, 1);
+            var offers = new List<ShopOffer>();
+            foreach (string value in line.Values)
+            {
+                var parts = value.Split(':');
+                if (parts.Length != 3)
+                    throw r.Error(line, $"\"{value}\"는 상품:가격:샀는지 꼴이 아님");
+                var product = r.Enum<ShopProduct>(line, parts[0]);
+                if (offers.Any(o => o.Product == product))
+                    throw r.Error(line, $"{product}이(가) 두 번 나옴");
+                int price = r.Int(line, parts[1], 0);
+                if (parts[2] != "0" && parts[2] != "1")
+                    throw r.Error(line, $"\"{value}\"의 샀는지는 0이나 1");
+                offers.Add(new ShopOffer(product, price, parts[2] == "1"));
+            }
+            return offers;
+        }
+
+        /// <summary>reward 듀얼번호 층 등급 골드 카드… (reward-bonus 줄이 있으면 보스 보상으로 한 번 더 받는 보상)</summary>
+        static RewardOffer ReadReward(SaveLine line, SaveReader r, CardDatabase database, RunState run, bool bossBonus)
         {
             r.ExpectAtLeast(line, 5);
             int duel = r.Int(line, line.Values[0], 1);
@@ -211,7 +339,7 @@ namespace DuelRoguelike.Run
             foreach (uint code in cards)
                 if (!database.TryGet(code, out _))
                     throw r.Error(line, $"카드 {code}가 카드 DB에 없음");
-            return new RewardOffer(duel, floor, rarity, cards, gold);
+            return new RewardOffer(duel, floor, rarity, cards, gold, bossBonus);
         }
 
         static RunEvent ReadEvent(SaveLine line, SaveReader r, bool v1)
@@ -253,6 +381,16 @@ namespace DuelRoguelike.Run
                         if (value != "1")
                             throw r.Error(line, "refill은 1만 쓴다");
                         e.IsRefill = true;
+                        break;
+                    case "kind": e.FloorKind = r.Enum<FloorKind>(line, value); break;
+                    case "chips": e.Chips = r.Int(line, value); break;
+                    case "chips-earned": e.ChipsEarned = r.Int(line, value); break;
+                    case "product": e.Product = r.Enum<ShopProduct>(line, value); break;
+                    case "event-id": e.EventId = SaveEscape.Decode(value, r, line); break;
+                    case "bonus":
+                        if (value != "1")
+                            throw r.Error(line, "bonus는 1만 쓴다");
+                        e.IsBonus = true;
                         break;
                     default:
                         throw r.Error(line, $"모르는 이벤트 칸 \"{name}\"");
