@@ -828,7 +828,7 @@ namespace DuelRoguelike.UI
             for (byte p = 0; p < 2; p++)
             {
                 var player = state.Players[p];
-                _lp[p].text = $"LP {player.Lp}";
+                _lp[p].text = $"LP {System.Math.Max(0, player.Lp)}";
                 bool lpFocus = _focus != null && _focus.LpPlayer == p;
                 _lp[p].style.color = lpFocus ? FocusTarget : UiStyle.Text;
                 // LP가 바뀌는 단계: 바뀐 양을 LP 옆에 띄운다.

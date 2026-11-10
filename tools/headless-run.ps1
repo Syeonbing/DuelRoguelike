@@ -130,6 +130,7 @@ foreach ($pair in $r.ByOpponent.GetEnumerator()) {
 $d = $r.Duel
 Write-Host "    듀얼 점검: 끝난 판 $($d.Finished) / $($d.Duels), 엔진 오류 $($d.EngineErrors), 예외 $($d.Exceptions), 거절 $($d.Retries[0]) / $($d.Retries[1]), 해석하지 않은 메시지 $($d.UnparsedTypes.Count)종"
 Write-Host "      WindBot: 직접 답함 $($d.WindBotAnswered), 대신 답함 $($d.WindBotFallbacks), 모델 맞춤 $($d.WindBotResyncs)칸, 메시지 처리 예외 $($d.WindBotMessageErrors), 상대 비공개 카드 $($d.WindBotKnownSecrets)"
+Write-Host "      메시지마다 필드: 배치 끝 비교 $($d.StateChecks)번, 엔진과 다름 $($d.StateMismatches)번"
 if ($Player -eq 'Interaction') {
     Write-Host "      화면 조작 모델: 답함 $($d.InteractionAnswered), 대신 답함 $($d.InteractionFallbacks)"
 }

@@ -125,6 +125,32 @@ namespace DuelRoguelike.Engine.Duel
                 case SimpleMessage m when m.Type == OcgMessageType.ChainEnd:
                     Chain.Clear();
                     break;
+                case DrawMessage m when m.Player < 2:
+                {
+                    // 드로우는 MSG_MOVE 없이 MSG_DRAW로만 온다. 덱 장수를 줄이고 패 끝에 붙인다 (뒷면으로: 상대 패를 드러내지 않는다).
+                    var p = Players[m.Player];
+                    p.DeckCount = System.Math.Max(0, p.DeckCount - m.Codes.Count);
+                    foreach (uint code in m.Codes)
+                    {
+                        var card = NewCard(code);
+                        card.Owner = m.Player;
+                        card.Location = new CardLocation(m.Player, OcgLocation.Hand, (uint)p.Hand.Count, OcgPosition.FaceDownDefense);
+                        p.Hand.Add(card);
+                    }
+                    break;
+                }
+                case ShuffleMessage m when m.Player < 2 && m.Codes.Count > 0
+                                           && (m.Type == OcgMessageType.ShuffleHand || m.Type == OcgMessageType.ShuffleExtra):
+                    Reorder(m.Type == OcgMessageType.ShuffleHand ? Players[m.Player].Hand : Players[m.Player].Extra, m.Codes);
+                    break;
+                case SummoningMessage m when m.Kind == SummonKind.Flip && !m.Location.IsOverlay:
+                {
+                    // 반전 소환은 MSG_POS_CHANGE 없이 온다: 앞면 공격 표시가 된다.
+                    var card = Find(m.Location);
+                    if (card != null)
+                        card.Location = new CardLocation(m.Location.Controller, m.Location.Location, m.Location.Sequence, OcgPosition.FaceUpAttack);
+                    break;
+                }
                 case NewTurnMessage m:
                     Turn++;
                     TurnPlayer = m.Player;
@@ -139,7 +165,7 @@ namespace DuelRoguelike.Engine.Duel
                     {
                         case LpChangeKind.Damage:
                         case LpChangeKind.PayCost:
-                            p.Lp = System.Math.Max(0, p.Lp - (int)m.Amount);
+                            p.Lp -= (int)m.Amount; // 엔진처럼 0 아래로도 내려간다 (화면은 0으로 보인다)
                             break;
                         case LpChangeKind.Recover:
                             p.Lp += (int)m.Amount;
@@ -272,6 +298,24 @@ namespace DuelRoguelike.Engine.Duel
         }
 
         /// <summary>목록(패·묘지·제외·엑스트라)의 순번을 자리에 맞게 다시 매긴다.</summary>
+        /// <summary>섞은 뒤 엔진이 알려 준 코드 순서대로 다시 놓는다. 같은 코드가 여럿이면 앞에서부터 쓴다.</summary>
+        void Reorder(List<CardInfo> list, List<uint> codes)
+        {
+            if (list.Count != codes.Count)
+                return; // 장수가 다르면 Refresh에 맡긴다
+            var left = new List<CardInfo>(list);
+            list.Clear();
+            foreach (uint code in codes)
+            {
+                int i = left.FindIndex(c => c.Code == code);
+                if (i < 0)
+                    i = 0; // 코드를 모르는 카드(0) 등: 남은 것 중 앞의 것
+                list.Add(left[i]);
+                left.RemoveAt(i);
+            }
+            Renumber(list);
+        }
+
         static void Renumber(List<CardInfo> list)
         {
             for (int i = 0; i < list.Count; i++)
@@ -283,6 +327,34 @@ namespace DuelRoguelike.Engine.Duel
         }
 
         /// <summary>엔진에 조회해 카드 배치, LP, 덱 장수, 체인을 다시 맞춘다.</summary>
+        /// <summary>
+        /// 메시지로 바로 반영하는 정보(LP, 장수, 카드 자리·코드·표시 형식, 체인)를 줄마다 글로 적는다.
+        /// 배치 끝에 엔진 조회(Refresh) 전후를 비교해 메시지 반영이 맞는지 점검하는 데 쓴다.
+        /// </summary>
+        public string[] Snapshot()
+        {
+            var lines = new List<string>();
+            for (int p = 0; p < 2; p++)
+            {
+                var player = Players[p];
+                lines.Add($"P{p} LP {player.Lp}, 덱 {player.DeckCount}, 엑스트라 {player.ExtraCount}");
+                lines.Add($"P{p} 몬스터 존: {Zones(player.MonsterZones)}");
+                lines.Add($"P{p} 마법·함정 존: {Zones(player.SpellZones)}");
+                lines.Add($"P{p} 패: {Codes(player.Hand, false)}");
+                lines.Add($"P{p} 묘지: {Codes(player.Grave, false)}");
+                lines.Add($"P{p} 제외: {Codes(player.Removed, true)}");
+                lines.Add($"P{p} 엑스트라: {Codes(player.Extra, true)}");
+            }
+            lines.Add("체인: " + string.Join(" ", Chain.ConvertAll(c => c.Code.ToString())));
+            return lines.ToArray();
+        }
+
+        static string Zones(CardInfo[] zones) =>
+            string.Join(" ", System.Array.ConvertAll(zones, c => c == null ? "-" : $"{c.Code}/{(int)c.Position:X}"));
+
+        static string Codes(List<CardInfo> cards, bool withFace) =>
+            string.Join(" ", cards.ConvertAll(c => withFace ? $"{c.Code}{(c.IsFaceUp ? "" : "(뒷면)")}" : c.Code.ToString()));
+
         public void Refresh(OcgDuel duel)
         {
             ReadField(duel.QueryField());
@@ -343,11 +415,11 @@ namespace DuelRoguelike.Engine.Duel
                 player.ExtraCount = (int)r.U32();
                 r.U32(); // 엑스트라 덱 앞면 펜듈럼 수
             }
-            Chain.Clear();
+            var engineChain = new List<ChainLink>();
             uint chainCount = r.U32();
             for (uint i = 0; i < chainCount; i++)
             {
-                Chain.Add(new ChainLink
+                engineChain.Add(new ChainLink
                 {
                     Code = r.U32(),
                     Location = r.Location(),
@@ -356,6 +428,16 @@ namespace DuelRoguelike.Engine.Duel
                     TriggerSequence = r.U32(),
                     Description = r.U64(),
                 });
+            }
+            // 엔진은 처리가 끝난 체인을 바로 빼지만, 화면은 체인이 끝날 때(MSG_CHAIN_END)까지 "처리됨"으로 남겨 둔다.
+            // 엔진 체인이 지금 체인의 앞부분과 같으면 (뒤쪽이 처리된 것뿐이면) 그대로 둔다.
+            bool resolvedOnly = engineChain.Count < Chain.Count;
+            for (int i = 0; resolvedOnly && i < engineChain.Count; i++)
+                resolvedOnly = engineChain[i].Code == Chain[i].Code;
+            if (!resolvedOnly)
+            {
+                Chain.Clear();
+                Chain.AddRange(engineChain);
             }
         }
 
