@@ -168,8 +168,16 @@ namespace DuelRoguelike.Run
         readonly List<RunEvent> _events = new List<RunEvent>();
 
         public ulong Seed { get; }
+        /// <summary>시작 덱(레시피)의 Id. 레시피는 런이 끝나기 전에 지우거나 고칠 수 있으므로, 이름은 StartDeckName에 따로 든다.</summary>
         public string StartDeckId { get; }
+
+        /// <summary>런을 시작할 때의 레시피 이름 (표시용).</summary>
+        public string StartDeckName { get; }
+
         public IReadOnlyList<DeckRecipe> Opponents { get; }
+
+        /// <summary>이름을 모르는 시작 덱(형식 2 이전 저장)의 표시 이름: 스타터 덱이면 그 이름, 아니면 Id.</summary>
+        internal static string DefaultDeckName(string id) => StarterDecks.Find(id ?? "")?.Name ?? id;
 
         /// <summary>런에서 얻은 카드가 더해지는 컬렉션. 없으면(null) 더하지 않는다.</summary>
         public CardCollection Collection { get; }
@@ -215,15 +223,16 @@ namespace DuelRoguelike.Run
         public int RefillNeeded => Phase == RunPhase.NeedsRefill ? RunRules.MinMainDeck - _main.Count : 0;
 
         RunState(RunSetup setup, CardDatabase database, RarityTable rarities, CardCollection collection)
-            : this(setup.Seed, setup.StartDeck.Id, setup.Opponents.ToArray(), database, rarities, collection)
+            : this(setup.Seed, setup.StartDeck.Id, setup.StartDeck.Name, setup.Opponents.ToArray(), database, rarities, collection)
         {
         }
 
-        RunState(ulong seed, string startDeckId, IReadOnlyList<DeckRecipe> opponents, CardDatabase database, RarityTable rarities,
-            CardCollection collection)
+        RunState(ulong seed, string startDeckId, string startDeckName, IReadOnlyList<DeckRecipe> opponents, CardDatabase database,
+            RarityTable rarities, CardCollection collection)
         {
             Seed = seed;
             StartDeckId = startDeckId;
+            StartDeckName = string.IsNullOrEmpty(startDeckName) ? DefaultDeckName(startDeckId) : startDeckName;
             Opponents = opponents;
             _database = database;
             _rarities = rarities;
@@ -271,6 +280,7 @@ namespace DuelRoguelike.Run
             run.AddEvent(RunEventKind.RunStarted, 0, e =>
             {
                 e.DeckId = setup.StartDeck.Id;
+                e.DeckName = run.StartDeckName;
                 e.MainCount = run._main.Count;
                 e.ExtraCount = run._extra.Count;
                 e.SideCount = run._side.Count;

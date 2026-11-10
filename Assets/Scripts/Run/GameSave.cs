@@ -1,12 +1,13 @@
 // 저장 (규칙 결정 문서 "저장·무작위 결과"). 파일 하나에 다음을 담는다:
 // - 컬렉션: 한 번이라도 얻은 카드와 장수 (영구). 처음에는 스타터 덱 4개를 지급한 것으로 시작한다.
 // - 골드: 영구 재화. 끝난 런들에서 얻은 골드를 더한 것 (쓰는 곳은 아직 없다).
-// - 마지막 시작 설정: 마지막으로 고른 시작 덱, 시작 덱별로 마지막에 고른 시작 사이드 덱.
+// - 덱 레시피 (PlayerRecipe): 이름, 메인·엑스트라 덱, 시작 사이드 덱. 새 게임에는 스타터 덱 4개가 레시피로 들어 있다. 마지막으로 런을 시작한 레시피.
 // - 진행 중인 런 (있으면, RunStateSave.cs). 듀얼 중에 저장된 런을 읽으면 그 듀얼을 패배로 처리한다 (ForfeitedDuel).
-// 화면은 층을 오를 때, 듀얼을 시작할 때, 보상 후보를 뽑았을 때(듀얼 결과), 보상을 골랐을 때(컬렉션), 교환·보충마다 저장한다.
+// 화면은 층을 오를 때, 듀얼을 시작할 때, 보상 후보를 뽑았을 때(듀얼 결과), 보상을 골랐을 때(컬렉션), 교환·보충마다, 레시피를 저장·지울 때 저장한다.
 // 그래서 무작위 결과(상대, 보상 후보, 봉인할 카드)를 다시 켜서 다시 뽑을 수 없다.
 // 파일 형식은 SaveText.cs (줄 단위 텍스트). 파일 위치는 부르는 쪽이 정한다 (게임: 유니티 persistentDataPath).
 // 형식 1(포인트 대체 횟수, 기절)도 읽는다: 포인트는 골드 환산표로 골드로 바꾸고, 기절은 봉인으로 옮긴다.
+// 형식 2까지(레시피 없음)는 스타터 덱 4개를 레시피로 만들고, 시작 덱별 마지막 시작 사이드 덱(last-side-deck)을 그 레시피의 사이드 덱으로 옮긴다.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -19,13 +20,17 @@ namespace DuelRoguelike.Run
     public sealed class GameSave
     {
         /// <summary>저장 파일 형식 버전. 형식을 바꾸면 올리고, 이전 버전 파일을 읽는 길을 남긴다.</summary>
-        public const int FormatVersion = 2;
+        public const int FormatVersion = 3;
 
         static readonly string[] ProfileKeys = { "format", "gold", "last-start-deck" };
+        static readonly string[] RepeatableProfileKeysV2 = { "card", "last-side-deck" };
         static readonly string[] ProfileKeysV1 = { "format", "points", "last-start-deck" };
-        static readonly string[] RepeatableProfileKeys = { "card", "last-side-deck" };
+        static readonly string[] RepeatableProfileKeys = { "card", "recipe", "recipe-deck", "recipe-side" };
 
-        readonly Dictionary<string, List<uint>> _lastSideDecks = new Dictionary<string, List<uint>>(StringComparer.Ordinal);
+        /// <summary>새로 만든 레시피 Id의 앞부분 (뒤에 번호).</summary>
+        public const string NewRecipePrefix = "deck-";
+
+        readonly List<PlayerRecipe> _recipes = new List<PlayerRecipe>();
 
         GameSave(CardCollection collection) => Collection = collection;
 
@@ -43,15 +48,52 @@ namespace DuelRoguelike.Run
         /// </summary>
         public int ForfeitedDuel { get; private set; }
 
-        /// <summary>마지막으로 런을 시작한 시작 덱 Id (없으면 null).</summary>
+        /// <summary>마지막으로 런을 시작한 레시피 Id (없으면 null). 그 레시피를 지웠으면 남아 있지 않을 수 있다.</summary>
         public string LastStartDeckId { get; private set; }
 
-        /// <summary>이 시작 덱으로 마지막에 고른 시작 사이드 덱 (없으면 빈 목록).</summary>
-        public IReadOnlyList<uint> LastSideDeck(string startDeckId) =>
-            startDeckId != null && _lastSideDecks.TryGetValue(startDeckId, out var side) ? side : (IReadOnlyList<uint>)Array.Empty<uint>();
+        /// <summary>덱 레시피 (만든 순서).</summary>
+        public IReadOnlyList<PlayerRecipe> Recipes => _recipes;
 
-        /// <summary>처음 하는 플레이어의 저장: 스타터 덱 4개를 지급한 컬렉션, 진행 중인 런 없음.</summary>
-        public static GameSave NewGame() => new GameSave(CardCollection.FromRecipes(StarterDecks.All));
+        public PlayerRecipe FindRecipe(string id) => _recipes.FirstOrDefault(r => r.Id == id);
+
+        /// <summary>처음 하는 플레이어의 저장: 스타터 덱 4개를 지급한 컬렉션, 스타터 덱 4개의 레시피, 진행 중인 런 없음.</summary>
+        public static GameSave NewGame()
+        {
+            var save = new GameSave(CardCollection.FromRecipes(StarterDecks.All));
+            save._recipes.AddRange(StarterDecks.All.Select(d => PlayerRecipe.FromStarter(d)));
+            return save;
+        }
+
+        /// <summary>새 레시피에 줄 Id: deck-번호 (지금 있는 deck-번호 중 가장 큰 것 + 1).</summary>
+        public string NewRecipeId()
+        {
+            int max = 0;
+            foreach (var recipe in _recipes)
+                if (recipe.Id.StartsWith(NewRecipePrefix, StringComparison.Ordinal) &&
+                    int.TryParse(recipe.Id.Substring(NewRecipePrefix.Length), out int n) && n > max)
+                    max = n;
+            return NewRecipePrefix + (max + 1);
+        }
+
+        /// <summary>
+        /// 레시피를 저장한다 (같은 Id가 있으면 바꾸고, 없으면 끝에 더한다). 저장 규칙(RecipeRules.SaveProblems)을 어기면 저장하지 않고 그 문제 목록을 돌려준다.
+        /// 저장했으면 빈 목록. 파일에 쓰는 것은 부르는 쪽(GameSaveFile.Save)이 한다.
+        /// </summary>
+        public List<string> SaveRecipe(PlayerRecipe recipe, CardDatabase database)
+        {
+            var problems = RecipeRules.SaveProblems(recipe, database);
+            if (problems.Count > 0)
+                return problems;
+            int index = _recipes.FindIndex(r => r.Id == recipe.Id);
+            if (index >= 0)
+                _recipes[index] = recipe;
+            else
+                _recipes.Add(recipe);
+            return problems;
+        }
+
+        /// <summary>레시피를 지운다. 진행 중인 런은 영향을 받지 않는다 (런은 시작할 때 덱을 복사해 들고 있다). 지웠으면 true.</summary>
+        public bool DeleteRecipe(string id) => _recipes.RemoveAll(r => r.Id == id) > 0;
 
         /// <summary>런을 시작한다. 진행 중인 런이 있으면 InvalidOperationException (먼저 AbandonRun).</summary>
         public RunState StartRun(RunSetup setup, CardDatabase database, RarityTable rarities)
@@ -60,9 +102,12 @@ namespace DuelRoguelike.Run
                 throw new InvalidOperationException("진행 중인 런이 있습니다. 먼저 포기(AbandonRun)하거나 끝난 런을 정리(CloseEndedRun)하세요.");
             Run = RunState.Start(setup, database, rarities, Collection);
             LastStartDeckId = setup.StartDeck.Id;
-            _lastSideDecks[setup.StartDeck.Id] = (setup.SideDeck ?? Array.Empty<uint>()).ToList();
             return Run;
         }
+
+        /// <summary>레시피로 런을 시작한다. 시작할 수 없는 레시피면 ArgumentException (RunState.CheckSetup의 문제 목록).</summary>
+        public RunState StartRun(PlayerRecipe recipe, ulong seed, IReadOnlyList<DeckRecipe> opponents, CardDatabase database, RarityTable rarities) =>
+            StartRun(recipe.ToSetup(seed, opponents), database, rarities);
 
         /// <summary>진행 중인 런을 포기하고 정리한다 (런 종료로 처리). 런이 없으면 아무것도 하지 않는다.</summary>
         public void AbandonRun()
@@ -95,8 +140,13 @@ namespace DuelRoguelike.Run
             w.Line("gold", Gold);
             if (LastStartDeckId != null)
                 w.Line("last-start-deck", LastStartDeckId);
-            foreach (var pair in _lastSideDecks.OrderBy(p => p.Key, StringComparer.Ordinal))
-                w.Line("last-side-deck", new object[] { pair.Key }.Concat(pair.Value.Cast<object>()));
+            w.Comment($"덱 레시피 {_recipes.Count}개: recipe Id 이름(공백은 %20) / recipe-deck Id 메인·엑스트라 카드 / recipe-side Id 시작 사이드 덱 카드");
+            foreach (var recipe in _recipes)
+            {
+                w.Line("recipe", recipe.Id, SaveEscape.Encode(recipe.Name));
+                w.Line("recipe-deck", new object[] { recipe.Id }.Concat(recipe.Deck.Cast<object>()));
+                w.Line("recipe-side", new object[] { recipe.Id }.Concat(recipe.Side.Cast<object>()));
+            }
             w.Comment($"컬렉션 {Collection.Cards.Count}종 {Collection.TotalCount}장: card 카드코드 장수");
             foreach (var pair in Collection.Cards.OrderBy(p => p.Key))
                 w.Line("card", pair.Key, pair.Value);
@@ -159,7 +209,7 @@ namespace DuelRoguelike.Run
             if (inRun)
                 throw r.Error(runStart, "end-run이 없음");
 
-            var map = r.Unique(profile, version < 2 ? ProfileKeysV1 : ProfileKeys, RepeatableProfileKeys);
+            var map = r.Unique(profile, version < 2 ? ProfileKeysV1 : ProfileKeys, version < 3 ? RepeatableProfileKeysV2 : RepeatableProfileKeys);
             var collection = new CardCollection();
             foreach (var line in profile.Where(l => l.Key == "card"))
             {
@@ -188,14 +238,10 @@ namespace DuelRoguelike.Run
                 r.ExpectCount(lastDeck, 1);
                 save.LastStartDeckId = lastDeck.Values[0];
             }
-            foreach (var line in profile.Where(l => l.Key == "last-side-deck"))
-            {
-                r.ExpectAtLeast(line, 1);
-                string id = line.Values[0];
-                if (save._lastSideDecks.ContainsKey(id))
-                    throw r.Error(line, $"시작 덱 {id}가 두 번 나옴");
-                save._lastSideDecks[id] = r.Codes(line, 1);
-            }
+            if (version < 3)
+                ReadRecipesV2(profile, r, save);
+            else
+                ReadRecipes(profile, r, save);
             if (runLines != null)
                 save.Run = RunState.ReadFrom(runLines, r, database, rarities, collection, version);
             if (save.Run != null && save.Run.Phase == RunPhase.InDuel)
@@ -205,6 +251,66 @@ namespace DuelRoguelike.Run
                 save.Run.ForfeitDuel();
             }
             return save;
+        }
+
+        /// <summary>형식 3: recipe(Id, 이름) 줄마다 recipe-deck·recipe-side 줄이 하나씩. 카드 규칙은 보지 않는다 (편집 화면이 알려 준다).</summary>
+        static void ReadRecipes(List<SaveLine> profile, SaveReader r, GameSave save)
+        {
+            var names = new List<(SaveLine Line, string Id, string Name)>();
+            foreach (var line in profile.Where(l => l.Key == "recipe"))
+            {
+                r.ExpectCount(line, 2);
+                string id = line.Values[0];
+                if (names.Any(n => n.Id == id))
+                    throw r.Error(line, $"레시피 {id}가 두 번 나옴");
+                names.Add((line, id, SaveEscape.Decode(line.Values[1], r, line)));
+            }
+            Dictionary<string, List<uint>> Cards(string key)
+            {
+                var cards = new Dictionary<string, List<uint>>(StringComparer.Ordinal);
+                foreach (var line in profile.Where(l => l.Key == key))
+                {
+                    r.ExpectAtLeast(line, 1);
+                    string id = line.Values[0];
+                    if (names.All(n => n.Id != id))
+                        throw r.Error(line, $"{key}의 레시피 {id}가 recipe 줄에 없음");
+                    if (cards.ContainsKey(id))
+                        throw r.Error(line, $"레시피 {id}의 {key}가 두 번 나옴");
+                    cards[id] = r.Codes(line, 1);
+                }
+                return cards;
+            }
+            var decks = Cards("recipe-deck");
+            var sides = Cards("recipe-side");
+            foreach (var (line, id, name) in names)
+            {
+                if (!decks.TryGetValue(id, out var deck))
+                    throw r.Error(line, $"레시피 {id}의 recipe-deck 줄이 없음");
+                try
+                {
+                    save._recipes.Add(new PlayerRecipe(id, name, deck, sides.TryGetValue(id, out var side) ? side : null));
+                }
+                catch (ArgumentException e)
+                {
+                    throw r.Error(line, e.Message);
+                }
+            }
+        }
+
+        /// <summary>형식 2까지: 레시피가 없다. 스타터 덱 4개를 레시피로 만들고, 시작 덱별 마지막 시작 사이드 덱을 그 사이드 덱으로 옮긴다.</summary>
+        static void ReadRecipesV2(List<SaveLine> profile, SaveReader r, GameSave save)
+        {
+            var lastSide = new Dictionary<string, List<uint>>(StringComparer.Ordinal);
+            foreach (var line in profile.Where(l => l.Key == "last-side-deck"))
+            {
+                r.ExpectAtLeast(line, 1);
+                string id = line.Values[0];
+                if (lastSide.ContainsKey(id))
+                    throw r.Error(line, $"시작 덱 {id}가 두 번 나옴");
+                lastSide[id] = r.Codes(line, 1);
+            }
+            foreach (var deck in StarterDecks.All)
+                save._recipes.Add(PlayerRecipe.FromStarter(deck, lastSide.TryGetValue(deck.Id, out var side) ? side : null));
         }
     }
 

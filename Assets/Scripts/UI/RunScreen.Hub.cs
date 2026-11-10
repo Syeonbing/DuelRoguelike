@@ -90,7 +90,7 @@ namespace DuelRoguelike.UI
             last.name = "last-duel";
             last.style.whiteSpace = WhiteSpace.Normal;
             texts.Add(last);
-            texts.Add(Text($"시작 덱 {DeckName(_run.StartDeckId)} · 시드 {_run.Seed}", 14, UiStyle.TextDim, top: 2));
+            texts.Add(Text($"시작 덱 {_run.StartDeckName} · 시드 {_run.Seed}", 14, UiStyle.TextDim, top: 2));
             bar.Add(texts);
 
             var right = UiStyle.Box();
@@ -103,6 +103,12 @@ namespace DuelRoguelike.UI
             log.style.marginRight = 10;
             log.style.unityTextAlign = TextAnchor.MiddleCenter;
             buttons.Add(log);
+            var saveRecipe = UiStyle.Button("지금 덱을 레시피로", OpenSaveRecipe, 16);
+            saveRecipe.name = "save-recipe";
+            saveRecipe.style.marginRight = 10;
+            saveRecipe.style.unityTextAlign = TextAnchor.MiddleCenter;
+            saveRecipe.SetEnabled(_run.Phase == RunPhase.Ready);
+            buttons.Add(saveRecipe);
             var toTitle = UiStyle.Button("처음 화면으로", GoToStart, 16);
             toTitle.name = "to-title";
             toTitle.style.marginRight = 10;
@@ -157,6 +163,60 @@ namespace DuelRoguelike.UI
             head.Add(close);
             panel.Add(head);
             panel.Add(EventLog());
+        }
+
+        /// <summary>
+        /// "지금 덱을 레시피로 저장" 창: 지금 메인·엑스트라 덱을 새 레시피로 (PlayerRecipe.FromRun). 시작 사이드 덱은 비운다
+        /// (런 중 사이드 덱은 장수 제한이 없어 시작 사이드 덱 한도와 맞지 않는다). 봉인된 카드는 넣지 않는다.
+        /// </summary>
+        void OpenSaveRecipe()
+        {
+            if (_run == null || _run.Phase != RunPhase.Ready)
+                return;
+            var panel = OpenModal(720);
+            panel.name = "save-recipe-panel";
+            panel.Add(UiStyle.Label("지금 덱을 레시피로 저장", 26, UiStyle.Accent, bold: true));
+            var note = Text($"메인 덱 {_run.MainDeck.Count}장과 엑스트라 덱 {_run.ExtraDeck.Count}장을 새 덱 레시피로 저장합니다. " +
+                            "사이드 덱과 봉인된 카드는 넣지 않습니다 (시작 사이드 덱은 런 시작 화면의 덱 편집에서 고릅니다). " +
+                            "런에서 얻은 카드도 컬렉션에 들어 있어 다음 런에 쓸 수 있습니다.", 15, UiStyle.TextDim, top: 8);
+            note.style.whiteSpace = WhiteSpace.Normal;
+            panel.Add(note);
+            panel.Add(SubHeading("레시피 이름"));
+            var name = DarkTextField("recipe-name", ClipName($"{_run.StartDeckName} {_run.Floor}층"), 20);
+            name.maxLength = PlayerRecipe.MaxNameLength;
+            panel.Add(name);
+            var error = Text("", 15, UiStyle.Opponent, top: 6);
+            error.name = "recipe-error";
+            error.style.whiteSpace = WhiteSpace.Normal;
+            error.style.display = DisplayStyle.None;
+            panel.Add(error);
+            var buttons = Row();
+            buttons.style.marginTop = 12;
+            buttons.style.justifyContent = Justify.FlexEnd;
+            var confirm = UiStyle.Button("저장", () => SaveRunAsRecipe(name.value, error), 20);
+            confirm.name = "recipe-save-confirm";
+            buttons.Add(confirm);
+            var cancel = UiStyle.Button("취소", CloseModal, 20);
+            cancel.name = "recipe-save-cancel";
+            cancel.style.marginLeft = 8;
+            buttons.Add(cancel);
+            panel.Add(buttons);
+        }
+
+        void SaveRunAsRecipe(string name, Label error)
+        {
+            var recipe = PlayerRecipe.FromRun(_run, _save.NewRecipeId(), (name ?? "").Trim());
+            var problems = _save.SaveRecipe(recipe, _data.Database);
+            if (problems.Count > 0)
+            {
+                ShowError(error, "저장할 수 없습니다: " + string.Join(" / ", problems));
+                return;
+            }
+            Persist();
+            Debug.Log($"[런] 지금 덱을 레시피로: {recipe.Name} ({recipe.Id}), 덱 {recipe.Deck.Count}장");
+            _moveNotice = $"지금 덱을 레시피 「{recipe.Name}」(으)로 저장했습니다. 런 시작 화면의 덱 레시피 목록에 있습니다.";
+            _moveNoticeIsError = false;
+            ShowHub();
         }
 
         // ---- 덱 ----
