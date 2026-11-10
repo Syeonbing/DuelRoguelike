@@ -9,7 +9,9 @@
 //   "지금 덱을 레시피로 저장"은 지금 메인·엑스트라 덱을 새 레시피로 저장한다 (사이드 덱은 비운다).
 // - 승리 보상 고르기 (RunScreen.Reward.cs): 이기면(ChoosingReward) 층 사이 화면 위에 뜨는 창. 후보 카드 3장(모자라면 빈 자리는 골드) 중 하나를 고른다.
 // - 보충 고르기: 메인 덱이 40장 미만(NeedsRefill)이면 층 사이 화면 위에 뜨는 창. 닫을 수 없고, 다 채우면 저절로 닫힌다.
-// - 런 종료: 도달한 층, 전적, 얻은 카드·골드, 런 로그.
+// - 탑·칩교환소·이벤트·보스 보상 (RunScreen.Tower.cs): 층 사이 화면 오른쪽의 탑(10층 묶음), 층 종류마다 버튼
+//   (전투·보스: 듀얼 시작, 칩교환소: 열기·다음 층, 휴식: 다음 층, 이벤트: 이벤트 보기), 칩교환소 창, 이벤트 창, 보스 보상 봉인 해제 창.
+// - 런 종료: 도달한 층, 전적, 얻은 카드·골드·칩, 골드 정산, 런 로그.
 // 카드는 모두 CardFaces(텍스트 카드 템플릿)로 그린다. 마우스를 올리면 카드 정보 칸에 크게 보이고, 누르면 그 카드에 고정된다.
 // 저장(GameSave): 런 시작, 듀얼 시작, 듀얼 결과(보상 후보·봉인), 보상 고르기, 교환·보충마다 저장 파일에 쓴다.
 // 듀얼 도중에 게임을 끄면 다시 켰을 때 그 듀얼은 패배로 처리된다 (GameSave.ForfeitedDuel, 알림을 띄우고 바로 저장). 저장 폴더는 환경 변수 DUELROGUELIKE_SAVE_DIR(시험용), 없으면 persistentDataPath.
@@ -51,6 +53,12 @@ namespace DuelRoguelike.UI
             DeckSide,
             /// <summary>보충 창의 후보</summary>
             Refill,
+            /// <summary>칩교환소에서 봉인을 풀 카드 후보</summary>
+            ShopRelease,
+            /// <summary>칩교환소에서 대신 봉인할 카드 후보 (직접 고르는 교체)</summary>
+            ShopSeal,
+            /// <summary>보스 보상으로 봉인을 풀 카드 후보</summary>
+            Unseal,
         }
 
         static readonly Color Positive = UiStyle.Hex(0x5ee07a);
@@ -247,8 +255,9 @@ namespace DuelRoguelike.UI
             stats.Add(Stat("끝낸 듀얼", $"{_run.DuelsPlayed}판"));
             stats.Add(Stat("전적", $"{_run.Wins}승 {_run.Losses}패" + (_run.Draws > 0 ? $" {_run.Draws}무" : "")));
             stats.Add(Stat("얻은 카드", $"{rewards.Count}장"));
-            stats.Add(Stat("얻은 골드", $"{_run.Gold}"));
-            stats.Add(Stat("봉인", $"메인 {_run.SealedMain.Count} · 엑스트라 {_run.SealedExtra.Count}"));
+            stats.Add(Stat($"얻은 골드 (정산 {_run.SettlementGold} 포함)", $"{_run.Gold + _run.SettlementGold}"));
+            stats.Add(Stat($"남은 칩 (얻은 칩 {_run.ChipsEarned})", $"{_run.Chips}"));
+            stats.Add(Stat("봉인 (메인 + 엑스트라)", $"{_run.SealedMain.Count} + {_run.SealedExtra.Count}"));
             panel.Add(stats);
 
             var body = Row();
@@ -272,8 +281,13 @@ namespace DuelRoguelike.UI
                 grid.Add(face);
             }
             left.Add(list);
-            left.Add(Text($"이번 런의 골드 {_run.Gold} (보상 빈 자리·등급 대체)을 더해 골드 누적 {_save.Gold}. 골드를 쓰는 곳은 아직 없습니다.",
-                14, UiStyle.TextDim, top: 6));
+            int floorBonus = RunRules.SettlementFloorBonus(_run.Floor);
+            var settlement = Text($"골드 정산 {_run.SettlementGold} = 도달 {_run.Floor}층 + 10층 보너스 {floorBonus} + 얻은 칩 {_run.ChipsEarned}÷{RunRules.SettlementEarnedChipsDivisor} " +
+                                  $"+ 남은 칩 {_run.Chips}÷{RunRules.SettlementHeldChipsDivisor}. 이번 런의 골드 {_run.Gold} (보상 빈 자리·등급 대체)와 정산을 더해 " +
+                                  $"골드 누적 {_save.Gold}. 골드를 쓰는 곳은 아직 없습니다.", 14, UiStyle.TextDim, top: 6);
+            settlement.name = "run-settlement";
+            settlement.style.whiteSpace = WhiteSpace.Normal;
+            left.Add(settlement);
             body.Add(left);
 
             var right = UiStyle.PanelBox();
@@ -315,7 +329,7 @@ namespace DuelRoguelike.UI
             log.style.marginTop = 6;
             foreach (var e in _run.Events)
             {
-                bool head = e.Kind == RunEventKind.DuelStarted || e.Kind == RunEventKind.RunStarted;
+                bool head = e.Kind == RunEventKind.DuelStarted || e.Kind == RunEventKind.RunStarted || e.Kind == RunEventKind.FloorEntered;
                 var line = Text((head ? "" : "    ") + e.Describe(_text.CardName), 15, EventColor(e.Kind), top: head ? 6 : 1);
                 log.Add(line);
             }
@@ -335,10 +349,15 @@ namespace DuelRoguelike.UI
                 case RunEventKind.RefillRequired:
                 case RunEventKind.RunEnded:
                 case RunEventKind.RewardOffered:
+                case RunEventKind.FloorEntered:
+                case RunEventKind.UnsealOffered:
+                case RunEventKind.GoldSettled:
                     return UiStyle.Accent;
                 case RunEventKind.DuelWon:
                 case RunEventKind.RewardGained:
                 case RunEventKind.RewardGold:
+                case RunEventKind.ChipsGained:
+                case RunEventKind.CardUnsealed:
                     return Positive;
                 case RunEventKind.DuelLost:
                 case RunEventKind.DuelForfeited:
