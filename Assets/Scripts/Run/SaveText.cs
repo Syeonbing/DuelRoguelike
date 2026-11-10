@@ -150,4 +150,50 @@ namespace DuelRoguelike.Run
 
         public override string ToString() => _text.ToString();
     }
+
+    /// <summary>
+    /// 공백이 든 글(레시피 이름 등)을 값 하나로 쓰기: %, #, =, 공백 문자만 %XX(UTF-16 코드 두 자리 16진수, 넘으면 %uXXXX)로 바꾼다.
+    /// 한글은 그대로 두어 파일을 열어 읽을 수 있다. 빈 글은 "%"로 쓴다.
+    /// </summary>
+    internal static class SaveEscape
+    {
+        public static string Encode(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return "%";
+            var sb = new StringBuilder(text.Length);
+            foreach (char c in text)
+            {
+                if (c == '%' || c == '#' || c == '=' || char.IsWhiteSpace(c) || char.IsControl(c))
+                    sb.Append(c <= 0xff ? $"%{(int)c:X2}" : $"%u{(int)c:X4}");
+                else
+                    sb.Append(c);
+            }
+            return sb.ToString();
+        }
+
+        public static string Decode(string value, SaveReader r, SaveLine line)
+        {
+            if (value == "%")
+                return "";
+            var sb = new StringBuilder(value.Length);
+            for (int i = 0; i < value.Length; i++)
+            {
+                char c = value[i];
+                if (c != '%')
+                {
+                    sb.Append(c);
+                    continue;
+                }
+                bool wide = i + 1 < value.Length && value[i + 1] == 'u';
+                int start = i + (wide ? 2 : 1), digits = wide ? 4 : 2;
+                if (start + digits > value.Length ||
+                    !int.TryParse(value.Substring(start, digits), NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out int code))
+                    throw r.Error(line, $"\"{value}\"의 % 표기가 틀림");
+                sb.Append((char)code);
+                i = start + digits - 1;
+            }
+            return sb.ToString();
+        }
+    }
 }

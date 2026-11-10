@@ -1,10 +1,12 @@
 // 로그라이크 런 화면 (UI Toolkit). 설계 문서 "로그라이크 진행".
 // 화면: 런 시작 → 층 사이 화면 ⇄ 듀얼 화면(DuelScreen) → … → 런 종료 → 런 시작.
-// - 런 시작 (RunScreen.Start.cs): 진행 중인 런이 있으면 "이어하기". 새 런은 시작 덱(스타터 덱 4개), 시드,
-//   시작 사이드 덱(컬렉션에서 3장까지, 시작 덱과 합쳐 같은 카드명 3장까지)을 고른다. 진행 중인 런이 있을 때 새 런을 시작하려면 한 번 더 눌러 포기를 확인한다.
+// - 런 시작 (RunScreen.Start.cs): 진행 중인 런이 있으면 "이어하기". 새 런은 덱 레시피(메인·엑스트라·시작 사이드 덱)와 시드를 고른다.
+//   진행 중인 런이 있을 때 새 런을 시작하려면 한 번 더 눌러 포기를 확인한다.
+// - 덱 편집 (RunScreen.Deck.cs): 런 시작 화면에서 레시피를 열어 컬렉션의 카드로 고치고 저장한다 (규칙은 RecipeEditor·RecipeRules).
 // - 층 사이 화면 (RunScreen.Hub.cs): 위 상태 줄(층·LP·전적·직전 듀얼), 왼쪽 카드 정보, 가운데 메인·엑스트라·사이드 덱과 봉인된 카드를
 //   카드 모양으로 늘어놓는다. 덱과 사이드 덱 사이는 끌어다 놓기, 두 번 누르기, 카드 정보의 버튼으로 옮긴다. 런 로그는 따로 여는 창.
 //   "다음 듀얼 시작"을 누르면 RunState.BeginDuel로 상대·덱·LP·시드를 정해 듀얼 화면에 맡긴다. "처음 화면으로"는 저장된 채로 런 시작 화면으로.
+//   "지금 덱을 레시피로 저장"은 지금 메인·엑스트라 덱을 새 레시피로 저장한다 (사이드 덱은 비운다).
 // - 승리 보상 고르기 (RunScreen.Reward.cs): 이기면(ChoosingReward) 층 사이 화면 위에 뜨는 창. 후보 카드 3장(모자라면 빈 자리는 골드) 중 하나를 고른다.
 // - 보충 고르기: 메인 덱이 40장 미만(NeedsRefill)이면 층 사이 화면 위에 뜨는 창. 닫을 수 없고, 다 채우면 저절로 닫힌다.
 // - 런 종료: 도달한 층, 전적, 얻은 카드·골드, 런 로그.
@@ -39,10 +41,14 @@ namespace DuelRoguelike.UI
             Sealed,
             /// <summary>승리 보상 고르기 창의 후보</summary>
             Reward,
-            /// <summary>런 시작 화면의 컬렉션</summary>
+            /// <summary>덱 편집 화면의 컬렉션</summary>
             Collection,
-            /// <summary>런 시작 화면의 시작 사이드 덱</summary>
-            StartSide,
+            /// <summary>레시피의 메인 덱 (런 시작 화면의 레시피 보기, 덱 편집)</summary>
+            DeckMain,
+            /// <summary>레시피의 엑스트라 덱</summary>
+            DeckExtra,
+            /// <summary>레시피의 시작 사이드 덱</summary>
+            DeckSide,
             /// <summary>보충 창의 후보</summary>
             Refill,
         }
@@ -138,8 +144,7 @@ namespace DuelRoguelike.UI
                 Debug.Log("[런] " + _forfeitNotice);
                 Persist();
             }
-            _startDeck = StarterDecks.Find(_save.LastStartDeckId ?? "") ?? StarterDecks.Yugi;
-            SetStartSide(_save.LastSideDeck(_startDeck.Id));
+            _startRecipeId = _save.LastStartDeckId;
             Debug.Log($"[런] 카드 {_data.CardCount}장, 한글 {_data.LocalizedCount}장, 등급 표 {_rarities.Count}장, " +
                       $"카드 그림 폴더 {_images.Folder}{(_images.FolderExists ? "" : " (없음)")}, " +
                       $"저장 {GameSaveFile.FilePath(_saveDir)}: 컬렉션 {_collection.Cards.Count}종 {_collection.TotalCount}장, " +
@@ -233,7 +238,7 @@ namespace DuelRoguelike.UI
                 : _run.EndReason == RunEndReason.Abandoned ? "런을 포기했습니다."
                 : "런이 끝났습니다.";
             panel.Add(Text(reason, 17, top: 6));
-            panel.Add(Text($"시작 덱 {DeckName(_run.StartDeckId)} · 시드 {_run.Seed}", 14, UiStyle.TextDim, top: 2));
+            panel.Add(Text($"시작 덱 {_run.StartDeckName} · 시드 {_run.Seed}", 14, UiStyle.TextDim, top: 2));
 
             var rewards = _run.Events.Where(e => e.Kind == RunEventKind.RewardGained).ToList();
             var stats = Row();
@@ -367,7 +372,9 @@ namespace DuelRoguelike.UI
             switch (pile)
             {
                 case Pile.Collection: return "pick-" + code;
-                case Pile.StartSide: return "side-" + code;
+                case Pile.DeckMain: return "deck-main-" + code;
+                case Pile.DeckExtra: return "deck-extra-" + code;
+                case Pile.DeckSide: return "deck-side-" + code;
                 case Pile.Refill: return "refill-" + code;
                 case Pile.Reward: return "reward-card-" + code;
                 default: return $"card-{pile.ToString().ToLowerInvariant()}-{code}";
@@ -426,12 +433,26 @@ namespace DuelRoguelike.UI
         {
             foreach (var (zone, onDrop) in _dropZones)
             {
-                if (zone.panel != null && zone.worldBound.Contains(position))
+                if (zone.panel != null && VisibleBound(zone).Contains(position))
                 {
                     onDrop(pile, code);
                     return;
                 }
             }
+        }
+
+        /// <summary>스크롤 안에서 보이는 부분만 (스크롤 밖으로 나간 부분은 그 아래 고정한 칸과 겹치므로 놓을 곳으로 치지 않는다).</summary>
+        static Rect VisibleBound(VisualElement element)
+        {
+            var r = element.worldBound;
+            for (var p = element.parent; p != null; p = p.parent)
+            {
+                if (!(p is ScrollView scroll))
+                    continue;
+                var v = scroll.contentViewport.worldBound;
+                r = Rect.MinMaxRect(Mathf.Max(r.xMin, v.xMin), Mathf.Max(r.yMin, v.yMin), Mathf.Min(r.xMax, v.xMax), Mathf.Min(r.yMax, v.yMax));
+            }
+            return r;
         }
 
         /// <summary>카드를 고른다: 테두리 표시와 카드 정보 칸만 바꾼다 (화면을 다시 그리지 않아서 두 번 누르기가 이어진다).</summary>
@@ -526,7 +547,6 @@ namespace DuelRoguelike.UI
 
         bool IsExtraDeckCard(uint code) => _data.Database.TryGet(code, out var record) && DeckRecipe.IsExtraDeckType(record.Type);
 
-        static string DeckName(string id) => StarterDecks.Find(id ?? "")?.Name ?? id;
 
         // ================= 화면 도우미 =================
 
@@ -591,6 +611,21 @@ namespace DuelRoguelike.UI
             var label = UiStyle.Label(text, size, color, bold);
             label.style.marginTop = top;
             return label;
+        }
+
+        /// <summary>글 입력 칸. 기본 테마의 입력 칸은 흰 바탕이라 화면 글자색(밝은 색)이 보이지 않아 어두운 칸으로 바꾼다.</summary>
+        static TextField DarkTextField(string name, string value, int fontSize)
+        {
+            var field = new TextField { name = name, value = value ?? "" };
+            field.style.fontSize = fontSize;
+            var input = field.Q(className: TextField.inputUssClassName);
+            if (input != null)
+            {
+                input.style.backgroundColor = UiStyle.PanelLight;
+                input.style.color = UiStyle.Text;
+                UiStyle.BorderColor(input, UiStyle.Border, 1);
+            }
+            return field;
         }
     }
 }

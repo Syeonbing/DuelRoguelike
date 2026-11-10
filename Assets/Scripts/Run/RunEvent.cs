@@ -78,6 +78,9 @@ namespace DuelRoguelike.Run
         public Rarity Rarity { get; internal set; }
         public RunPile Pile { get; internal set; }
         public string DeckId { get; internal set; }
+
+        /// <summary>런 시작: 시작 덱(레시피) 이름. 없으면(형식 2 이전 저장) DeckId로 찾는다.</summary>
+        public string DeckName { get; internal set; }
         public DuelResult Result { get; internal set; }
         public int Lp { get; internal set; }
         public int PreviousLp { get; internal set; }
@@ -95,9 +98,9 @@ namespace DuelRoguelike.Run
             switch (Kind)
             {
                 case RunEventKind.RunStarted:
-                    return $"런 시작: 시작 덱 {DeckName(DeckId)} (메인 {MainCount}장, 엑스트라 {ExtraCount}장, 사이드 {SideCount}장)";
+                    return $"런 시작: 시작 덱 {DeckName ?? DeckNameOf(DeckId)} (메인 {MainCount}장, 엑스트라 {ExtraCount}장, 사이드 {SideCount}장)";
                 case RunEventKind.DuelStarted:
-                    return $"{Floor}층 듀얼 {DuelNumber}{(RunRules.IsBossFloor(Floor) ? " (보스 층)" : "")}: 상대 {DeckName(DeckId)}, 나의 LP {Lp}";
+                    return $"{Floor}층 듀얼 {DuelNumber}{(RunRules.IsBossFloor(Floor) ? " (보스 층)" : "")}: 상대 {DeckNameOf(DeckId)}, 나의 LP {Lp}";
                 case RunEventKind.DuelWon:
                     return $"승리 (남은 LP {Lp})";
                 case RunEventKind.DuelLost:
@@ -144,7 +147,7 @@ namespace DuelRoguelike.Run
         }
 
         /// <summary>스타터 덱이면 표시 이름, 아니면 Id 그대로.</summary>
-        static string DeckName(string id) => StarterDecks.Find(id ?? "")?.Name ?? id;
+        static string DeckNameOf(string id) => StarterDecks.Find(id ?? "")?.Name ?? id;
 
         public static string PileName(RunPile pile) =>
             pile == RunPile.Main ? "메인 덱" : pile == RunPile.Extra ? "엑스트라 덱" : "사이드 덱";

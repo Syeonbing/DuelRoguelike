@@ -19,7 +19,7 @@ namespace DuelRoguelike.Run
         static readonly string[] RunKeys =
         {
             "seed", "start-deck", "opponents", "phase", "end-reason", "floor", "duels", "streak", "lp", "wins", "losses", "draws",
-            "main", "extra", "side", "sealed-main", "sealed-extra", "gold", "reward",
+            "main", "extra", "side", "sealed-main", "sealed-extra", "gold", "reward", "start-deck-name",
         };
 
         static readonly string[] RunKeysV1 =
@@ -34,6 +34,7 @@ namespace DuelRoguelike.Run
         {
             w.Line("seed", Seed);
             w.Line("start-deck", StartDeckId);
+            w.Line("start-deck-name", SaveEscape.Encode(StartDeckName));
             w.Line("opponents", Opponents.Select(d => (object)d.Id));
             w.Line("phase", Phase);
             w.Line("end-reason", EndReason);
@@ -70,6 +71,7 @@ namespace DuelRoguelike.Run
             if (e.Rarity != default) yield return Invariant($"rarity={e.Rarity}");
             if (e.Pile != default) yield return Invariant($"pile={e.Pile}");
             if (e.DeckId != null) yield return Invariant($"deck={e.DeckId}");
+            if (e.DeckName != null) yield return "deck-name=" + SaveEscape.Encode(e.DeckName);
             if (e.Result != default) yield return Invariant($"result={e.Result}");
             if (e.Lp != 0) yield return Invariant($"lp={e.Lp}");
             if (e.PreviousLp != 0) yield return Invariant($"prev-lp={e.PreviousLp}");
@@ -99,7 +101,13 @@ namespace DuelRoguelike.Run
             foreach (string id in opponentsLine.Values)
                 opponents.Add(StarterDecks.Find(id) ?? throw r.Error(opponentsLine, $"모르는 상대 덱 \"{id}\""));
 
-            var run = new RunState(r.ULong(seedLine, seedLine.Values[0]), deckLine.Values[0], opponents, database, rarities, collection);
+            string deckName = null; // 형식 2까지는 없다: 스타터 덱 이름이나 Id
+            if (map.TryGetValue("start-deck-name", out var deckNameLine))
+            {
+                r.ExpectCount(deckNameLine, 1);
+                deckName = SaveEscape.Decode(deckNameLine.Values[0], r, deckNameLine);
+            }
+            var run = new RunState(r.ULong(seedLine, seedLine.Values[0]), deckLine.Values[0], deckName, opponents, database, rarities, collection);
 
             var phaseLine = r.Required(map, "phase");
             r.ExpectCount(phaseLine, 1);
@@ -172,7 +180,13 @@ namespace DuelRoguelike.Run
                 throw r.Error(rewardLine, $"보상을 고르는 중이 아닌데 reward 줄이 있음 ({run.Phase})");
 
             foreach (var line in lines.Where(l => l.Key == "event"))
-                run._events.Add(ReadEvent(line, r, v1));
+            {
+                var e = ReadEvent(line, r, v1);
+                // 형식 2까지의 런 시작 이벤트에는 덱 이름이 없다: 런의 시작 덱 이름으로 채운다.
+                if (e.Kind == RunEventKind.RunStarted && e.DeckName == null)
+                    e.DeckName = run.StartDeckName;
+                run._events.Add(e);
+            }
 
             if (run.Phase == RunPhase.InDuel)
                 run.CurrentDuel = run.CreateDuel(run.DuelsPlayed + 1);
@@ -225,6 +239,7 @@ namespace DuelRoguelike.Run
                     case "rarity": e.Rarity = r.Enum<Rarity>(line, value); break;
                     case "pile": e.Pile = r.Enum<RunPile>(line, value); break;
                     case "deck": e.DeckId = value; break;
+                    case "deck-name": e.DeckName = SaveEscape.Decode(value, r, line); break;
                     case "result": e.Result = r.Enum<DuelResult>(line, value); break;
                     case "lp": e.Lp = r.Int(line, value); break;
                     case "prev-lp": e.PreviousLp = r.Int(line, value); break;

@@ -50,6 +50,8 @@ namespace DuelRoguelike.Dev
                          ("듀얼 도중 종료", test.ForfeitOnLoad),
                          ("저장 파일 형식 오류", test.SaveFormatErrors),
                          ("옛 저장 파일 (형식 1)", test.SaveFormatV1),
+                         ("옛 저장 파일 (형식 2)", test.SaveFormatV2),
+                         ("덱 레시피", test.DeckRecipes),
                          ("저장 파일 위치·깨진 파일", test.SaveFiles),
                      })
             {
@@ -675,8 +677,9 @@ namespace DuelRoguelike.Dev
             var original = GameSave.NewGame();
             original.StartRun(new RunSetup { Seed = 99, StartDeck = StarterDecks.Yugi, SideDeck = side }, _db, _rarities);
             var reloaded = GameSave.Parse(original.Write(), _db, _rarities, "시험");
-            Expect(reloaded.LastStartDeckId == "Yugi" && reloaded.LastSideDeck("Yugi").SequenceEqual(side) && reloaded.LastSideDeck("Kaiba").Count == 0,
-                "마지막 시작 덱과 시작 사이드 덱을 기억");
+            Expect(reloaded.LastStartDeckId == "Yugi" && reloaded.Run.SideDeck.SequenceEqual(side) && reloaded.Run.StartDeckName == StarterDecks.Yugi.Name
+                   && reloaded.Recipes.Select(r => r.Id).SequenceEqual(StarterDecks.All.Select(d => d.Id)),
+                "마지막 시작 덱, 런의 시작 사이드 덱·시작 덱 이름, 레시피 4개");
             int step = 0, mismatches = 0, choosingSaves = 0;
             foreach (var (result, lp) in script)
             {
@@ -792,10 +795,10 @@ namespace DuelRoguelike.Dev
 
             string Replace(string line, string with) => good.Replace("\n" + line + "\n", "\n" + with + "\n");
             Broken("", "빈 파일");
-            Broken(good.Replace("format 2\n", ""), "format 줄 없음");
-            Broken(good.Replace("format 2\n", "format 3\n"), "새 버전 형식");
-            Broken(good.Replace("format 2\n", "format 2\nunknown 3\n"), "모르는 키");
-            Broken(good.Replace("format 2\n", "format 2\nformat 2\n"), "같은 키 두 번");
+            Broken(good.Replace("format 3\n", ""), "format 줄 없음");
+            Broken(good.Replace("format 3\n", "format 4\n"), "새 버전 형식");
+            Broken(good.Replace("format 3\n", "format 3\nunknown 3\n"), "모르는 키");
+            Broken(good.Replace("format 3\n", "format 3\nformat 3\n"), "같은 키 두 번");
             Broken(good.Replace("\nend-run\n", "\n"), "end-run 없음");
             Broken(Replace("floor 2", "floor 0"), "0층");
             Broken(Replace("floor 2", "floor 이층"), "층이 숫자가 아님");
@@ -806,11 +809,20 @@ namespace DuelRoguelike.Dev
             Broken(Replace("opponents Yugi Kaiba Joey Pegasus", "opponents Yugi Nobody"), "모르는 상대 덱");
             Broken(Replace("seed 3", ""), "seed 줄 없음");
             Broken(good.Replace("\nsealed-main\n", "\nsealed-main 99999999\n"), "카드 DB에 없는 카드");
-            Broken(good.Replace("\nsealed-main\n", "\nfainted-main\n"), "형식 2에 fainted-main");
+            Broken(good.Replace("\nsealed-main\n", "\nfainted-main\n"), "형식 3에 fainted-main");
             Broken(good.Replace("event DuelWon duel=1", "event DuelWon duel=x"), "이벤트 칸 숫자 아님");
             Broken(good.Replace("event DuelWon duel=1", "event DuelWon wins=1 duel=1"), "모르는 이벤트 칸");
             Broken(good.Replace("event DuelWon duel=1 floor=1", "event DuelWon duel=1"), "이벤트에 floor 없음");
-            Broken(good.Replace("format 2\ngold 0\n", "format 2\ngold -1\n"), "골드 음수");
+            Broken(good.Replace("format 3\ngold 0\n", "format 3\ngold -1\n"), "골드 음수");
+            Broken(good.Replace("\nrecipe Kaiba ", "\nrecipe Yugi "), "레시피 Id 두 번");
+            Broken(good.Replace("\nrecipe-side Joey", "\nrecipe-side Nobody"), "recipe 줄에 없는 레시피의 사이드 덱");
+            Broken(Regex.Replace(good, @"\nrecipe-deck Pegasus [^\n]*", ""), "recipe-deck 줄 없음");
+            Broken(good.Replace("\nrecipe-side Joey", "\nrecipe-side Joey\nrecipe-side Joey"), "recipe-side 두 번");
+            Broken(good.Replace("\nrecipe Yugi ", "\nrecipe Yugi %2 "), "레시피 줄 칸 수");
+            Broken(good.Replace("\nrecipe Yugi ", "\nrecipe Yugi %zz"), "이름의 % 표기 틀림");
+            Broken(good.Replace("\nrecipe-deck Yugi ", "\nrecipe-deck Yugi 99999x "), "레시피 카드 코드가 숫자 아님");
+            Broken("format 3\nrecipe-deck a 53129443\n", "recipe 없이 recipe-deck");
+            Broken(good.Replace("format 3\n", "format 3\nlast-side-deck Yugi\n"), "형식 3에 last-side-deck");
             Broken("format 2\ncard 53129443 0\n", "컬렉션 0장");
             Broken("format 2\ncard 53129443 1\ncard 53129443 2\n", "컬렉션에 같은 카드 두 번");
             Broken("format 2\npoints 1 2 3 4 5\n", "형식 2에 points");
@@ -839,8 +851,8 @@ namespace DuelRoguelike.Dev
             var profile = GameSave.Parse("format 1\npoints 1 2 0 0 1\nlast-start-deck Yugi\n", _db, _rarities);
             int expectedGold = RunRules.GoldFor(Rarity.N) + 2 * RunRules.GoldFor(Rarity.R) + RunRules.GoldFor(Rarity.FR);
             Expect(profile.Gold == expectedGold && profile.LastStartDeckId == "Yugi", $"포인트 → 골드 {profile.Gold} (기대 {expectedGold})");
-            Expect(profile.Write().StartsWith("# ", StringComparison.Ordinal) && profile.Write().Contains("\nformat 2\n") && !profile.Write().Contains("points"),
-                "형식 1을 읽어 쓰면 형식 2");
+            Expect(profile.Write().StartsWith("# ", StringComparison.Ordinal) && profile.Write().Contains("\nformat 3\n") && !profile.Write().Contains("points")
+                   && profile.Recipes.Count == StarterDecks.All.Count, "형식 1을 읽어 쓰면 형식 3 (스타터 덱 레시피 4개)");
             Broken("format 1\npoints 1 2 3\n", "포인트 칸 수");
             Broken("format 1\ngold 3\n", "형식 1에 gold");
 
@@ -855,13 +867,16 @@ namespace DuelRoguelike.Dev
                 Play(run, result, lp);
             Expect(run.Phase == RunPhase.Ready && run.Gold > 0 && run.SealedMain.Count > 0 && !run.Events.Any(e => e.Kind == RunEventKind.RewardOffered),
                 $"시험 런: {run.Phase}, 골드 {run.Gold}, 봉인 {run.SealedMain.Count}");
-            string v2 = save.Write();
+            string v3 = save.Write();
 
             // 같은 런을 형식 1 글로 바꾼다.
             var substituted = new int[RarityTable.RarityCount];
             foreach (var e in run.Events.Where(e => e.Kind == RunEventKind.RewardSubstituted))
                 substituted[(int)e.Rarity]++;
-            string v1 = v2.Replace("\nformat 2\ngold 0\n", "\nformat 1\npoints 0 0 0 0 0\n")
+            // 형식 3에 새로 생긴 줄(레시피, 시작 덱 이름)과 이벤트 칸(deck-name)은 형식 1에 없다.
+            string v1 = Regex.Replace(v3, @"\n(recipe|recipe-deck|recipe-side|start-deck-name) [^\n]*", "");
+            v1 = Regex.Replace(v1, @" deck-name=[^ \n]+", "")
+                .Replace("\nformat 3\ngold 0\n", "\nformat 1\npoints 0 0 0 0 0\n")
                 .Replace($"\ngold {run.Gold}\n", $"\nsubstituted {string.Join(" ", substituted)}\n")
                 .Replace("\nsealed-main", "\nfainted-main")
                 .Replace("\nsealed-extra", "\nfainted-extra")
@@ -870,12 +885,182 @@ namespace DuelRoguelike.Dev
             Expect(v1.Contains("\nformat 1\n") && v1.Contains("\nsubstituted ") && v1.Contains("event CardFainted ")
                    && !Regex.IsMatch(v1, @"event RewardSubstituted [^\n]*count="), "형식 1 글 만들기");
             var fromV1 = GameSave.Parse(v1, _db, allFr, "시험");
-            Expect(fromV1.Write() == v2, "형식 1을 읽어 형식 2로 쓰면 원래 글과 같음: " + FirstDifference(v2, fromV1.Write()));
+            Expect(fromV1.Write() == v3, "형식 1을 읽어 형식 3으로 쓰면 원래 글과 같음: " + FirstDifference(v3, fromV1.Write()));
             Expect(fromV1.Run.Gold == run.Gold && fromV1.Run.SealedMain.SequenceEqual(run.SealedMain), "골드와 봉인 카드");
 
             Broken(v1.Replace("\nphase Ready\n", "\nphase InDuel\n"), "형식 1에는 듀얼 중 상태가 없음", allFr);
             Broken(v1.Replace("\nfainted-main", "\nsealed-main"), "형식 1에 sealed-main", allFr);
             Broken(v1.Replace("\nsubstituted ", "\ngold 3\nsubstituted "), "형식 1의 런에 gold", allFr);
+        }
+
+        /// <summary>형식 2(레시피 전): 스타터 덱 4개를 레시피로, 시작 덱별 마지막 시작 사이드 덱을 그 레시피의 사이드 덱으로.</summary>
+        void SaveFormatV2()
+        {
+            var side = StarterDecks.Joey.Entries.Take(2).Select(e => e.Code).ToList();
+            var save = GameSave.Parse($"format 2\ngold 5\nlast-start-deck Kaiba\nlast-side-deck Kaiba {side[0]} {side[1]}\nlast-side-deck Nobody {DarkHole}\n",
+                _db, _rarities);
+            Expect(save.Recipes.Select(r => r.Id).SequenceEqual(StarterDecks.All.Select(d => d.Id)) && save.LastStartDeckId == "Kaiba" && save.Gold == 5,
+                "형식 2: 스타터 덱 레시피 4개, 마지막 시작 덱, 골드");
+            Expect(save.FindRecipe("Kaiba").Side.SequenceEqual(side) && save.Recipes.Where(r => r.Id != "Kaiba").All(r => r.Side.Count == 0),
+                "형식 2의 마지막 시작 사이드 덱 → 그 레시피의 사이드 덱 (모르는 시작 덱은 버림)");
+            Expect(save.FindRecipe("Kaiba").Deck.SequenceEqual(StarterDecks.Kaiba.ToCardList()) && save.FindRecipe("Kaiba").Name == StarterDecks.Kaiba.Name,
+                "형식 2: 레시피 덱·이름은 스타터 덱 그대로");
+            Broken("format 2\nlast-side-deck Yugi 1\nlast-side-deck Yugi 2\n", "형식 2에 같은 시작 덱 두 번");
+            Broken("format 2\nrecipe a b\n", "형식 2에 recipe");
+
+            // 형식 2의 런(시작 덱 이름 줄 없음): 이름은 스타터 덱 이름, 런 시작 이벤트에도 채운다.
+            var v3 = GameSave.NewGame();
+            v3.StartRun(new RunSetup { Seed = 8, StartDeck = StarterDecks.Pegasus }, _db, _rarities);
+            string v2Text = Regex.Replace(v3.Write(), @"\n(recipe|recipe-deck|recipe-side|start-deck-name) [^\n]*", "");
+            v2Text = Regex.Replace(v2Text, @" deck-name=[^ \n]+", "").Replace("\nformat 3\n", "\nformat 2\n");
+            var fromV2 = GameSave.Parse(v2Text, _db, _rarities);
+            Expect(fromV2.Run.StartDeckName == StarterDecks.Pegasus.Name && fromV2.Write() == v3.Write(),
+                "형식 2의 런을 읽어 쓰면 형식 3과 같음: " + FirstDifference(v3.Write(), fromV2.Write()));
+        }
+
+        /// <summary>덱 레시피: 저장 규칙, 편집기, 저장 파일, 레시피로 런 시작, 지금 덱을 레시피로.</summary>
+        void DeckRecipes()
+        {
+            var save = GameSave.NewGame();
+            var collection = save.Collection;
+            Expect(save.Recipes.Select(r => r.Id).SequenceEqual(StarterDecks.All.Select(d => d.Id))
+                   && save.Recipes.All(r => r.Name == StarterDecks.Find(r.Id).Name && r.Side.Count == 0 && r.Deck.SequenceEqual(StarterDecks.Find(r.Id).ToCardList())),
+                "새 게임: 스타터 덱 4개가 레시피 (사이드 덱 없음)");
+            Expect(save.Recipes.All(r => RecipeRules.StartProblems(r, _db, collection).Count == 0), "스타터 덱 레시피로 런을 시작할 수 있음");
+
+            var yugi = save.FindRecipe("Yugi");
+            bool IsExtra(uint c) => _db.TryGet(c, out var rec) && DeckRecipe.IsExtraDeckType(rec.Type);
+            var yugiNames = new HashSet<uint>(yugi.Deck.Select(_db.NameCode));
+            // 유희 편에 없는 카드명의 메인 덱 카드 (컬렉션에 있는 것, 카드명마다 하나)
+            var outside = collection.Cards.Keys.Where(c => !IsExtra(c) && !yugiNames.Contains(_db.NameCode(c)))
+                .GroupBy(_db.NameCode).Select(g => g.Min()).OrderBy(c => c).ToList();
+            int yugiMain = yugi.Deck.Count(c => !IsExtra(c));
+            Expect(outside.Count >= 20 && yugiMain >= 40 && yugiMain < 60, $"시험 준비: 유희 편 메인 {yugiMain}장, 바깥 카드명 {outside.Count}개");
+            var mainOnly = yugi.Deck.Where(c => !IsExtra(c)).ToList();
+
+            // ---- 저장 규칙 ----
+            List<string> Refused(PlayerRecipe recipe, string what)
+            {
+                int before = save.Recipes.Count;
+                var problems = save.SaveRecipe(recipe, _db);
+                Expect(problems.Count > 0 && save.Recipes.Count == before && save.FindRecipe(recipe.Id) == null, $"저장 안 됨: {what}");
+                return problems;
+            }
+            var p39 = Refused(new PlayerRecipe("deck-x", "짧은 덱", mainOnly.Take(39), null), "메인 39장");
+            Expect(p39.Any(p => p.Contains("메인 덱 39장")), "메인 39장의 문제 글: " + string.Join(" / ", p39));
+            var tooLong = mainOnly.Concat(outside.Take(61 - mainOnly.Count)).ToList();
+            Expect(Refused(new PlayerRecipe("deck-x", "긴 덱", tooLong, null), "메인 61장").Any(p => p.Contains("메인 덱 61장")), "메인 61장의 문제 글");
+            var three = yugi.Deck.Concat(new[] { DarkHole, DarkHole }).ToList();
+            Expect(Refused(new PlayerRecipe("deck-x", "블랙홀 4장", three, new[] { DarkHole }), "블랙홀 덱 3장 + 사이드 1장")
+                .Any(p => p.Contains("합쳐 같은 카드명 4장")), "덱 + 사이드 같은 카드명 4장의 문제 글");
+            Refused(new PlayerRecipe("deck-x", "블랙홀 4장", yugi.Deck.Concat(new[] { DarkHole, DarkHole, DarkHole }), null), "덱에 블랙홀 4장");
+            Refused(new PlayerRecipe("deck-x", "  ", yugi.Deck, null), "이름 없음");
+            Refused(new PlayerRecipe("deck-x", new string('가', PlayerRecipe.MaxNameLength + 1), yugi.Deck, null), "이름이 너무 김");
+            Refused(new PlayerRecipe("deck-x", "없는 카드", mainOnly.Take(40).Append(99999999u), null), "카드 DB에 없는 카드");
+
+            // 컬렉션 초과·사이드 4장: 저장은 되고 런 시작은 안 된다.
+            uint single = yugi.Deck.First(c => !IsExtra(c) && collection.Count(c) == 1);
+            var overOwned = new PlayerRecipe(save.NewRecipeId(), "컬렉션 부족", yugi.Deck.Concat(new[] { single }), null);
+            Expect(overOwned.Id == "deck-1" && save.SaveRecipe(overOwned, _db).Count == 0 && save.FindRecipe("deck-1") == overOwned,
+                "컬렉션보다 많은 장수: 저장됨 (Id deck-1)");
+            var overProblems = RecipeRules.StartOnlyProblems(overOwned, _db, collection);
+            Expect(overProblems.Count == 1 && overProblems[0].Contains("컬렉션에는 1장"), "컬렉션 초과는 시작만 막음: " + string.Join(" / ", overProblems));
+            Expect(RunState.CheckSetup(overOwned.ToSetup(1, StarterDecks.All), _db, collection).Count > 0, "런 시작 확인도 컬렉션 초과를 막음");
+            bool threw = false;
+            try
+            {
+                save.StartRun(overOwned, 1, StarterDecks.All, _db, _rarities);
+            }
+            catch (ArgumentException)
+            {
+                threw = true;
+            }
+            Expect(threw && save.Run == null, "컬렉션 초과 레시피로는 런을 시작할 수 없음");
+            var sideFour = new PlayerRecipe(save.NewRecipeId(), "사이드 4장", yugi.Deck, outside.Take(4));
+            Expect(sideFour.Id == "deck-2" && save.SaveRecipe(sideFour, _db).Count == 0, "시작 사이드 덱 4장: 저장됨");
+            Expect(RecipeRules.StartOnlyProblems(sideFour, _db, collection).Any(p => p.Contains("사이드 덱 4장")), "시작 사이드 덱 4장은 시작만 막음");
+
+            // 같은 Id로 저장하면 바꾼다, 지우기.
+            var renamed = new PlayerRecipe("deck-2", "사이드 3장", yugi.Deck, outside.Take(3));
+            Expect(save.SaveRecipe(renamed, _db).Count == 0 && save.Recipes.Count == 6 && save.Recipes[5] == renamed, "같은 Id로 저장하면 그 자리에서 바뀜");
+            Expect(save.DeleteRecipe("Kaiba") && save.FindRecipe("Kaiba") == null && !save.DeleteRecipe("Kaiba") && save.Recipes.Count == 5, "레시피 지우기");
+            Expect(save.NewRecipeId() == "deck-3", "다음 새 레시피 Id는 deck-3");
+
+            // 저장 파일: 이름의 공백·#·=·%도 그대로 돌아온다.
+            const string oddName = "내 덱 #1 = 100% 강함";
+            var odd = new PlayerRecipe(save.NewRecipeId(), oddName, yugi.Deck, new[] { DarkHole });
+            Expect(save.SaveRecipe(odd, _db).Count == 0, "이상한 글자가 든 이름 저장");
+            var reloaded = GameSave.Parse(save.Write(), _db, _rarities);
+            Expect(reloaded.Write() == save.Write(), "레시피 저장 다시 읽기: " + FirstDifference(save.Write(), reloaded.Write()));
+            Expect(reloaded.Recipes.Select(r => (r.Id, r.Name)).SequenceEqual(save.Recipes.Select(r => (r.Id, r.Name)))
+                   && reloaded.Recipes.Zip(save.Recipes, (a, b) => a.Deck.SequenceEqual(b.Deck) && a.Side.SequenceEqual(b.Side)).All(x => x),
+                "레시피 Id·이름·덱·사이드 덱이 그대로");
+            Expect(reloaded.FindRecipe(odd.Id).Name == oddName, "이름 " + reloaded.FindRecipe(odd.Id).Name);
+            Expect(GameSave.Parse(save.Write().Replace("\nrecipe-side Yugi\n", "\n"), _db, _rarities).FindRecipe("Yugi").Side.Count == 0,
+                "recipe-side 줄이 없으면 빈 사이드 덱");
+
+            // 레시피로 런 시작: 덱·사이드, 런은 레시피 이름을 들고, 레시피를 지워도 이어진다.
+            var run = save.StartRun(odd, 11, StarterDecks.All, _db, _rarities);
+            Expect(run.StartDeckId == odd.Id && run.StartDeckName == oddName && save.LastStartDeckId == odd.Id
+                   && run.MainDeck.Concat(run.ExtraDeck).OrderBy(c => c).SequenceEqual(odd.Deck.OrderBy(c => c)) && run.SideDeck.SequenceEqual(odd.Side),
+                "레시피로 런 시작: 덱·사이드 덱·시작 덱 이름");
+            Expect(run.Events[0].Describe(c => c.ToString()).Contains(oddName), "런 로그의 시작 줄에 레시피 이름: " + run.Events[0].Describe(c => c.ToString()));
+            save.DeleteRecipe(odd.Id);
+            run.BeginDuel();
+            run.FinishDuel(DuelResult.Win, 5000);
+            Choose(run);
+            var again = GameSave.Parse(save.Write(), _db, _rarities);
+            Expect(again.Run != null && again.Run.StartDeckName == oddName && again.Run.Floor == 2 && again.FindRecipe(odd.Id) == null,
+                "레시피를 지워도 런은 이어지고, 다시 읽어도 시작 덱 이름이 남음");
+            Expect(again.Run.Events[0].Describe(c => c.ToString()) == run.Events[0].Describe(c => c.ToString()), "다시 읽은 런 시작 줄");
+
+            // 지금 덱을 레시피로 (층 사이 화면): 메인·엑스트라 덱만, 사이드 덱은 비움.
+            var fromRun = PlayerRecipe.FromRun(run, save.NewRecipeId(), "2층의 덱");
+            Expect(save.SaveRecipe(fromRun, _db).Count == 0 && fromRun.Side.Count == 0
+                   && fromRun.Deck.OrderBy(c => c).SequenceEqual(run.MainDeck.Concat(run.ExtraDeck).OrderBy(c => c)),
+                "지금 덱을 레시피로 저장: 메인·엑스트라 덱");
+            Expect(RecipeRules.StartProblems(fromRun, _db, collection).Count == 0, "런의 덱은 컬렉션 안이라 바로 시작할 수 있음");
+
+            // ---- 편집기 ----
+            var editor = new RecipeEditor(save.FindRecipe("Yugi"), _db, collection);
+            Expect(!editor.IsDirty && editor.Id == "Yugi" && editor.MainCount == yugiMain, "연 레시피는 바뀌지 않은 상태");
+            Expect(editor.Add(DarkHole, false) && editor.Add(DarkHole, true) && editor.NameCopies(DarkHole) == 3 && editor.Left(DarkHole) == 1 && editor.IsDirty,
+                "블랙홀 덱 +1, 사이드 +1 (같은 카드명 3장, 컬렉션 1장 남음)");
+            Expect(editor.AddReason(DarkHole, false) != null && !editor.Add(DarkHole, true) && editor.NameCopies(DarkHole) == 3,
+                "같은 카드명 4장째는 덱에도 사이드 덱에도 넣을 수 없음");
+            Expect(editor.Add(outside[0], true) && editor.Add(outside[1], true) && editor.Side.Count == 3 && editor.AddReason(outside[2], true) != null,
+                "시작 사이드 덱 3장이 가득 차면 더 못 넣음");
+            Expect(editor.MoveReason(mainOnly[0], true) != null && !editor.Move(mainOnly[0], true), "가득 찬 사이드 덱으로 옮기기 막힘");
+            Expect(editor.Move(outside[0], false) && editor.Side.Count == 2 && editor.MainCount == yugiMain + 2, "사이드 덱 → 덱");
+            Expect(editor.Move(mainOnly[0], true) && editor.Side.Count == 3 && editor.MainCount == yugiMain + 1, "덱 → 사이드 덱");
+            Expect(editor.Remove(mainOnly[0], fromSide: true) && !editor.Remove(mainOnly[0], fromSide: true) && editor.Side.Count == 2, "사이드 덱에서 빼기");
+            uint once = outside.First(c => collection.Count(c) == 1 && editor.NameCopies(c) == 0);
+            Expect(editor.Add(once, false) && editor.Add(once, false) && editor.Left(once) == -1 && editor.ShortCards().SequenceEqual(new[] { once }),
+                "컬렉션에 1장인 카드를 2장 넣을 수 있음 (컬렉션 부족으로 표시)");
+            Expect(editor.StartOnlyProblems().Any(p => p.Contains("컬렉션에는 1장")) && editor.SaveProblems().Count == 0,
+                "컬렉션보다 많이 넣으면 저장은 되고 시작만 막힘: " + string.Join(" / ", editor.StartOnlyProblems()));
+            editor.Remove(once, false);
+            while (editor.MainCount < RunRules.MaxMainDeck)
+                Expect(editor.Add(outside.First(c => editor.NameCopies(c) < RunRules.MaxCopies), false), "60장까지 넣기");
+            uint fresh = outside.Last(c => editor.NameCopies(c) == 0);
+            Expect(editor.AddReason(fresh, false)?.Contains("60장") == true && editor.AddReason(fresh, true) == null, "메인 덱 60장이면 덱에는 못 넣고 사이드 덱에는 넣음");
+            Expect(editor.SaveProblems().Count == 0, "60장 덱은 저장할 수 있음: " + string.Join(" / ", editor.SaveProblems()));
+            while (editor.MainCount >= RunRules.MinMainDeck)
+                editor.Remove(editor.MainDeck.Last(), false);
+            Expect(editor.SaveProblems().Any(p => p.Contains("메인 덱 39장")), "편집 중에는 39장도 둘 수 있고, 저장 규칙이 알려 줌");
+            editor.Name = "  ";
+            Expect(editor.SaveProblems().Any(p => p.Contains("이름")), "이름을 지우면 저장 규칙이 알려 줌");
+
+            var blank = new RecipeEditor(null, _db, collection);
+            Expect(blank.Id == null && blank.IsDirty && blank.Deck.Count == 0 && blank.Name.Length > 0, "빈 새 레시피");
+            foreach (uint code in mainOnly.Take(RunRules.MinMainDeck))
+                blank.Add(code, false);
+            var built = blank.Build(save.NewRecipeId());
+            Expect(save.SaveRecipe(built, _db).Count == 0, "빈 레시피에 40장을 넣어 저장");
+            blank.MarkSaved(built);
+            Expect(!blank.IsDirty && blank.Id == built.Id, "저장한 뒤에는 바뀌지 않은 상태, Id가 정해짐");
+            blank.Name = built.Name + " ";
+            Expect(!blank.IsDirty, "이름 앞뒤 공백만 바꾼 것은 바뀐 것이 아님");
         }
 
         static string FirstDifference(string a, string b)
