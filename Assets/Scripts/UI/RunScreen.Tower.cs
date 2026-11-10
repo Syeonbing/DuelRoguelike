@@ -4,6 +4,7 @@
 // - 칩교환소 (chip-exchange): 상품 목록(가격, 살 수 없는 까닭)과 아이템 카드 자리. 사기를 누르면 풀 카드를 고르고(shop-pick),
 //   직접 고르는 교체면 대신 봉인할 카드도 고른다. 산 뒤에는 칩교환소 창을 다시 연다 (메인 덱이 모자라면 보충 창이 먼저).
 // - 이벤트 (tower-event): 제목, 글, 선택지. 이벤트 층에 들어가면 한 번 저절로 뜬다. 닫고 덱을 정리한 뒤 다시 열 수 있다.
+// - 휴식 (tower-rest): 휴식 층에 들어가면 이벤트처럼 한 번 저절로 뜬다. 들어갈 때 맞춘 LP(이전 → 8000)와 다음 층으로 버튼.
 // - 보스 보상 (unseal): 보스를 이기고 봉인된 카드가 있으면 뜬다 (ChoosingUnseal). 닫을 수 없다.
 using System;
 using System.Linq;
@@ -20,6 +21,8 @@ namespace DuelRoguelike.UI
         uint _shopRelease;
         /// <summary>이벤트 창을 저절로 띄운 층 (같은 층에서는 다시 띄우지 않는다).</summary>
         int _eventShownFloor;
+        /// <summary>휴식 창을 저절로 띄운 층.</summary>
+        int _restShownFloor;
 
         static readonly Color RestColor = UiStyle.Hex(0x5ee07a);
         static readonly Color EventFloorColor = UiStyle.Hex(0x9b7ae0);
@@ -133,6 +136,9 @@ namespace DuelRoguelike.UI
                     buttons.Add(BigButton("leave-floor", "다음 층으로", LeaveFloor, ready));
                     break;
                 case FloorKind.Rest:
+                    var rest = BigButton("open-rest", "휴식 보기", OpenRest, ready);
+                    rest.style.marginRight = 10;
+                    buttons.Add(rest);
                     buttons.Add(BigButton("leave-floor", "다음 층으로", LeaveFloor, ready));
                     break;
                 case FloorKind.Event:
@@ -473,6 +479,39 @@ namespace DuelRoguelike.UI
             _moveNoticeIsError = false;
             Debug.Log($"[런] {_moveNotice}");
             ShowHub();
+        }
+
+        // ================= 휴식 =================
+
+        /// <summary>휴식 창: 이 층에 들어갈 때 맞춘 LP를 보여 주고, 다음 층으로 가거나 닫고 덱을 정리한다.</summary>
+        void OpenRest()
+        {
+            if (_run == null || _run.Phase != RunPhase.Ready || _run.FloorKind != FloorKind.Rest)
+                return;
+            _restShownFloor = _run.Floor;
+            var panel = OpenModal(760);
+            panel.name = "tower-rest";
+            panel.Add(UiStyle.Label($"휴식 · {_run.Floor}층", 16, UiStyle.TextDim));
+            var title = UiStyle.Label("쉬어 가는 곳", 30, UiStyle.Accent, bold: true);
+            title.name = "rest-title";
+            panel.Add(title);
+            var heal = _run.Events.LastOrDefault(e => e.Kind == RunEventKind.LpRestored && e.LpReason == LpRestoreReason.Rest && e.Floor == _run.Floor);
+            var text = Text($"보스 층을 앞두고 잠시 쉬어 갑니다. LP를 {RunRules.FullLp}로 맞췄습니다. 덱을 정리한 뒤 다음 층으로 올라가세요.", 18, top: 10);
+            text.style.whiteSpace = WhiteSpace.Normal;
+            panel.Add(text);
+            var lp = UiStyle.Label(heal != null ? $"LP {heal.PreviousLp} → {heal.Lp}" : $"LP {_run.Lp} (그대로)", 28, RestColor, bold: true);
+            lp.name = "rest-lp";
+            lp.style.marginTop = 12;
+            panel.Add(lp);
+            var leave = UiStyle.Button("다음 층으로", LeaveFloor, 20);
+            leave.name = "rest-leave";
+            leave.style.marginTop = 14;
+            panel.Add(leave);
+            var later = UiStyle.Button("나중에 (덱 정리)", CloseModal, 16);
+            later.name = "rest-close";
+            later.style.marginTop = 14;
+            later.style.alignSelf = Align.FlexEnd;
+            panel.Add(later);
         }
 
         // ================= 보스 보상: 봉인 해제 =================

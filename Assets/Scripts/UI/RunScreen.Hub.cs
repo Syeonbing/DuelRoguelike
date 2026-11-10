@@ -68,6 +68,8 @@ namespace DuelRoguelike.UI
                 OpenRefill();
             else if (_run.FloorKind == FloorKind.Event && _eventShownFloor != _run.Floor)
                 OpenEvent(); // 이벤트 층에 처음 왔을 때 한 번
+            else if (_run.FloorKind == FloorKind.Rest && _restShownFloor != _run.Floor)
+                OpenRest(); // 휴식 층도 이벤트처럼 처음 왔을 때 한 번
         }
 
         VisualElement HubTopBar()

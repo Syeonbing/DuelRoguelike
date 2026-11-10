@@ -13,7 +13,7 @@
 // 런 로그 창 열고 닫기, 덱 편집 화면의 거르기, 꽉 찬 시작 사이드 덱(3장)에 더 넣을 때의 알림도 본다.
 // 승리 보상 창은 자리 3개를 확인하고, 누르고 받기·두 번 누르기를 번갈아 하며, 빈 자리(골드)가 나오면 한 번 골드를 고른다.
 // 보충 고르기를 한 번 이상 거칠 때까지 런을 더 한다. 비전투 층(칩교환소·휴식·이벤트)은 다음 층으로 지나가고, 보스 보상 창은 첫 카드를 고른다.
-// 탑·칩교환소 시험(TowerAndChipExchange): 저장 파일을 고쳐 5층 칩교환소로 가서 교체·봉인 해제를 사고, 이벤트 창, 휴식 → 보스, 보스 보상 창을 본다.
+// 탑·칩교환소 시험(TowerAndChipExchange): 저장 파일을 고쳐 5층 칩교환소로 가서 교체·봉인 해제를 사고, 이벤트 창, 휴식 창(LP 3000 → 8000) → 보스, 보스 보상 창을 본다.
 // 듀얼 화면은 한 번, 6턴쯤에 자동 진행을 멈추고 카드에 마우스 올리기(왼쪽 카드 정보)와 묘지 누르기(카드 목록 창)를 해 본다.
 // 오류 로그(Debug.LogError·LogException)가 하나라도 나오면 실패한다.
 // 환경 변수 DUELROGUELIKE_SCREENSHOT_DIR에 폴더를 주면 화면마다 처음 한 번 1920×1080 PNG로 저장한다 (화면 모양 확인용).
@@ -490,16 +490,28 @@ namespace DuelRoguelike.Tests
             StringAssert.StartsWith("7층", Find<Label>(RunUi, "floor-label")?.text ?? "", "이벤트 선택지를 고른 뒤 7층이 아니다");
             StringAssert.Contains("event-id=quiet-floor", File.ReadAllText(SaveFile), "이벤트 결과가 저장되지 않았다");
 
-            // 9층 휴식 → 10층 보스
+            // 8층(저장 파일을 고쳐 이벤트 층, LP 3000) → 9층 휴식: 들어가면 LP를 8000으로 맞추고 휴식 창이 뜬다 → 10층 보스
             yield return EditSave(text =>
             {
-                text = Regex.Replace(SetLine(text, "floor", "9"), @"\nfloor-event [^\n]*", "");
-                return SetLine(text, "floor-kind", "Rest");
+                text = Regex.Replace(SetLine(text, "floor", "8"), @"\nfloor-event [^\n]*", "");
+                text = SetLine(text, "lp", "3000");
+                return SetLine(text, "floor-kind", "Event\nfloor-event quiet-floor");
             });
-            Assert.AreEqual("9층 · 휴식", Find<Label>(RunUi, "floor-label")?.text, "9층 휴식이 아니다");
+            Assert.IsNotNull(Find<VisualElement>(RunUi, "tower-event"), "8층 이벤트 창이 뜨지 않았다");
+            Click(Find<Button>(RunUi, "event-choice-0"));
+            yield return null;
+            Assert.AreEqual("9층 · 휴식", Find<Label>(RunUi, "floor-label")?.text, "8층 다음이 9층 휴식이 아니다");
             StringAssert.Contains("휴식", Find<Label>(RunUi, "floor-note")?.text ?? "", "휴식 층 안내가 없다");
+            Assert.IsNotNull(Find<VisualElement>(RunUi, "tower-rest"), "휴식 층에 들어갔는데 휴식 창이 뜨지 않았다");
+            Assert.AreEqual("LP 3000 → 8000", Find<Label>(RunUi, "rest-lp")?.text, "휴식 창의 LP");
+            StringAssert.Contains("LP 8000", Find<Label>(RunUi, "run-summary").text, "휴식 뒤 LP");
             yield return Shot(RunUi, "15-rest");
-            Click(Find<Button>(RunUi, "leave-floor"));
+            Click(Find<Button>(RunUi, "rest-close"));
+            yield return null;
+            Assert.IsNull(Find<VisualElement>(RunUi, "tower-rest"), "휴식 창이 닫히지 않았다");
+            Click(Find<Button>(RunUi, "open-rest"));
+            yield return null;
+            Click(Find<Button>(RunUi, "rest-leave"));
             yield return null;
             Assert.AreEqual("10층 · 보스", Find<Label>(RunUi, "floor-label")?.text, "휴식 다음이 10층 보스가 아니다");
             Assert.AreEqual("보스 듀얼 시작", Find<Button>(RunUi, "next-duel")?.text, "보스 층의 듀얼 시작 버튼");
@@ -691,7 +703,7 @@ namespace DuelRoguelike.Tests
 
         /// <summary>층 사이 화면 위에 창(보상·보충·보스 보상·칩교환소·이벤트)이 떠 있지 않은지.</summary>
         static bool NoModal() =>
-            new[] { "reward", "refill", "unseal", "chip-exchange", "shop-pick", "tower-event", "run-log" }.All(n => Find<VisualElement>(RunUi, n) == null);
+            new[] { "reward", "refill", "unseal", "chip-exchange", "shop-pick", "tower-event", "tower-rest", "run-log" }.All(n => Find<VisualElement>(RunUi, n) == null);
 
         /// <summary>전투 층(다음 듀얼 버튼이 있는 층)이 될 때까지 Step으로 창을 처리하고 비전투 층을 지나간다 (듀얼은 하지 않는다).</summary>
         IEnumerator ToBattleFloor(int seed)
@@ -727,6 +739,13 @@ namespace DuelRoguelike.Tests
             if (Find<VisualElement>(RunUi, "unseal") != null)
             {
                 yield return ChooseUnseal();
+                yield break;
+            }
+            if (Find<VisualElement>(RunUi, "tower-rest") != null)
+            {
+                Click(Find<Button>(RunUi, "rest-leave"));
+                _floorsPassed++;
+                yield return null;
                 yield break;
             }
             if (Find<VisualElement>(RunUi, "tower-event") != null)
