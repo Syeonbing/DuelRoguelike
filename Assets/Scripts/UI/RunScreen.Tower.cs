@@ -111,7 +111,7 @@ namespace DuelRoguelike.UI
             chips.name = "tower-chips";
             chips.style.marginTop = 10;
             panel.Add(chips);
-            panel.Add(Text($"승리 +{RunRules.ChipsPerWin}, 보스 승리 +{RunRules.ChipsPerBossWin}. 칩교환소(5층마다)에서 씁니다.", 12, UiStyle.TextDim, top: 2));
+            panel.Add(Text($"승리 +{RunRules.ChipsForWin(_run.Floor, false)}, 보스 승리 +{RunRules.ChipsForWin(_run.Floor, true)} (10층마다 오름). 칩교환소(5층마다)에서 씁니다.", 12, UiStyle.TextDim, top: 2));
             return panel;
         }
 
@@ -121,7 +121,7 @@ namespace DuelRoguelike.UI
             switch (_run.FloorKind)
             {
                 case FloorKind.Boss:
-                    return $"보스 층: 이기면 칩 {RunRules.ChipsPerBossWin}과 보스 보상 (봉인된 카드가 있으면 1장 봉인 해제, 없으면 승리 보상 1장 더).";
+                    return $"보스 층: 이기면 칩 {RunRules.ChipsForWin(_run.Floor, true)}과 보스 보상 (봉인된 카드가 있으면 1장 봉인 해제, 없으면 승리 보상 1장 더).";
                 case FloorKind.ChipExchange:
                     return "칩교환소: 칩으로 봉인 대상 교체·봉인 해제·아이템 카드를 삽니다. 다 보면 다음 층으로 올라갑니다.";
                 case FloorKind.Rest:
@@ -341,7 +341,7 @@ namespace DuelRoguelike.UI
             var panel = OpenModal(1500);
             panel.name = "shop-pick";
             panel.style.height = Length.Percent(88);
-            panel.Add(UiStyle.Label($"{ChipExchange.Name(product)} · 칩 {RunRules.ShopPrice(product)}", 28, UiStyle.Accent, bold: true));
+            panel.Add(UiStyle.Label($"{ChipExchange.Name(product)} · 칩 {_run.Shop.First(o => o.Product == product).Price}", 28, UiStyle.Accent, bold: true));
             string rarity = ChipExchange.SameRarity(product) ? "같은 레어도의 " : "";
             string step = product == ShopProduct.Unseal
                 ? "봉인을 풀 카드를 고르세요. 풀린 카드는 사이드 덱으로 갑니다."

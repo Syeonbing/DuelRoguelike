@@ -450,7 +450,7 @@ namespace DuelRoguelike.Run
                 }
                 else
                     ChangeLp(playerLp + RunRules.WinLpBonus, LpRestoreReason.Win, duel.DuelNumber);
-                GainChips(duel.IsBossFloor ? RunRules.ChipsPerBossWin : RunRules.ChipsPerWin, duel.DuelNumber);
+                GainChips(RunRules.ChipsForWin(duel.Floor, duel.IsBossFloor), duel.DuelNumber);
                 _bossBonusPending = duel.IsBossFloor;
                 OfferReward(duel.DuelNumber, duel.Floor, duel.OpponentCards, bossBonus: false);
                 ContinueAfterWin();
