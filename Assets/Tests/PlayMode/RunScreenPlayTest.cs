@@ -101,6 +101,7 @@ namespace DuelRoguelike.Tests
             yield return LoadRunScene();
             Assert.IsNull(Find<Button>(RunUi, "continue-run"), "처음 켰는데 진행 중인 런이 있다");
             Assert.IsFalse(File.Exists(SaveFile), "아무것도 안 했는데 저장 파일이 있다");
+            yield return CardGallery();
 
             // ---- 덱 레시피: 새 게임에는 스타터 덱 4개 ----
             foreach (string id in new[] { "Yugi", "Kaiba", "Joey", "Pegasus" })
@@ -649,6 +650,40 @@ namespace DuelRoguelike.Tests
             yield return null;
             yield return null;
             yield return WaitFor(() => Find<Button>(RunUi, "start-run") != null, LoadTimeout, "런 시작 화면");
+        }
+
+        /// <summary>
+        /// 카드 견본 화면(RunScreen.ToggleCardGallery)을 띄워 카드가 그려지는지 보고 스크린샷을 남긴 뒤 닫는다.
+        /// 시험 어셈블리는 화면 어셈블리를 참조하지 않으므로 이름으로 찾아 부른다.
+        /// </summary>
+        IEnumerator CardGallery()
+        {
+            const string gallery = "CardGalleryUI";
+            var screen = GameObject.Find(RunUi).transform.parent.GetComponent("RunScreen");
+            Assert.IsNotNull(screen, "RunScreen을 찾지 못했다");
+            var toggle = screen.GetType().GetMethod("ToggleCardGallery");
+            Assert.IsNotNull(toggle, "RunScreen.ToggleCardGallery가 없다");
+            toggle.Invoke(screen, null);
+            yield return null;
+            yield return null;
+            var faces = Root(gallery)?.Query("card-face").ToList() ?? new List<VisualElement>();
+            Assert.GreaterOrEqual(faces.Count, 20, "카드 견본에 작은 카드가 모자란다");
+            Assert.GreaterOrEqual(Root(gallery).Query("card-detail-face").ToList().Count, 3, "카드 견본에 상세 카드가 모자란다");
+            Assert.IsNotNull(Root(gallery).Q("card-back"), "카드 견본에 뒷면이 없다");
+            // 카드명 줄과 수치 줄의 높이는 카드마다 같아야 한다 (긴 이름이 아래 칸을 밀면 안 된다).
+            // 배치는 화면 픽셀에 맞춰 반올림되므로 작은 창에서는 1픽셀만큼(기준 단위로는 2쯤) 어긋날 수 있다.
+            foreach (var face in faces)
+            {
+                var card = face[0];
+                Assert.AreEqual(3, card.childCount, "작은 카드는 이름 줄, 그림 칸, 수치 줄 세 칸이다");
+                Assert.AreEqual(24f, card[0].layout.height, 2.5f, "카드명 줄의 높이가 다르다");
+                Assert.AreEqual(24f, card[2].layout.height, 2.5f, "수치 줄의 높이가 다르다");
+                Assert.AreEqual(94f, card[1].layout.height, 4f, "그림 칸의 높이가 다르다 (이름이 길어 밀렸을 수 있다)");
+            }
+            yield return Shot(gallery, "0-card-gallery");
+            toggle.Invoke(screen, null);
+            yield return null;
+            Assert.IsNull(GameObject.Find(gallery), "카드 견본이 닫히지 않았다");
         }
 
         static string SideCountText(int count) => $"시작 사이드 덱 {count}/{SidePicks}장";
