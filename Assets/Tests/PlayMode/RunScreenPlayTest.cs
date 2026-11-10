@@ -436,7 +436,7 @@ namespace DuelRoguelike.Tests
             {
                 text = SetLine(text, "floor", "5");
                 text = SetLine(text, "floor-kind", "ChipExchange");
-                text = SetLine(text, "chips", "400 400\nshop SwapSameRarity:30:0 SwapSameRarityChosen:50:0 SwapAny:50:0 SwapAnyChosen:80:0 Unseal:150:0");
+                text = SetLine(text, "chips", "400 400\nshop SwapSameRarity:30:0 SwapSameRarityChosen:50:0 SwapAny:50:0 SwapAnyChosen:80:0 Unseal:150:0 ItemCard:60:0:17092736");
                 text = Regex.Replace(text, @"\nfloor-event [^\n]*", "");
                 var main = Regex.Match(text, @"\nmain ([^\n]*)\n").Groups[1].Value.Split(' ');
                 text = SetLine(text, "main", string.Join(" ", main.Skip(3)));
@@ -457,8 +457,8 @@ namespace DuelRoguelike.Tests
             yield return null;
             Assert.IsNotNull(Find<VisualElement>(RunUi, "chip-exchange"), "칩교환소 창이 열리지 않았다");
             Assert.AreEqual("보유 칩 400", Find<Label>(RunUi, "shop-chips")?.text, "칩교환소의 보유 칩");
-            Assert.IsNotNull(Find<VisualElement>(RunUi, "shop-item-card"), "칩교환소에 아이템 카드 자리가 없다");
-            foreach (string product in new[] { "SwapSameRarity", "SwapSameRarityChosen", "SwapAny", "SwapAnyChosen", "Unseal" })
+            StringAssert.Contains("고대의 망원경", HubTextOf("shop-offer-ItemCard"), "칩교환소에 아이템 카드(고대의 망원경) 상품이 없다");
+            foreach (string product in new[] { "SwapSameRarity", "SwapSameRarityChosen", "SwapAny", "SwapAnyChosen", "Unseal", "ItemCard" })
                 Assert.IsTrue(Find<Button>(RunUi, "shop-buy-" + product)?.enabledSelf == true, $"칩 400인데 {product}를 살 수 없다");
             yield return Shot(RunUi, "12-shop");
 
@@ -475,9 +475,38 @@ namespace DuelRoguelike.Tests
             string saved = File.ReadAllText(SaveFile).Replace("\r\n", "\n");
             StringAssert.Contains("SwapSameRarity:30:1", saved, "산 상품이 저장되지 않았다");
             StringAssert.Contains("\nchips 140 400\n", saved, "칩이 저장되지 않았다");
+
+            // 아이템 카드 「고대의 망원경」(60): 상점 덱으로 가고, 상점 덱에서 적용하면 탑 미리보기가 2층이 되어 7층(확률 이벤트 층)이 보인다.
+            Assert.IsNull(Find<VisualElement>(RunUi, "tower-preview-7"), "아이템 없이 7층이 미리 보인다");
+            Click(Find<Button>(RunUi, "shop-buy-ItemCard"));
+            yield return null;
+            Assert.IsNotNull(Find<VisualElement>(RunUi, "chip-exchange"), "아이템 카드를 산 뒤 칩교환소 창으로 돌아오지 않았다");
+            Assert.AreEqual("보유 칩 80", Find<Label>(RunUi, "shop-chips")?.text, "아이템 카드(60) 뒤 칩");
+            StringAssert.StartsWith("칩교환소: 아이템 카드", Find<Label>(RunUi, "move-notice")?.text ?? "", "아이템 카드를 산 뒤 알림");
+            var soldItem = Find<Button>(RunUi, "shop-buy-ItemCard");
+            Assert.IsTrue(soldItem != null && !soldItem.enabledSelf && soldItem.text == "샀음", "산 아이템 카드를 또 살 수 있다");
+            yield return Shot(RunUi, "12b-shop-item");
             Click(Find<Button>(RunUi, "shop-close"));
             yield return null;
             Assert.IsNull(Find<VisualElement>(RunUi, "chip-exchange"), "칩교환소 창이 닫히지 않았다");
+            Assert.IsNotNull(Find<VisualElement>(RunUi, "card-shop-17092736"), "상점 덱 칸에 산 아이템 카드가 없다");
+            StringAssert.Contains("상점 덱 1/10장", HubTextOf("zone-shop"), "상점 덱 칸 제목");
+            if (Find<Button>(RunUi, "apply-item") == null)
+            {
+                Click(Find<VisualElement>(RunUi, "card-shop-17092736"));
+                yield return null;
+            }
+            var apply = Find<Button>(RunUi, "apply-item");
+            Assert.IsTrue(apply != null && apply.enabledSelf, "상점 덱의 망원경에 적용 버튼이 없거나 잠겼다");
+            Click(apply);
+            yield return null;
+            Assert.IsNotNull(Find<VisualElement>(RunUi, "tower-preview-7"), "망원경을 적용했는데 7층이 미리 보이지 않는다");
+            StringAssert.Contains("바로 위 2층", Find<Label>(RunUi, "tower-preview-note")?.text ?? "", "탑 미리보기 안내");
+            StringAssert.StartsWith("아이템 효과 적용", Find<Label>(RunUi, "move-notice")?.text ?? "", "적용 뒤 알림");
+            saved = File.ReadAllText(SaveFile).Replace("\r\n", "\n");
+            StringAssert.Contains("\nshop-deck 17092736\n", saved, "상점 덱이 저장되지 않았다");
+            StringAssert.Contains("\nitems Shop:17092736\n", saved, "적용한 아이템이 저장되지 않았다");
+            yield return Shot(RunUi, "12c-item-applied");
 
             // 6층 이벤트: 들어가면 창이 한 번 뜬다. 저장 파일을 고쳐 「용의 사당」으로: 조건 선택지는 조건이 보이고, 처음 고르는 선택지는 결과가 숨겨진다.
             Click(Find<Button>(RunUi, "leave-floor"));
@@ -691,6 +720,13 @@ namespace DuelRoguelike.Tests
             var field = Find<TextField>(RunUi, "seed");
             Assert.IsNotNull(field, "시드 칸이 없다");
             field.value = seed.ToString();
+        }
+
+        /// <summary>이름이 name인 요소 안의 모든 글을 이어 붙인다 (없으면 빈 글).</summary>
+        static string HubTextOf(string name)
+        {
+            var e = Root(RunUi)?.Q(name);
+            return e == null ? "" : string.Join(" ", e.Query<TextElement>().ToList().Select(t => t.text));
         }
 
         /// <summary>층 사이 화면의 상태 줄과 덱 목록 글 (이어하기 전후 비교용).</summary>

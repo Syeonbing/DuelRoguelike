@@ -4,7 +4,7 @@
 // 듀얼의 상대·시드는 (런 시드, 듀얼 번호)로 정해지므로 따로 적지 않는다.
 // 고르는 중인 승리 보상(ChoosingReward)은 후보까지 적어서, 다시 켜도 같은 후보에서 고른다.
 //
-// 칩교환소 진열(shop), 이벤트 층의 이벤트(floor-event), 남은 보스 보상(boss-bonus)도 적는다. 지금 층의 종류(floor-kind)도 적어 둔다
+// 칩교환소 진열(shop), 이벤트 층의 이벤트(floor-event), 남은 보스 보상(boss-bonus), 상점 덱(shop-deck), 적용한 아이템(items: 덱:카드명)도 적는다. 지금 층의 종류(floor-kind)도 적어 둔다
 // (나머지 층의 종류는 런 시드로 다시 계산한다).
 //
 // 형식 1 (2026-11-10 규칙 전): fainted-main·fainted-extra(기절), substituted(등급별 포인트 대체 횟수), 이벤트 CardFainted.
@@ -25,7 +25,7 @@ namespace DuelRoguelike.Run
         {
             "seed", "start-deck", "opponents", "phase", "end-reason", "floor", "duels", "streak", "lp", "wins", "losses", "draws",
             "main", "extra", "side", "sealed-main", "sealed-extra", "gold", "reward", "start-deck-name",
-            "floor-kind", "chips", "shop", "floor-event", "boss-bonus", "reward-bonus",
+            "floor-kind", "chips", "shop", "floor-event", "boss-bonus", "reward-bonus", "shop-deck", "items",
         };
 
         /// <summary>형식 2·3</summary>
@@ -67,7 +67,11 @@ namespace DuelRoguelike.Run
             w.Line("floor-kind", FloorKind);
             w.Line("chips", Chips, ChipsEarned);
             if (_shop != null)
-                w.Line("shop", _shop.Select(o => (object)Invariant($"{o.Product}:{o.Price}:{(o.Sold ? 1 : 0)}")));
+                w.Line("shop", _shop.Select(o => (object)(Invariant($"{o.Product}:{o.Price}:{(o.Sold ? 1 : 0)}") + (o.Product == ShopProduct.ItemCard ? Invariant($":{o.Card}") : ""))));
+            if (_shopDeck.Count > 0)
+                w.Codes("shop-deck", _shopDeck);
+            if (_applied.Count > 0)
+                w.Line("items", _applied.Select(a => (object)Invariant($"{a.Pile}:{a.Name}")));
             if (CurrentEventId != null)
             {
                 if (EventBattlePending)
@@ -350,9 +354,49 @@ namespace DuelRoguelike.Run
             }
             if (run.Phase == RunPhase.ChoosingUnseal && (run.FloorKind != FloorKind.Boss || run.SealedCount == 0))
                 throw r.Error(phaseLine, $"보스 보상(봉인 해제)을 고르는 중인데 {run.FloorKind} 층, 봉인 {run.SealedCount}장");
+            ReadItems(map, r, run);
         }
 
-        /// <summary>shop 상품:가격:샀는지(0·1) …</summary>
+        /// <summary>shop-deck 카드… (없으면 빈 상점 덱), items 덱:카드명… (없으면 적용 없음).</summary>
+        static void ReadItems(Dictionary<string, SaveLine> map, SaveReader r, RunState run)
+        {
+            var database = run._database;
+            if (map.TryGetValue("shop-deck", out var deckLine))
+            {
+                r.ExpectAtLeast(deckLine, 1);
+                foreach (uint code in r.Codes(deckLine))
+                {
+                    if (!database.TryGet(code, out _))
+                        throw r.Error(deckLine, $"카드 {code}가 카드 DB에 없음");
+                    if (!run.ShopDeckHasRoom(code, out string full))
+                        throw r.Error(deckLine, full);
+                    run._shopDeck.Add(code);
+                }
+            }
+            if (!map.TryGetValue("items", out var itemsLine))
+                return;
+            r.ExpectAtLeast(itemsLine, 1);
+            foreach (string value in itemsLine.Values)
+            {
+                var parts = value.Split(':');
+                if (parts.Length != 2)
+                    throw r.Error(itemsLine, $"\"{value}\"는 덱:카드명 꼴이 아님");
+                var pile = r.Enum<RunPile>(itemsLine, parts[0]);
+                uint name = r.Code(itemsLine, parts[1]);
+                var item = ItemCards.Of(name, database);
+                if (item == null || item.Code != name)
+                    throw r.Error(itemsLine, $"{name}은(는) 아이템 카드명이 아님");
+                var cards = run.ItemPile(pile);
+                if (cards == null || !(pile == RunPile.Main ? item.InMain : item.InShop))
+                    throw r.Error(itemsLine, $"{item.Name}은(는) {pile}에서 적용할 수 없음");
+                if (!cards.Any(c => run.NameOf(c) == name))
+                    throw r.Error(itemsLine, $"{item.Name}을(를) {pile}에 적용했는데 그 덱에 카드가 없음");
+                if (!run._applied.Add((pile, name)))
+                    throw r.Error(itemsLine, $"\"{value}\"가 두 번 나옴");
+            }
+        }
+
+        /// <summary>shop 상품:가격:샀는지(0·1) … (아이템 카드는 ItemCard:가격:샀는지:카드)</summary>
         static List<ShopOffer> ReadShop(SaveLine line, SaveReader r)
         {
             r.ExpectAtLeast(line, 1);
@@ -360,15 +404,23 @@ namespace DuelRoguelike.Run
             foreach (string value in line.Values)
             {
                 var parts = value.Split(':');
-                if (parts.Length != 3)
-                    throw r.Error(line, $"\"{value}\"는 상품:가격:샀는지 꼴이 아님");
                 var product = r.Enum<ShopProduct>(line, parts[0]);
+                int expected = product == ShopProduct.ItemCard ? 4 : 3;
+                if (parts.Length != expected)
+                    throw r.Error(line, expected == 4 ? $"\"{value}\"는 ItemCard:가격:샀는지:카드 꼴이 아님" : $"\"{value}\"는 상품:가격:샀는지 꼴이 아님");
                 if (offers.Any(o => o.Product == product))
                     throw r.Error(line, $"{product}이(가) 두 번 나옴");
                 int price = r.Int(line, parts[1], 0);
                 if (parts[2] != "0" && parts[2] != "1")
                     throw r.Error(line, $"\"{value}\"의 샀는지는 0이나 1");
-                offers.Add(new ShopOffer(product, price, parts[2] == "1"));
+                uint card = 0;
+                if (product == ShopProduct.ItemCard)
+                {
+                    card = r.Code(line, parts[3]);
+                    if (ItemCards.All.All(i => i.Code != card))
+                        throw r.Error(line, $"{card}은(는) 아이템 카드가 아님");
+                }
+                offers.Add(new ShopOffer(product, price, parts[2] == "1", card));
             }
             return offers;
         }

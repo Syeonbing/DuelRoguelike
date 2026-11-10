@@ -93,6 +93,8 @@ namespace DuelRoguelike.Run
             IEnumerable<uint> cards = _main.Concat(_extra);
             if (scope != HoldScope.Deck)
                 cards = cards.Concat(_side);
+            if (scope == HoldScope.All)
+                cards = cards.Concat(_shopDeck);
             return cards;
         }
 
@@ -260,6 +262,8 @@ namespace DuelRoguelike.Run
             var piles = new List<(List<uint> Pile, RunPile Kind)> { (_main, RunPile.Main), (_extra, RunPile.Extra) };
             if (scope != HoldScope.Deck)
                 piles.Add((_side, RunPile.Side));
+            if (scope == HoldScope.All)
+                piles.Add((_shopDeck, RunPile.Shop));
             var candidates = piles.SelectMany(p => p.Pile.Select((code, i) => (p.Pile, p.Kind, Index: i, Code: code)))
                 .Where(c => target.Matches(c.Code, _database)).ToList();
             if (candidates.Count == 0)
@@ -271,6 +275,7 @@ namespace DuelRoguelike.Run
                 e.Code = pick.Code;
                 e.Pile = pick.Kind;
             });
+            ReleaseEmptyItems();
         }
 
         /// <summary>이벤트 전투가 끝났다: 이기면 선택지 결과(일반 보상 없음), 지면 일반 패배처럼 봉인. 어느 쪽이든 다음 층으로 (보충이 필요하면 그 뒤).</summary>

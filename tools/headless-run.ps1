@@ -160,7 +160,8 @@ Write-Host ("    탑: 들어간 층 " + ((0..4 | ForEach-Object { "$($kindNames[
 $randomFloors = @(1, 2, 3, 4, 7, 8) | ForEach-Object { "{0}층 {1}/{2}" -f $_, $s.RandomEventFloors[$_], $s.RandomFloorVisits[$_] }
 Write-Host "      확률 이벤트 층 (이벤트/들어감, 규칙 1~3층 10%, 4층 30%, 7~8층 5%): $($randomFloors -join ', ')"
 Write-Host "    칩 (임시 값): 얻음 $($s.ChipsEarned), 씀 $($s.ChipsSpent) / 봉인 해제 진열 $($s.UnsealStocked)곳 (칩교환소 $($s.FloorVisits[2])곳)"
-Write-Host "      구매: 교체(같은 레어도) $($s.Bought[0]), 교체(같은 레어도·직접) $($s.Bought[1]), 교체(레어도 상관없음) $($s.Bought[2]), 교체(레어도 상관없음·직접) $($s.Bought[3]), 봉인 해제 $($s.Bought[4])"
+Write-Host "      구매: 교체(같은 레어도) $($s.Bought[0]), 교체(같은 레어도·직접) $($s.Bought[1]), 교체(레어도 상관없음) $($s.Bought[2]), 교체(레어도 상관없음·직접) $($s.Bought[3]), 봉인 해제 $($s.Bought[4]), 아이템 카드 $($s.Bought[5])"
+Write-Host "      아이템: 진열 $($s.ItemsStockedText), 적용 $($s.ItemsApplied), 풀림 $($s.ItemsReleased), 미리보기 늘린 채 한 듀얼 $($s.DuelsWithPreview), 코인 토스 승률 오른 듀얼 $($s.DuelsWithCoinBonus)"
 Write-Host "    보스 보상: 봉인 해제 $($s.BossUnseals)번, 보상 1장 더 $($s.BossBonusRewards)번 / 런 종료 정산 골드 합 $($s.SettlementGold)"
 Write-Host "    보충: $($s.RefillsRequired)번, $($s.RefillCards)장 / 런 종료 기록 $($s.RunsEnded)번"
 Write-Host '    듀얼 시작 LP별 승률'

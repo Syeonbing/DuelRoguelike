@@ -45,8 +45,13 @@ namespace DuelRoguelike.Dev
         /// <summary>칩: 얻은 합, 칩교환소에서 쓴 합, 상품별 구매 수 (ShopProduct 순서), 봉인 해제가 진열된 칩교환소 수.</summary>
         public int ChipsEarned;
         public int ChipsSpent;
-        public readonly int[] Bought = new int[5];
+        public readonly int[] Bought = new int[6];
         public int UnsealStocked;
+        /// <summary>아이템: 칩교환소에 진열된 아이템 카드별 수, 적용한 수, 풀린 수, 적용 중에 한 듀얼 수 (미리보기 늘어남, 코인 토스 승률 오름).</summary>
+        public readonly SortedDictionary<uint, int> ItemsStocked = new SortedDictionary<uint, int>();
+        public int ItemsApplied, ItemsReleased, DuelsWithPreview, DuelsWithCoinBonus;
+
+        public string ItemsStockedText => string.Join(", ", ItemsStocked.Select(p => $"{p.Key} {p.Value}"));
         /// <summary>보스 보상: 봉인 해제를 고른 수, 보상 1장 더를 받은 수.</summary>
         public int BossUnseals;
         public int BossBonusRewards;
@@ -97,6 +102,18 @@ namespace DuelRoguelike.Dev
         const int ChipsPerWin = 20, ChipsPerBossWin = 50;
         static readonly int[] PriceTable = { 30, 50, 50, 80, 150 };
 
+        /// <summary>
+        /// 아이템 카드 견본 (ItemCards와 따로 적는다): 칩교환소 가격, 효과, 양. 진열은 RunRandom ShopItem(층)의 첫 값 % 2로 이 순서에서 고른다.
+        /// 고대의 망원경: 미리보기 +1층, 귀속. 천사의 주사위: 코인 토스 +20%p. 둘 다 메인 덱·상점 덱에서 효과, 중첩 안 됨.
+        /// </summary>
+        static readonly (uint Code, int Price, ItemEffectKind Effect, int Amount, bool Bound)[] ItemTable =
+        {
+            (17092736, 60, ItemEffectKind.PreviewFloors, 1, true),
+            (74137509, 80, ItemEffectKind.CoinTossWin, 20, false),
+        };
+
+        const int MaxShopDeck = 10;
+
         static readonly ShopProduct[] Swaps =
             { ShopProduct.SwapSameRarity, ShopProduct.SwapSameRarityChosen, ShopProduct.SwapAny, ShopProduct.SwapAnyChosen };
 
@@ -111,6 +128,9 @@ namespace DuelRoguelike.Dev
             public int BattleChoice;
             public RewardOffer Offer;
             public List<(ShopProduct Product, int Price, bool Sold)> Shop;
+            public uint ShopItem;
+            public List<uint> ShopDeck;
+            public HashSet<(RunPile Pile, uint Name)> Applied;
             public Dictionary<uint, int> Collection;
         }
 
@@ -175,8 +195,13 @@ namespace DuelRoguelike.Dev
 
             // 코인 토스: 런 시드·듀얼 번호의 CoinToss 난수에서 첫 값 < 50이면 플레이어 승리, 둘째 값 < 90이면 상대가 선공을 고른다.
             // 이긴 쪽이 선후공을 고르고, 선공이 엔진의 팀 0이다.
+            // 이길 확률은 50% + 적용 중인 코인 토스 아이템 (중첩 안 됨).
             var toss = RunRandom.For(_run.Seed, b.DuelsPlayed + 1, RunRandomPurpose.CoinToss);
-            bool won = toss.Next(100) < 50;
+            int percent = ExpectedCoinPercent(b);
+            bool won = toss.Next(100) < percent;
+            Expect(duel.Toss.WinPercent == percent, $"{where}: 코인 토스 승률 {duel.Toss.WinPercent}% (기대 {percent}%)");
+            if (percent > 50) _stats.DuelsWithCoinBonus++;
+            if (b.Applied.Any(a => ItemTable.Any(i => i.Code == a.Name && i.Effect == ItemEffectKind.PreviewFloors))) _stats.DuelsWithPreview++;
             bool opponentFirst = toss.Next(100) < 90;
             bool first = won ? playerChoice : !opponentFirst;
             int me = first ? 0 : 1;
@@ -418,11 +443,17 @@ namespace DuelRoguelike.Dev
             var shop = _run.Shop;
             if (kind == FloorKind.ChipExchange)
             {
-                bool unseal = shop.Count == 5 && shop[4].Product == ShopProduct.Unseal;
-                Expect(shop.Take(4).Select(o => o.Product).SequenceEqual(Swaps) && (shop.Count == 4 || unseal)
-                       && shop.All(o => o.Price == PriceTable[(int)o.Product] && !o.Sold), $"{where}: 칩교환소 진열이 이상함");
+                // 교체 4종, 확률로 봉인 해제, 마지막에 아이템 카드 1장 (ShopItem 난수로 견본 목록에서).
+                bool unseal = shop.Count == 6 && shop[4].Product == ShopProduct.Unseal;
+                var item = ItemTable[RunRandom.For(_run.Seed, floor, RunRandomPurpose.ShopItem).Next(ItemTable.Length)];
+                var last = shop.LastOrDefault();
+                Expect(shop.Take(4).Select(o => o.Product).SequenceEqual(Swaps) && (shop.Count == 5 || unseal)
+                       && shop.Take(shop.Count - 1).All(o => o.Price == PriceTable[(int)o.Product] && !o.Sold)
+                       && last.Product == ShopProduct.ItemCard && last.Card == item.Code && last.Price == item.Price && !last.Sold,
+                    $"{where}: 칩교환소 진열이 이상함");
                 if (unseal)
                     _stats.UnsealStocked++;
+                _stats.ItemsStocked[item.Code] = (_stats.ItemsStocked.TryGetValue(item.Code, out int stocked) ? stocked : 0) + 1;
             }
             else
                 Expect(shop.Count == 0, $"{where}: 칩교환소가 아닌데 진열이 있음");
@@ -691,13 +722,13 @@ namespace DuelRoguelike.Dev
         }
 
         /// <summary>선택지 조건을 이 상태에서 만족하는지: 칩 이상, 보유 범위(덱 = 메인·엑스트라, 덱·사이드 덱 = + 사이드)의 조건 카드 장수 이상.</summary>
-        bool Meets(EventChoice choice, HoldScope scope, int chips, IEnumerable<uint> main, IEnumerable<uint> extra, IEnumerable<uint> side)
+        bool Meets(EventChoice choice, HoldScope scope, int chips, IEnumerable<uint> main, IEnumerable<uint> extra, IEnumerable<uint> side, IEnumerable<uint> shop)
         {
-            var held = scope == HoldScope.Deck ? main.Concat(extra) : main.Concat(extra).Concat(side);
+            var held = scope == HoldScope.Deck ? main.Concat(extra) : scope == HoldScope.All ? main.Concat(extra).Concat(side).Concat(shop) : main.Concat(extra).Concat(side);
             return chips >= choice.MinChips && (choice.Requires == null || held.Count(c => choice.Requires.Matches(c, _db)) >= choice.Requires.Count);
         }
 
-        bool Meets(EventChoice choice, HoldScope scope, Snapshot b) => Meets(choice, scope, b.Chips, b.Main, b.Extra, b.Side);
+        bool Meets(EventChoice choice, HoldScope scope, Snapshot b) => Meets(choice, scope, b.Chips, b.Main, b.Extra, b.Side, b.ShopDeck);
 
         /// <summary>
         /// 선택지 결과를 순서대로 따로 계산해 런과 맞춰 본다: 칩(잃는 칩은 가진 만큼만), LP(1 아래로는 안 감), 골드, 카드 받기(사이드 덱·컬렉션),
@@ -708,6 +739,7 @@ namespace DuelRoguelike.Dev
             var main = b.Main.ToList();
             var extra = b.Extra.ToList();
             var side = b.Side.ToList();
+            var shopDeck = b.ShopDeck.ToList();
             var sealedMain = b.SealedMain.ToList();
             var sealedExtra = b.SealedExtra.ToList();
             int gold = b.Gold;
@@ -782,6 +814,8 @@ namespace DuelRoguelike.Dev
                         var piles = new List<(List<uint> Pile, RunPile Kind)> { (main, RunPile.Main), (extra, RunPile.Extra) };
                         if (scope != HoldScope.Deck)
                             piles.Add((side, RunPile.Side));
+                        if (scope == HoldScope.All)
+                            piles.Add((shopDeck, RunPile.Shop));
                         if (!piles.Any(p => p.Pile.Any(c => effect.Target.Matches(c, _db))))
                             break;
                         if (Next(RunEventKind.CardLost) is RunEvent lostEvent)
@@ -803,6 +837,7 @@ namespace DuelRoguelike.Dev
             Expect(SameCards(_run.MainDeck, main), $"{where}: 이벤트 뒤 메인 덱이 맞지 않음"); // 보충은 따로 고르는 걸음
             Expect(SameCards(_run.ExtraDeck, extra), $"{where}: 이벤트 뒤 엑스트라 덱이 맞지 않음");
             Expect(SameCards(_run.SideDeck, side), $"{where}: 이벤트 뒤 사이드 덱이 맞지 않음");
+            Expect(SameCards(_run.ShopDeck, shopDeck), $"{where}: 이벤트 뒤 상점 덱이 맞지 않음");
             Expect(SameCards(_run.SealedMain, sealedMain) && SameCards(_run.SealedExtra, sealedExtra), $"{where}: 이벤트 뒤 봉인 카드가 맞지 않음");
             var nowCollection = _run.Collection?.Cards.ToDictionary(p => p.Key, p => p.Value) ?? new Dictionary<uint, int>();
             Expect(nowCollection.Count == collection.Count && nowCollection.All(p => Get(collection, p.Key) == p.Value), $"{where}: 이벤트 뒤 컬렉션이 맞지 않음");
@@ -838,7 +873,7 @@ namespace DuelRoguelike.Dev
                 var random = RunRandom.For(_run.Seed, floor, RunRandomPurpose.Event);
                 var tendency = Weighted(tendencies, t => tendencyWeights[(int)t], random);
                 expected = Weighted(pool.Where(e => e.Tendency == tendency).ToList(),
-                    e => e.Weight * (e.Choices.Any(c => c.HasCondition && !c.IsForced && Meets(c, e.Scope, _run.Chips, _run.MainDeck, _run.ExtraDeck, _run.SideDeck)) ? 2 : 1),
+                    e => e.Weight * (e.Choices.Any(c => c.HasCondition && !c.IsForced && Meets(c, e.Scope, _run.Chips, _run.MainDeck, _run.ExtraDeck, _run.SideDeck, _run.ShopDeck)) ? 2 : 1),
                     random);
             }
             Expect(ev == expected, $"{where}: 이벤트 {ev.Id} (다시 뽑으면 {expected.Id}, 후보 {pool.Count}개)");
@@ -870,6 +905,12 @@ namespace DuelRoguelike.Dev
             var offer = b.Shop.FirstOrDefault(o => o.Product == product);
             if (!Expect(b.Phase == RunPhase.Ready && b.Kind == FloorKind.ChipExchange && offer.Price > 0 && !offer.Sold, $"{where}: 살 수 없는 상태에서 삼 ({b.Kind}, {b.Phase})"))
                 return;
+            if (product == ShopProduct.ItemCard)
+            {
+                AfterBuyItem(b, events, offer.Price);
+                return;
+            }
+            events = events.Where(e => e.Kind != RunEventKind.ItemReleased).ToList(); // 봉인으로 풀린 아이템은 CheckItems에서 따진다
             int price = PriceTable[(int)product];
             _stats.Bought[(int)product]++;
             _stats.ChipsSpent += price;
@@ -925,6 +966,94 @@ namespace DuelRoguelike.Dev
 
         Rarity? RarityOf(uint code) => _rarities.TryGet(code, out var r) ? r : (Rarity?)null;
 
+        // ---------------- 상점 덱·아이템 ----------------
+
+        /// <summary>아이템 카드를 샀다: 칩은 가격만큼, 카드는 상점 덱으로 (컬렉션·다른 덱은 그대로). 상점 덱은 같은 카드명 3장, 전체 10장까지.</summary>
+        void AfterBuyItem(Snapshot b, List<RunEvent> events, int price)
+        {
+            uint card = b.ShopItem;
+            string where = $"{b.Floor}층 칩교환소 아이템 카드 {card}";
+            var item = ItemTable.FirstOrDefault(i => i.Code == card);
+            _stats.Bought[(int)ShopProduct.ItemCard]++;
+            _stats.ChipsSpent += price;
+            Expect(item.Code != 0 && price == item.Price && b.Chips >= price, $"{where}: 가격 {price} (기대 {item.Price}), 가진 칩 {b.Chips}");
+            Expect(b.ShopDeck.Count < MaxShopDeck && b.ShopDeck.Count(c => Name(c) == Name(card)) < 3, $"{where}: 상점 덱에 자리가 없는데 삼 ({b.ShopDeck.Count}장)");
+            Expect(_run.Chips == b.Chips - price && _run.ChipsEarned == b.ChipsEarned, $"{where}: 칩 {b.Chips} → {_run.Chips} (기대 -{price})");
+            Expect(_run.ShopDeck.SequenceEqual(b.ShopDeck.Append(card)), $"{where}: 상점 덱에 1장 더해지지 않음");
+            Expect(_run.Shop.Select(o => (o.Product, o.Price, o.Sold)).SequenceEqual(b.Shop.Select(o => (o.Product, o.Price, o.Sold || o.Product == ShopProduct.ItemCard))),
+                $"{where}: 산 상품만 팔림으로 바뀌지 않음");
+            Expect(events.Count == 1 && events[0].Kind == RunEventKind.ShopBought && events[0].Product == ShopProduct.ItemCard && events[0].Code == card
+                   && events[0].Count == price && events[0].Chips == _run.Chips, $"{where}: 구매 이벤트가 이상함");
+            ExpectUnchanged(b, where, main: true, extra: true, side: true, sealedCards: true);
+            Expect(_run.Phase == RunPhase.Ready && _run.Floor == b.Floor && _run.Gold == b.Gold && _run.Lp == b.Lp, $"{where}: 상태·층·골드·LP가 바뀜");
+            var collection = _run.Collection?.Cards.ToDictionary(p => p.Key, p => p.Value) ?? new Dictionary<uint, int>();
+            Expect(collection.Count == b.Collection.Count && collection.All(p => Get(b.Collection, p.Key) == p.Value), $"{where}: 컬렉션이 바뀜 (상점 덱 카드는 컬렉션에 들어가지 않음)");
+            _expectedCards[card] = Get(_expectedCards, card) + 1;
+            CheckConservation(where);
+        }
+
+        /// <summary>
+        /// 아이템을 적용했다: 듀얼 밖 Ready, 견본 아이템 카드, 그 덱(메인 덱·상점 덱)에 그 카드명이 있고 아직 적용 전.
+        /// 적용 기록 하나만 생기고(귀속 아이템을 메인 덱에서 적용하면 귀속 표시) 나머지는 그대로.
+        /// </summary>
+        public void AfterApplyItem(uint code, RunPile pile)
+        {
+            var b = _before;
+            var events = NewEvents(b);
+            uint name = Name(code);
+            string where = $"{b.Floor}층 아이템 적용 {code} ({pile})";
+            var item = ItemTable.FirstOrDefault(i => i.Code == name);
+            var cards = pile == RunPile.Main ? b.Main : pile == RunPile.Shop ? b.ShopDeck : null;
+            Expect(b.Phase == RunPhase.Ready && item.Code != 0 && cards != null && cards.Any(c => Name(c) == name) && !b.Applied.Contains((pile, name)),
+                $"{where}: 적용할 수 없는 아이템을 적용함");
+            Expect(events.Count == 1 && events[0].Kind == RunEventKind.ItemApplied && events[0].Code == name && events[0].Pile == pile
+                   && events[0].IsBonus == (item.Bound && pile == RunPile.Main), $"{where}: 적용 기록이 이상함");
+            Expect(_run.AppliedItems.Count == b.Applied.Count + 1 && _run.AppliedItems.Contains((pile, name)), $"{where}: 적용 목록에 더해지지 않음");
+            ExpectUnchanged(b, where, main: true, extra: true, side: true, sealedCards: true);
+            Expect(_run.ShopDeck.SequenceEqual(b.ShopDeck) && _run.Chips == b.Chips && _run.Gold == b.Gold && _run.Lp == b.Lp && _run.Floor == b.Floor && _run.Phase == b.Phase,
+                $"{where}: 상점 덱·칩·골드·LP·층이 바뀜");
+            int preview = 1 + (_run.AppliedItems.Any(a => ItemTable.Any(i => i.Code == a.Name && i.Effect == ItemEffectKind.PreviewFloors)) ? 1 : 0);
+            Expect(_run.PreviewFloors == preview, $"{where}: 미리보기 {_run.PreviewFloors}층 (기대 {preview})");
+            _stats.ItemsApplied++;
+        }
+
+        /// <summary>적용 목록 규칙: 적용한 카드명은 그 덱에 있어야 한다 (다 빠지면 풀림, 풀린 것만 풀림). 귀속 카드는 메인 덱에서 사이드 덱으로 가지 않았다.</summary>
+        void CheckItems(Snapshot b, string where)
+        {
+            foreach (var (pile, name) in _run.AppliedItems)
+            {
+                var cards = pile == RunPile.Main ? _run.MainDeck : pile == RunPile.Shop ? _run.ShopDeck : null;
+                Expect(cards != null && cards.Any(c => Name(c) == name), $"{where}: 적용한 {name}이(가) {pile}에 없는데 풀리지 않음");
+            }
+            Expect(_run.ShopDeck.Count <= MaxShopDeck && _run.ShopDeck.GroupBy(Name).All(g => g.Count() <= 3), $"{where}: 상점 덱 {_run.ShopDeck.Count}장 (같은 카드명 3장, 전체 {MaxShopDeck}장까지)");
+            if (b == null)
+                return;
+            var events = NewEvents(b);
+            foreach (var moved in events.Where(e => e.Kind == RunEventKind.MovedToSide && e.Pile == RunPile.Main))
+            {
+                bool bound = ItemTable.Any(i => i.Code == Name(moved.Code) && i.Bound) && b.Applied.Contains((RunPile.Main, Name(moved.Code)));
+                Expect(!bound, $"{where}: 귀속 카드 {moved.Code}를 메인 덱에서 뺌");
+            }
+            var released = events.Where(e => e.Kind == RunEventKind.ItemReleased).ToList();
+            foreach (var e in released)
+            {
+                var cards = e.Pile == RunPile.Main ? _run.MainDeck : _run.ShopDeck;
+                Expect(b.Applied.Contains((e.Pile, e.Code)) && !cards.Any(c => Name(c) == e.Code), $"{where}: 아이템 {e.Code} 적용이 잘못 풀림");
+                _stats.ItemsReleased++;
+            }
+            var expected = new HashSet<(RunPile, uint)>(b.Applied);
+            expected.ExceptWith(released.Select(e => (e.Pile, e.Code)));
+            if (!events.Any(e => e.Kind == RunEventKind.ItemApplied))
+                Expect(expected.SetEquals(_run.AppliedItems), $"{where}: 적용 목록이 풀림 기록과 맞지 않음");
+        }
+
+        /// <summary>코인 토스 승률: 50% + 적용 중인 코인 토스 아이템 (중첩 안 되므로 카드명마다 한 번).</summary>
+        static int ExpectedCoinPercent(Snapshot b)
+        {
+            int bonus = ItemTable.Where(i => i.Effect == ItemEffectKind.CoinTossWin && b.Applied.Any(a => a.Name == i.Code)).Sum(i => i.Amount);
+            return Math.Min(100, 50 + bonus);
+        }
+
         static List<uint> Without(IEnumerable<uint> cards, uint code)
         {
             var list = cards.ToList();
@@ -970,6 +1099,7 @@ namespace DuelRoguelike.Dev
             var now = Tally(AllCards(_run));
             bool same = now.Count == _expectedCards.Count && now.All(p => Get(_expectedCards, p.Key) == p.Value);
             Expect(same, $"{where}: 카드 총합이 맞지 않음 (지금 {now.Values.Sum()}장, 기대 {_expectedCards.Values.Sum()}장)");
+            CheckItems(_before, where);
         }
 
         void ExpectUnchanged(Snapshot b, string where, bool main, bool extra, bool side, bool sealedCards)
@@ -1012,11 +1142,14 @@ namespace DuelRoguelike.Dev
             BattleChoice = _run.PendingEventBattleIndex,
             Offer = _run.PendingReward,
             Shop = _run.Shop.Select(o => (o.Product, o.Price, o.Sold)).ToList(),
+            ShopItem = _run.Shop.FirstOrDefault(o => o.Product == ShopProduct.ItemCard)?.Card ?? 0,
+            ShopDeck = _run.ShopDeck.ToList(),
+            Applied = new HashSet<(RunPile, uint)>(_run.AppliedItems),
             Collection = _run.Collection?.Cards.ToDictionary(p => p.Key, p => p.Value) ?? new Dictionary<uint, int>(),
         };
 
         static IEnumerable<uint> AllCards(RunState run) =>
-            run.MainDeck.Concat(run.ExtraDeck).Concat(run.SideDeck).Concat(run.SealedMain).Concat(run.SealedExtra);
+            run.MainDeck.Concat(run.ExtraDeck).Concat(run.SideDeck).Concat(run.SealedMain).Concat(run.SealedExtra).Concat(run.ShopDeck);
 
         static Dictionary<uint, int> Tally(IEnumerable<uint> cards) => cards.GroupBy(c => c).ToDictionary(g => g.Key, g => g.Count());
 

@@ -57,6 +57,8 @@ namespace DuelRoguelike.UI
             ShopRelease,
             /// <summary>칩교환소에서 대신 봉인할 카드 후보 (직접 고르는 교체)</summary>
             ShopSeal,
+            /// <summary>상점 덱 (칩교환소에서 산 카드)</summary>
+            Shop,
             /// <summary>보스 보상으로 봉인을 풀 카드 후보</summary>
             Unseal,
         }

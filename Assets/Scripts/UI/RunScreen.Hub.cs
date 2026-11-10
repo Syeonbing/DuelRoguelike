@@ -13,7 +13,7 @@ namespace DuelRoguelike.UI
 {
     public sealed partial class RunScreen
     {
-        static readonly Pile[] HubPiles = { Pile.Main, Pile.Extra, Pile.Side, Pile.Sealed };
+        static readonly Pile[] HubPiles = { Pile.Main, Pile.Extra, Pile.Side, Pile.Sealed, Pile.Shop };
 
         uint _refillSelected;
         ScrollView _deckScroll;
@@ -255,6 +255,8 @@ namespace DuelRoguelike.UI
             int sealedCount = _run.SealedMain.Count + _run.SealedExtra.Count;
             if (sealedCount > 0)
                 AddPileSection(Pile.Sealed, $"봉인 {sealedCount}장", "이번 런에서는 쓸 수 없음");
+            if (_run.ShopDeck.Count > 0)
+                AddPileSection(Pile.Shop, $"상점 덱 {_run.ShopDeck.Count}/{RunRules.MaxShopDeck}장", "칩교환소에서 산 카드 · 듀얼에 쓰지 않고 아이템 효과만 · 런이 끝나면 사라짐");
             AddDropZone(mainZone, (pile, code) => TryMove(pile, code, toDeck: true));
             AddDropZone(extraZone, (pile, code) => TryMove(pile, code, toDeck: true));
             AddDropZone(sideZone, (pile, code) => TryMove(pile, code, toDeck: false));
@@ -312,9 +314,12 @@ namespace DuelRoguelike.UI
                     tag = "새 카드";
                     fresh[c] = left - 1;
                 }
+                if (tag == null && (pile == Pile.Main || pile == Pile.Shop) && _run.IsApplied(pile == Pile.Main ? RunPile.Main : RunPile.Shop, c))
+                    tag = pile == Pile.Main && _run.IsBound(c) ? "귀속" : "적용 중";
                 bool isSealed = pile == Pile.Sealed;
-                Action onDouble = isSealed ? (Action)null : () => TryMove(pile, c, toDeck: pile == Pile.Side);
-                grid.Add(CardSlot(pile, c, CardFaceSize.Small, tag: tag, dim: isSealed, onDoubleClick: onDouble, draggable: !isSealed));
+                bool fixedCard = isSealed || pile == Pile.Shop;
+                Action onDouble = fixedCard ? (Action)null : () => TryMove(pile, c, toDeck: pile == Pile.Side);
+                grid.Add(CardSlot(pile, c, CardFaceSize.Small, tag: tag, dim: isSealed, onDoubleClick: onDouble, draggable: !fixedCard));
             }
             zone.Add(grid);
             _deckScroll.Add(zone);
@@ -329,6 +334,7 @@ namespace DuelRoguelike.UI
                 case Pile.Extra: return _run.ExtraDeck;
                 case Pile.Side: return _run.SideDeck;
                 case Pile.Sealed: return _run.SealedMain.Concat(_run.SealedExtra).ToList();
+                case Pile.Shop: return _run.ShopDeck;
                 default: return Array.Empty<uint>();
             }
         }
@@ -362,15 +368,42 @@ namespace DuelRoguelike.UI
             AddCardDetail(panel, code, pinned);
             int side = _run.SideDeck.Count(c => c == code);
             int sealedCount = _run.SealedMain.Count(c => c == code) + _run.SealedExtra.Count(c => c == code);
-            panel.Add(Text($"덱 {_run.DeckCopies(code)}장(같은 카드명) · 사이드 덱 {side}장 · 봉인 {sealedCount}장 · 컬렉션 {_collection.Count(code)}장",
+            int shop = _run.ShopDeck.Count(c => c == code);
+            panel.Add(Text($"덱 {_run.DeckCopies(code)}장(같은 카드명) · 사이드 덱 {side}장 · 봉인 {sealedCount}장" + (shop > 0 ? $" · 상점 덱 {shop}장" : "") + $" · 컬렉션 {_collection.Count(code)}장",
                 14, UiStyle.TextDim, top: 6));
+            var item = _run.ItemOf(code);
+            if (item != null)
+            {
+                string State(RunPile where) => _run.IsApplied(where, code) ? (where == RunPile.Main && _run.IsBound(code) ? "적용 중 (귀속)" : "적용 중") : "적용 안 함";
+                var itemText = Text($"아이템 카드 (탑 효과): {item.Describe()}\n메인 덱 {State(RunPile.Main)} · 상점 덱 {State(RunPile.Shop)}", 14, UiStyle.Accent, top: 6);
+                itemText.name = "item-info";
+                itemText.style.whiteSpace = WhiteSpace.Normal;
+                panel.Add(itemText);
+            }
             if (!pinned)
                 return;
 
             var actions = UiStyle.Box();
             actions.style.marginTop = 8;
+            if (item != null && (pile == Pile.Main || pile == Pile.Shop))
+            {
+                var where = pile == Pile.Main ? RunPile.Main : RunPile.Shop;
+                bool can = _run.CanApplyItem(code, where, out string why);
+                var apply = UiStyle.Button(_run.IsApplied(where, code) ? "아이템 효과 적용 중" : $"아이템 효과 적용 ({RunEvent.PileName(where)})", () => ApplyItem(code, where), 18);
+                apply.name = "apply-item";
+                apply.SetEnabled(can);
+                apply.style.marginBottom = 6;
+                actions.Add(apply);
+                if (!can && !_run.IsApplied(where, code))
+                    actions.Add(Text(why, 14, UiStyle.TextDim, top: 2));
+                else if (can && where == RunPile.Main && item.Bound)
+                    actions.Add(Text("귀속: 메인 덱에서 적용하면 봉인될 때까지 사이드 덱으로 뺄 수 없습니다.", 14, UiStyle.Opponent, top: 2));
+            }
             switch (pile)
             {
+                case Pile.Shop:
+                    actions.Add(Text("상점 덱의 카드는 듀얼·보충에 쓰지 않고 옮길 수 없습니다. 런이 끝나면 사라집니다.", 15, UiStyle.TextDim));
+                    break;
                 case Pile.Main:
                 case Pile.Extra:
                 {
@@ -400,6 +433,18 @@ namespace DuelRoguelike.UI
                     break;
             }
             panel.Add(actions);
+        }
+
+        void ApplyItem(uint code, RunPile where)
+        {
+            if (_run == null || !_run.CanApplyItem(code, where, out string reason))
+                return;
+            _run.ApplyItem(code, where);
+            Persist();
+            _moveNotice = $"아이템 효과 적용: {_text.CardName(code)} ({RunEvent.PileName(where)}) — {_run.ItemOf(code).EffectText}" + (_run.IsBound(code) ? " · 귀속" : "");
+            _moveNoticeIsError = false;
+            Debug.Log($"[런] {_moveNotice}");
+            ShowHub();
         }
 
         /// <summary>덱 ↔ 사이드 덱 옮기기 (끌어다 놓기, 두 번 누르기, 버튼). 고른 카드는 옮겨 간 곳에서 계속 고른 상태.</summary>

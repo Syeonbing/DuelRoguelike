@@ -62,6 +62,10 @@ namespace DuelRoguelike.Run
         EventGold,
         /// <summary>런 종료 골드 정산. Count: 정산 골드, Floor: 도달 층, ChipsEarned: 런 동안 얻은 칩, Chips: 종료 때 가진 칩</summary>
         GoldSettled,
+        /// <summary>Code: 아이템 카드(카드명 코드), Pile: 적용한 덱 (메인 덱·상점 덱), IsBonus: 귀속이 걸림</summary>
+        ItemApplied,
+        /// <summary>Code, Pile: 그 덱에서 그 카드명이 다 빠져(봉인 등) 풀린 아이템 적용</summary>
+        ItemReleased,
     }
 
     /// <summary>카드가 있는 곳 (런 기준).</summary>
@@ -70,6 +74,8 @@ namespace DuelRoguelike.Run
         Main,
         Extra,
         Side,
+        /// <summary>상점 덱 (칩교환소에서 산 카드)</summary>
+        Shop,
     }
 
     /// <summary>듀얼 전 코인 토스에서 이긴 쪽 (형식 4까지의 기록은 Unknown).</summary>
@@ -187,7 +193,14 @@ namespace DuelRoguelike.Run
                 case RunEventKind.ChipsGained:
                     return $"칩 +{Count} (보유 {Chips})";
                 case RunEventKind.ShopBought:
-                    return $"칩교환소: {ChipExchange.Name(Product)} 구매 (칩 -{Count}, 보유 {Chips})";
+                    return Product == ShopProduct.ItemCard
+                        ? $"칩교환소: {cardName(Code)} 구매 → 상점 덱 (칩 -{Count}, 보유 {Chips})"
+                        : $"칩교환소: {ChipExchange.Name(Product)} 구매 (칩 -{Count}, 보유 {Chips})";
+                case RunEventKind.ItemApplied:
+                    return $"아이템 적용 ({PileName(Pile)}): {cardName(Code)} — {ItemCards.All.FirstOrDefault(i => i.Code == Code)?.EffectText}" +
+                           (IsBonus ? " · 귀속 (봉인될 때까지 메인 덱에서 뺄 수 없음)" : "");
+                case RunEventKind.ItemReleased:
+                    return $"아이템 적용 풀림 ({PileName(Pile)}에 남은 카드 없음): {cardName(Code)}";
                 case RunEventKind.CardUnsealed:
                     return $"{(IsBonus ? "보스 보상 " : "")}봉인 해제 ({PileName(Pile)}): {cardName(Code)} → 사이드 덱";
                 case RunEventKind.UnsealOffered:
@@ -233,7 +246,7 @@ namespace DuelRoguelike.Run
         static string DeckNameOf(string id) => StarterDecks.Find(id ?? "")?.Name ?? id;
 
         public static string PileName(RunPile pile) =>
-            pile == RunPile.Main ? "메인 덱" : pile == RunPile.Extra ? "엑스트라 덱" : "사이드 덱";
+            pile == RunPile.Main ? "메인 덱" : pile == RunPile.Extra ? "엑스트라 덱" : pile == RunPile.Shop ? "상점 덱" : "사이드 덱";
 
         /// <summary>", 코인 토스 승리 → 선공" (형식 4까지의 기록에는 없다).</summary>
         string TossText()

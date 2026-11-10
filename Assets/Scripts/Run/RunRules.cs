@@ -60,7 +60,14 @@ namespace DuelRoguelike.Run
         /// <summary>칩교환소에 봉인 해제가 나올 확률(%) (임시, 등장 빈도는 미정). 봉인 대상 교체는 늘 나온다.</summary>
         public const int UnsealOfferPercent = 50;
 
+        /// <summary>봉인 상품의 가격. 아이템 카드는 카드마다 (ItemCard.Price).</summary>
         public static int ShopPrice(ShopProduct product) => ShopPrices[(int)product];
+
+        /// <summary>상점 덱: 전체 장수 한도 (같은 카드명은 MaxCopies장). 규칙 결정 문서.</summary>
+        public const int MaxShopDeck = 10;
+
+        /// <summary>탑 미리보기: 아이템 없이 바로 위 몇 층의 종류가 보이는지. 규칙 결정 문서: 1층.</summary>
+        public const int BasePreviewFloors = 1;
 
         // ---------------- 런 종료 골드 정산 ----------------
 

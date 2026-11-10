@@ -57,7 +57,8 @@ namespace DuelRoguelike.UI
                 int floor = start + i;
                 bool current = floor == _run.Floor;
                 bool past = floor < _run.Floor;
-                FloorKind? kind = current ? _run.FloorKind : past ? kinds[i]
+                bool preview = floor > _run.Floor && floor <= _run.Floor + _run.PreviewFloors && Tower.RandomEventPercent(floor) > 0;
+                FloorKind? kind = current ? _run.FloorKind : past || preview ? kinds[i]
                     : Tower.RandomEventPercent(floor) > 0 ? (FloorKind?)null : Tower.FixedKind(floor);
 
                 var box = Row();
@@ -83,6 +84,15 @@ namespace DuelRoguelike.UI
                 var kindLabel = Text(kind == null ? "?" : Tower.KindName(kind.Value), 16, kind == null ? UiStyle.TextDim : UiStyle.Text, bold: current);
                 kindLabel.style.flexShrink = 0;
                 box.Add(kindLabel);
+                if (preview)
+                {
+                    var seen = Text("미리보기", 12, UiStyle.TextDim);
+                    seen.name = $"tower-preview-{floor}";
+                    seen.style.marginLeft = StyleKeyword.Auto;
+                    seen.style.marginRight = 6;
+                    seen.style.flexShrink = 0;
+                    box.Add(seen);
+                }
                 if (current)
                 {
                     var here = Text("지금", 12, UiStyle.Accent, bold: true);
@@ -93,7 +103,8 @@ namespace DuelRoguelike.UI
                 }
                 panel.Add(box);
             }
-            var note = Text("?: 전투 또는 이벤트 (들어가 봐야 안다)", 12, UiStyle.TextDim, top: 8);
+            var note = Text($"?: 전투 또는 이벤트 (들어가 봐야 안다). 미리보기: 바로 위 {_run.PreviewFloors}층까지 보인다 (아이템으로 늘어남).", 12, UiStyle.TextDim, top: 8);
+            note.name = "tower-preview-note";
             note.style.whiteSpace = WhiteSpace.Normal;
             panel.Add(note);
             var chips = UiStyle.Label($"칩 {_run.Chips}", 22, UiStyle.Accent, bold: true);
@@ -112,7 +123,7 @@ namespace DuelRoguelike.UI
                 case FloorKind.Boss:
                     return $"보스 층: 이기면 칩 {RunRules.ChipsPerBossWin}과 보스 보상 (봉인된 카드가 있으면 1장 봉인 해제, 없으면 승리 보상 1장 더).";
                 case FloorKind.ChipExchange:
-                    return "칩교환소: 칩으로 봉인 대상 교체·봉인 해제를 삽니다. 다 보면 다음 층으로 올라갑니다.";
+                    return "칩교환소: 칩으로 봉인 대상 교체·봉인 해제·아이템 카드를 삽니다. 다 보면 다음 층으로 올라갑니다.";
                 case FloorKind.Rest:
                     return $"휴식 층: LP를 {RunRules.FullLp}로 맞췄습니다. 덱을 정리하고 다음 층으로 올라갑니다.";
                 case FloorKind.Event:
@@ -216,7 +227,7 @@ namespace DuelRoguelike.UI
             chips.name = "shop-chips";
             head.Add(chips);
             panel.Add(head);
-            var intro = Text("칩으로 봉인을 다룹니다. 상품마다 이 칩교환소에서 한 번만 살 수 있습니다. 가격은 임시 값입니다.", 15, UiStyle.TextDim, top: 6);
+            var intro = Text($"칩으로 봉인을 다루고 아이템 카드를 삽니다. 상품마다 이 칩교환소에서 한 번만 살 수 있습니다. 가격은 임시 값입니다. 상점 덱 {_run.ShopDeck.Count}/{RunRules.MaxShopDeck}장.", 15, UiStyle.TextDim, top: 6);
             intro.style.whiteSpace = WhiteSpace.Normal;
             panel.Add(intro);
 
@@ -232,13 +243,6 @@ namespace DuelRoguelike.UI
                 none.Add(Text("이번 칩교환소에는 없습니다 (칩교환소마다 확률로 나옵니다).", 14, UiStyle.TextDim, top: 2));
                 list.Add(none);
             }
-            var item = ShopBox("shop-item-card");
-            item.style.opacity = 0.5f;
-            item.Add(UiStyle.Label(ChipExchange.ItemCardSlotTitle, 19, bold: true));
-            var itemText = Text(ChipExchange.ItemCardSlotText, 14, UiStyle.TextDim, top: 2);
-            itemText.style.whiteSpace = WhiteSpace.Normal;
-            item.Add(itemText);
-            list.Add(item);
             panel.Add(list);
 
             var buttons = Row();
@@ -274,8 +278,8 @@ namespace DuelRoguelike.UI
             var texts = UiStyle.Box();
             texts.style.flexGrow = 1;
             texts.style.flexShrink = 1;
-            texts.Add(UiStyle.Label(ChipExchange.Name(offer.Product), 19, bold: true));
-            var description = Text(ChipExchange.Description(offer.Product), 14, UiStyle.TextDim, top: 2);
+            texts.Add(UiStyle.Label(ChipExchange.Name(offer), 19, bold: true));
+            var description = Text(ChipExchange.Description(offer), 14, UiStyle.TextDim, top: 2);
             description.style.whiteSpace = WhiteSpace.Normal;
             texts.Add(description);
             bool ok = _run.CanBuy(offer.Product, out string reason);
@@ -305,6 +309,20 @@ namespace DuelRoguelike.UI
             if (!_run.CanBuy(product, out string reason))
             {
                 Debug.Log($"[런] 칩교환소: {ChipExchange.Name(product)}을(를) 살 수 없음 — {reason}");
+                return;
+            }
+            if (product == ShopProduct.ItemCard)
+            {
+                uint card = _run.Shop.First(o => o.Product == ShopProduct.ItemCard).Card;
+                _run.BuyItem();
+                Persist();
+                _moveNotice = $"칩교환소: 아이템 카드 {_text.CardName(card)} 구매 → 상점 덱 (남은 칩 {_run.Chips})";
+                _moveNoticeIsError = false;
+                Debug.Log($"[런] {_moveNotice}");
+                _selectedPile = Pile.Shop;
+                _selectedCode = card;
+                ShowHub();
+                OpenShop();
                 return;
             }
             _shopProduct = product;

@@ -164,6 +164,8 @@ namespace DuelRoguelike.Run
                 reason = "이번 칩교환소에서 이미 삼";
             else if (Chips < offer.Price)
                 reason = $"칩이 모자람 (가격 {offer.Price}, 보유 {Chips})";
+            else if (product == ShopProduct.ItemCard)
+                ShopDeckHasRoom(offer.Card, out reason);
             else if (SealedCount == 0)
                 reason = "봉인된 카드가 없음";
             else if (ReleaseCandidates(product).Count == 0)
@@ -259,10 +261,21 @@ namespace DuelRoguelike.Run
                 e.Code = target;
                 e.Pile = extra ? RunPile.Extra : RunPile.Main;
             });
+            ReleaseEmptyItems();
             CheckMainDeckSize();
         }
 
-        void Pay(ShopProduct product)
+        /// <summary>아이템 카드를 산다: 카드는 상점 덱으로 (컬렉션에는 들어가지 않는다).</summary>
+        public void BuyItem()
+        {
+            if (!CanBuy(ShopProduct.ItemCard, out string reason))
+                throw new InvalidOperationException($"아이템 카드를 살 수 없습니다: {reason}");
+            uint code = OfferOf(ShopProduct.ItemCard).Card;
+            _shopDeck.Add(code);
+            Pay(ShopProduct.ItemCard, code);
+        }
+
+        void Pay(ShopProduct product, uint card = 0)
         {
             var offer = OfferOf(product);
             Chips -= offer.Price;
@@ -272,6 +285,7 @@ namespace DuelRoguelike.Run
                 e.Product = product;
                 e.Count = offer.Price;
                 e.Chips = Chips;
+                e.Code = card;
             });
         }
 

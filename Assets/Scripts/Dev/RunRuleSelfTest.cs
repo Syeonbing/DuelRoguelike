@@ -45,6 +45,9 @@ namespace DuelRoguelike.Dev
                          ("이벤트 선택지와 결과", test.EventChoices),
                          ("이벤트 전투", test.EventBattle),
                          ("이벤트 도감", test.EventCodexSave),
+                         ("아이템 카드 목록", test.ItemCardList),
+                         ("상점 덱과 아이템 적용", test.ShopDeckAndItems),
+                         ("귀속과 봉인", test.BoundItemRelease),
                          ("런 종료와 보충", test.EndAndRefill),
                          ("사이드 덱 교환 규칙", test.ExchangeRules),
                          ("승리 보상 고르기", test.RewardChoice),
@@ -216,6 +219,7 @@ namespace DuelRoguelike.Dev
 
             // 칩교환소 진열: 봉인 대상 교체 4종은 늘, 봉인 해제는 50%(임시). 같은 시드·층이면 같다.
             int unseal = 0;
+            var itemSeen = new Dictionary<uint, int>();
             for (int floor = 5; floor < 5 + 10 * 4000; floor += 10)
             {
                 var stock = ChipExchange.Stock(77, floor);
@@ -224,10 +228,18 @@ namespace DuelRoguelike.Dev
                     Expect(false, $"{floor}층 칩교환소 진열이 이상함");
                     break;
                 }
+                var itemOffers = stock.Where(o => o.Product == ShopProduct.ItemCard).ToList();
+                if (itemOffers.Count != 1 || stock.Last() != itemOffers[0] || itemOffers[0].Price != OfferPrice(itemOffers[0]) || itemOffers[0].Sold)
+                {
+                    Expect(false, $"{floor}층 칩교환소 아이템 카드 진열이 이상함");
+                    break;
+                }
+                itemSeen[itemOffers[0].Card] = itemSeen.TryGetValue(itemOffers[0].Card, out int seenCount) ? seenCount + 1 : 1;
                 if (stock.Any(o => o.Product == ShopProduct.Unseal))
                     unseal++;
             }
             Expect(Math.Abs(unseal / 40.0 - RunRules.UnsealOfferPercent) < 2.5, $"봉인 해제 진열 {unseal / 40.0:F1}% (임시 {RunRules.UnsealOfferPercent}%)");
+            Expect(ItemCards.All.All(i => itemSeen.TryGetValue(i.Code, out int n) && Math.Abs(n / 40.0 - 100.0 / ItemCards.All.Count) < 2.5), $"아이템 카드 진열은 목록에서 고르게: {string.Join(", ", itemSeen.Select(p => $"{p.Key} {p.Value / 40.0:F1}%"))}");
             Expect(ChipExchange.Stock(77, 15).Select(o => o.Product).SequenceEqual(ChipExchange.Stock(77, 15).Select(o => o.Product)), "같은 시드·층이면 같은 진열");
         }
 
@@ -246,7 +258,7 @@ namespace DuelRoguelike.Dev
                 $"5층 칩교환소: {run.Floor}층 {run.FloorKind}, 칩 {run.Chips}, 봉인 {run.SealedCount}, 메인 {run.MainDeck.Count}");
             var products = run.Shop.Select(o => o.Product).ToList();
             Expect(products.Take(4).SequenceEqual(new[] { ShopProduct.SwapSameRarity, ShopProduct.SwapSameRarityChosen, ShopProduct.SwapAny, ShopProduct.SwapAnyChosen })
-                   && run.Shop.All(o => o.Price == RunRules.ShopPrice(o.Product) && !o.Sold), "진열: 봉인 대상 교체 4종 (+ 봉인 해제는 확률), 임시 가격");
+                   && run.Shop.All(o => o.Price == OfferPrice(o) && !o.Sold) && run.Shop.Last().Product == ShopProduct.ItemCard, "진열: 봉인 대상 교체 4종 (+ 봉인 해제는 확률) + 아이템 카드 1장, 임시 가격");
             Expect(RunRules.ShopPrice(ShopProduct.SwapSameRarity) < RunRules.ShopPrice(ShopProduct.SwapSameRarityChosen)
                    && RunRules.ShopPrice(ShopProduct.SwapAny) < RunRules.ShopPrice(ShopProduct.SwapAnyChosen)
                    && RunRules.ShopPrice(ShopProduct.SwapAnyChosen) < RunRules.ShopPrice(ShopProduct.Unseal), "직접 고르는 교체가 더 비싸고, 봉인 해제가 가장 비쌈");
@@ -715,6 +727,144 @@ namespace DuelRoguelike.Dev
             Expect(loaded.Run == null && loaded.Codex.Chosen("dragon-shrine", 2), "런을 정리해도 도감은 남음");
             Broken("format 5\ngold 0\nevent-seen\n", "이벤트 Id 없는 도감 줄");
             Broken("format 5\ngold 0\nevent-seen a -1\n", "도감 선택지 번호가 음수");
+        }
+
+        // ---------------- 상점 덱·아이템 ----------------
+
+        const uint Telescope = 17092736; // 고대의 망원경 (카이바 덱에 1장)
+        const uint Dice = 74137509;      // 천사의 주사위 (스타터 덱에 없음)
+
+        static int OfferPrice(ShopOffer offer) =>
+            offer.Product == ShopProduct.ItemCard ? ItemCards.All.First(i => i.Code == offer.Card).Price : RunRules.ShopPrice(offer.Product);
+
+        /// <summary>1~4층이 모두 전투 층이고 5층 칩교환소의 아이템 카드가 item인 시드.</summary>
+        static ulong SeedWithShopItem(uint item)
+        {
+            for (ulong seed = 1; ; seed++)
+                if (Enumerable.Range(1, 4).All(f => Tower.KindOf(seed, f) == FloorKind.Battle) && ChipExchange.Stock(seed, 5).Last().Card == item)
+                    return seed;
+        }
+
+        /// <summary>듀얼은 모두 LP 8000으로 이기고 다른 층은 지나가며, 칩교환소까지 간다.</summary>
+        RunState ToShopFloor(RunState run)
+        {
+            for (int guard = 0; guard < 80 && !(run.Phase == RunPhase.Ready && run.FloorKind == FloorKind.ChipExchange); guard++)
+            {
+                if (run.Phase != RunPhase.Ready)
+                    Choose(run);
+                else if (Tower.IsBattle(run.FloorKind) || run.EventBattlePending)
+                {
+                    run.BeginDuel();
+                    run.FinishDuel(DuelResult.Win, 8000);
+                    Choose(run);
+                }
+                else if (run.FloorKind == FloorKind.Event && !run.EventDone)
+                    run.ChooseEventOption(PassChoice(run));
+                else
+                    run.LeaveFloor();
+            }
+            Expect(run.Phase == RunPhase.Ready && run.FloorKind == FloorKind.ChipExchange, $"칩교환소까지 가기: {run.Floor}층 {run.FloorKind}");
+            return run;
+        }
+
+        /// <summary>아이템 카드 목록: 카드 정보에 있고 공식 한글 카드명과 같다.</summary>
+        void ItemCardList()
+        {
+            foreach (var item in ItemCards.All)
+                Expect(_db.TryGet(item.Code, out _) && _db.GetName(item.Code) == item.Name && _db.NameCode(item.Code) == item.Code && item.Price > 0,
+                    $"아이템 카드 {item.Code}: 카드 정보 이름 \"{_db.GetName(item.Code)}\" (목록 \"{item.Name}\")");
+            Expect(ItemCards.All.Select(i => i.Code).Distinct().Count() == ItemCards.All.Count, "아이템 카드 목록에 같은 카드가 두 번 없음");
+            Expect(ItemCards.Of(Telescope, _db)?.Effect == ItemEffectKind.PreviewFloors && ItemCards.Of(Telescope, _db).Bound
+                   && ItemCards.Of(Dice, _db)?.Effect == ItemEffectKind.CoinTossWin && !ItemCards.Of(Dice, _db).Bound, "견본: 망원경(미리보기, 귀속), 주사위(코인 토스, 귀속 아님)");
+            Expect(StarterDecks.Kaiba.ToCardList().Count(c => c == Telescope) == 1, "카이바 덱에 고대의 망원경 1장");
+        }
+
+        /// <summary>칩교환소의 아이템 카드 → 상점 덱, 상점 덱에서 적용, 저장·읽기와 형식 오류.</summary>
+        void ShopDeckAndItems()
+        {
+            var save = GameSave.NewGame();
+            var run = save.StartRun(new RunSetup { Seed = SeedWithShopItem(Dice), StartDeck = StarterDecks.Kaiba }, _db, _rarities);
+            uint plain = run.MainDeck.First(c => ItemCards.Of(c, _db) == null);
+            Expect(run.PreviewFloors == RunRules.BasePreviewFloors && run.CoinTossWinPercent == RunRules.CoinTossWinPercent && run.ShopDeck.Count == 0,
+                "아이템 없이 미리보기 1층, 코인 토스 50%, 상점 덱 0장");
+            Expect(run.CanApplyItem(Telescope, RunPile.Main, out _) && !run.CanApplyItem(Telescope, RunPile.Shop, out string notShop) && notShop.Contains("없는 카드")
+                   && !run.CanApplyItem(plain, RunPile.Main, out string notItem) && notItem.Contains("아이템 카드가 아님")
+                   && !run.CanApplyItem(Telescope, RunPile.Side, out _), "적용할 수 있는 곳: 그 카드가 있는 메인 덱·상점 덱의 아이템 카드");
+
+            run = ToShopFloor(run);
+            var offer = run.Shop.Last();
+            Expect(offer.Product == ShopProduct.ItemCard && offer.Card == Dice && offer.Price == 80 && run.Chips == 4 * RunRules.ChipsPerWin,
+                $"5층 칩교환소: 아이템 카드 {offer.Card} 칩 {offer.Price}, 보유 칩 {run.Chips}");
+            Expect(run.CanBuy(ShopProduct.ItemCard, out string why), $"아이템 카드를 살 수 있음 ({why})");
+            int mark = run.Events.Count;
+            run.BuyItem();
+            Expect(run.ShopDeck.SequenceEqual(new[] { Dice }) && run.Chips == 0 && run.Collection.Count(Dice) == 0 && !run.SideDeck.Contains(Dice)
+                   && HasNew(run, mark, e => e.Kind == RunEventKind.ShopBought && e.Product == ShopProduct.ItemCard && e.Code == Dice && e.Count == 80 && e.Chips == 0),
+                $"아이템 카드 구매: 상점 덱 {run.ShopDeck.Count}장, 칩 {run.Chips}, 컬렉션에 안 들어감");
+            Expect(!run.CanBuy(ShopProduct.ItemCard, out string sold) && sold.Contains("이미") && !run.CanMoveToDeck(Dice, out _) && !run.CanMoveToSide(Dice, out _),
+                "한 번만 사고, 상점 덱 카드는 옮길 수 없음");
+            Expect(run.HeldCards(HoldScope.All).Contains(Dice) && !run.HeldCards(HoldScope.DeckAndSide).Contains(Dice), "보유 범위: 상점 덱은 \"상점 덱 포함\"에서만");
+
+            mark = run.Events.Count;
+            run.ApplyItem(Dice, RunPile.Shop);
+            Expect(run.CoinTossWinPercent == RunRules.CoinTossWinPercent + 20 && !run.IsBound(Dice) && run.IsApplied(RunPile.Shop, Dice)
+                   && HasNew(run, mark, e => e.Kind == RunEventKind.ItemApplied && e.Code == Dice && e.Pile == RunPile.Shop && !e.IsBonus),
+                $"상점 덱의 주사위 적용: 코인 토스 {run.CoinTossWinPercent}%");
+            Expect(!run.CanApplyItem(Dice, RunPile.Shop, out string again) && again.Contains("이미"), "같은 덱에 두 번 적용하지 않음");
+            run.ApplyItem(Telescope, RunPile.Main);
+            Expect(run.PreviewFloors == RunRules.BasePreviewFloors + 1 && run.IsBound(Telescope) && !run.CanMoveToSide(Telescope, out string bound) && bound.Contains("귀속")
+                   && run.Events.Last().Kind == RunEventKind.ItemApplied && run.Events.Last().IsBonus,
+                $"메인 덱의 망원경 적용: 미리보기 {run.PreviewFloors}층, 귀속으로 사이드 덱에 못 뺌");
+
+            string text = save.Write();
+            Expect(text.Contains($"\nshop-deck {Dice}\n") && text.Contains($"\nitems Main:{Telescope} Shop:{Dice}\n") && text.Contains($" ItemCard:80:1:{Dice}\n")
+                   && RoundTrip(save) == text, "상점 덱·적용한 아이템·아이템 상품 저장");
+            var loaded = GameSave.Parse(text, _db, _rarities).Run;
+            Expect(loaded.CoinTossWinPercent == run.CoinTossWinPercent && loaded.PreviewFloors == run.PreviewFloors && loaded.IsBound(Telescope), "읽은 런의 아이템 효과");
+
+            Broken(text.Replace($"\nitems Main:{Telescope} Shop:{Dice}\n", $"\nitems Side:{Dice}\n"), "사이드 덱에 적용한 아이템");
+            Broken(text.Replace($"\nitems Main:{Telescope} Shop:{Dice}\n", $"\nitems Main:{Dice}\n"), "메인 덱에 없는 아이템 적용");
+            Broken(text.Replace($"\nitems Main:{Telescope} Shop:{Dice}\n", $"\nitems Main:{plain}\n"), "아이템 카드가 아닌 카드 적용");
+            Broken(text.Replace($"\nitems Main:{Telescope} Shop:{Dice}\n", $"\nitems Main:{Telescope} Main:{Telescope}\n"), "같은 적용이 두 번");
+            Broken(text.Replace($"\nshop-deck {Dice}\n", "\n"), "상점 덱 없이 상점 덱 적용");
+            Broken(text.Replace($"\nshop-deck {Dice}\n", $"\nshop-deck {Dice} {Dice} {Dice} {Dice}\n"), "상점 덱에 같은 카드명 4장");
+            Broken(text.Replace($"\nshop-deck {Dice}\n", $"\nshop-deck {Dice} {string.Join(" ", run.MainDeck.Take(RunRules.MaxShopDeck))}\n"), "상점 덱 11장");
+            Broken(text.Replace($" ItemCard:80:1:{Dice}\n", " ItemCard:80:1\n"), "아이템 상품에 카드가 없음");
+            Broken(text.Replace($" ItemCard:80:1:{Dice}\n", $" ItemCard:80:1:{plain}\n"), "아이템 상품이 아이템 카드가 아님");
+
+            // 중첩되지 않는 효과: 망원경을 메인 덱과 상점 덱 양쪽에 적용해도 +1층.
+            var both = ToShopFloor(NewRun(StarterDecks.Kaiba, SeedWithShopItem(Telescope)));
+            both.BuyItem();
+            both.ApplyItem(Telescope, RunPile.Main);
+            both.ApplyItem(Telescope, RunPile.Shop);
+            Expect(both.ShopDeck.SequenceEqual(new[] { Telescope }) && both.AppliedItems.Count == 2 && both.PreviewFloors == RunRules.BasePreviewFloors + 1,
+                $"망원경 두 곳 적용: 미리보기 {both.PreviewFloors}층 (중첩 안 됨)");
+        }
+
+        /// <summary>귀속: 메인 덱에서 적용한 망원경은 봉인되면 적용·귀속이 풀린다.</summary>
+        void BoundItemRelease()
+        {
+            for (ulong seed = 1; seed <= 60; seed++)
+            {
+                var run = NewRun(StarterDecks.Kaiba, seed);
+                run.ApplyItem(Telescope, RunPile.Main);
+                while (run.Phase == RunPhase.Ready && run.MainDeck.Contains(Telescope))
+                {
+                    Begin(run);
+                    if (run.Phase == RunPhase.InDuel)
+                        run.FinishDuel(DuelResult.Loss, 0);
+                }
+                if (run.MainDeck.Contains(Telescope) || !run.SealedMain.Contains(Telescope))
+                    continue;
+                var released = run.Events.LastOrDefault(e => e.Kind == RunEventKind.ItemReleased);
+                var sealedEvent = run.Events.LastOrDefault(e => e.Kind == RunEventKind.CardSealed && e.Code == Telescope);
+                Expect(run.SealedMain.Contains(Telescope) && !run.IsApplied(RunPile.Main, Telescope) && !run.IsBound(Telescope) && run.PreviewFloors == RunRules.BasePreviewFloors
+                       && released != null && released.Code == Telescope && released.Pile == RunPile.Main && sealedEvent != null
+                       && run.Events.ToList().IndexOf(released) > run.Events.ToList().IndexOf(sealedEvent),
+                    $"시드 {seed}: 망원경이 봉인되면 적용·귀속이 풀림");
+                return;
+            }
+            Expect(false, "망원경이 봉인되는 시드를 찾지 못함");
         }
 
         /// <summary>승리 보상을 고르는 중이면 그 자리를 고른다. 보스 보상(보상 1장 더, 봉인 해제는 첫 봉인 카드)까지.</summary>

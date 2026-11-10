@@ -33,6 +33,8 @@ namespace DuelRoguelike.Run
         Event = 11,
         /// <summary>이벤트 결과의 무작위 (봉인할 카드, 잃을 카드). 번호 자리에 층 × 8 + 선택지 + 1</summary>
         EventEffect = 12,
+        /// <summary>칩교환소에 진열할 아이템 카드. 번호 자리에 층</summary>
+        ShopItem = 13,
     }
 
     public sealed class RunRandom

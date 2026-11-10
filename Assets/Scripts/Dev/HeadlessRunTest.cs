@@ -166,7 +166,8 @@ namespace DuelRoguelike.Dev
                     {
                         Action<RunState> buy = r =>
                         {
-                            if (product == ShopProduct.Unseal) r.BuyUnseal(release);
+                            if (product == ShopProduct.ItemCard) r.BuyItem();
+                            else if (product == ShopProduct.Unseal) r.BuyUnseal(release);
                             else r.BuySwap(product, release, newSeal);
                         };
                         buy(run);
@@ -179,6 +180,19 @@ namespace DuelRoguelike.Dev
                         checker.AfterLeaveFloor();
                         steps.Add(r => r.LeaveFloor());
                     }
+                    CheckSaveRoundTrip(report, save, runTag);
+                    continue;
+                }
+                // 듀얼 전: 적용할 수 있는 아이템(메인 덱·상점 덱)이 있으면 반쯤의 확률로 하나 적용한다.
+                var applicable = run.MainDeck.Distinct().Select(c => (Code: c, Pile: RunPile.Main)).Concat(run.ShopDeck.Distinct().Select(c => (Code: c, Pile: RunPile.Shop)))
+                    .Where(a => run.CanApplyItem(a.Code, a.Pile, out _)).ToList();
+                if (applicable.Count > 0 && picks.Next(2) == 0)
+                {
+                    var (itemCode, itemPile) = applicable[picks.Next(applicable.Count)];
+                    checker.BeforeStep();
+                    run.ApplyItem(itemCode, itemPile);
+                    checker.AfterApplyItem(itemCode, itemPile);
+                    steps.Add(r => r.ApplyItem(itemCode, itemPile));
                     CheckSaveRoundTrip(report, save, runTag);
                     continue;
                 }
@@ -266,6 +280,8 @@ namespace DuelRoguelike.Dev
             if (buyable.Count == 0 || picks.Next(2) == 0)
                 return null;
             var product = buyable[picks.Next(buyable.Count)];
+            if (product == ShopProduct.ItemCard)
+                return (product, 0, 0);
             var releases = run.ReleaseCandidates(product);
             uint release = releases[picks.Next(releases.Count)];
             uint newSeal = 0;

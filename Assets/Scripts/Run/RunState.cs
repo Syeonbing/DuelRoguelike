@@ -383,8 +383,8 @@ namespace DuelRoguelike.Run
             return CoinTossFor(DuelsPlayed + 1);
         }
 
-        /// <summary>코인 토스에서 플레이어가 이길 확률 (퍼센트). 아이템·보스·이벤트가 바꿀 자리 (지금은 늘 기본값).</summary>
-        public int CoinTossWinPercent => RunRules.CoinTossWinPercent;
+        /// <summary>코인 토스에서 플레이어가 이길 확률 (퍼센트): 기본값 + 적용한 아이템 (보스·이벤트가 바꿀 자리는 아직 없음).</summary>
+        public int CoinTossWinPercent => Math.Min(100, RunRules.CoinTossWinPercent + ItemBonus(ItemEffectKind.CoinTossWin));
 
         /// <summary>듀얼 번호의 코인 토스 (런 시드와 번호로 정해진다).</summary>
         CoinToss CoinTossFor(int number)
@@ -576,6 +576,8 @@ namespace DuelRoguelike.Run
             {
                 if (_main.Count <= RunRules.MinMainDeck)
                     reason = $"메인 덱은 {RunRules.MinMainDeck}장 아래로 줄일 수 없음 (먼저 사이드 덱에서 넣기)";
+                else if (IsBound(code))
+                    reason = "귀속: 봉인될 때까지 메인 덱에서 뺄 수 없음";
             }
             else if (!_extra.Contains(code))
                 reason = "메인·엑스트라 덱에 없는 카드";
@@ -595,6 +597,7 @@ namespace DuelRoguelike.Run
                 e.Code = code;
                 e.Pile = fromMain ? RunPile.Main : RunPile.Extra;
             });
+            ReleaseEmptyItems();
         }
 
         /// <summary>
@@ -700,6 +703,7 @@ namespace DuelRoguelike.Run
                 e.Code = code;
                 e.Pile = pile;
             });
+            ReleaseEmptyItems();
         }
 
         void ChangeLp(int lp, LpRestoreReason reason, int duelNumber)

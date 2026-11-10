@@ -4,9 +4,10 @@
 //   같은 레어도끼리 / 레어도 상관없음 두 종류, 새로 봉인할 카드를 무작위로 / 직접 고르는 것 두 종류 = 상품 4개.
 //   교체하면 메인 덱이 1장 줄어 40장 아래가 될 수 있다 (그러면 보충). 보충할 수 없게 되는 교체는 팔지 않는다.
 // - 봉인 해제: 봉인된 카드 하나를 골라 풀어 사이드 덱으로. 매우 귀하게: 가격이 높고, 칩교환소마다 확률로만 나온다.
-// - 아이템 카드: 자리만 있다 (목록·탑 효과·상점 덱은 다음 단계).
+// - 아이템 카드: 칩교환소마다 1장 (ItemCards 목록에서 무작위, 가격은 카드마다). 산 카드는 상점 덱으로 (RunStateItems.cs).
 // 상품마다 한 칩교환소에서 한 번만 살 수 있다. 진열(어떤 상품이 나왔는지)은 (런 시드, 층)으로 정해진다.
 using System.Collections.Generic;
+using System.Linq;
 
 namespace DuelRoguelike.Run
 {
@@ -23,6 +24,8 @@ namespace DuelRoguelike.Run
         SwapAnyChosen,
         /// <summary>봉인 해제</summary>
         Unseal,
+        /// <summary>아이템 카드 (ShopOffer.Card). 산 카드는 상점 덱으로</summary>
+        ItemCard,
     }
 
     /// <summary>칩교환소에 진열된 상품 하나.</summary>
@@ -36,21 +39,34 @@ namespace DuelRoguelike.Run
         /// <summary>이 칩교환소에서 이미 샀는지.</summary>
         public bool Sold { get; internal set; }
 
-        internal ShopOffer(ShopProduct product, int price, bool sold = false)
+        /// <summary>아이템 카드 상품의 카드 (다른 상품은 0).</summary>
+        public uint Card { get; }
+
+        internal ShopOffer(ShopProduct product, int price, bool sold = false, uint card = 0)
         {
             Product = product;
             Price = price;
             Sold = sold;
+            Card = card;
         }
     }
 
     public static class ChipExchange
     {
-        /// <summary>아이템 카드 칸에 보여 줄 글 (팔지 않는 자리).</summary>
-        public const string ItemCardSlotTitle = "아이템 카드";
-        public const string ItemCardSlotText = "준비 중입니다. 아이템 카드(탑 효과가 있는 카드)와 상점 덱은 다음 단계에서 들어옵니다.";
+        public static bool IsSwap(ShopProduct product) => product != ShopProduct.Unseal && product != ShopProduct.ItemCard;
 
-        public static bool IsSwap(ShopProduct product) => product != ShopProduct.Unseal;
+        /// <summary>상품 이름 (아이템 카드면 카드명).</summary>
+        public static string Name(ShopOffer offer) =>
+            offer.Product == ShopProduct.ItemCard ? $"아이템 카드 「{ItemCards.All.FirstOrDefault(i => i.Code == offer.Card)?.Name ?? offer.Card.ToString()}」" : Name(offer.Product);
+
+        public static string Description(ShopOffer offer)
+        {
+            if (offer.Product != ShopProduct.ItemCard)
+                return Description(offer.Product);
+            var item = ItemCards.All.FirstOrDefault(i => i.Code == offer.Card);
+            return (item != null ? item.Describe() + ". " : "") +
+                   $"산 카드는 상점 덱으로 갑니다 (듀얼·보충에는 쓰지 않고, 런이 끝나면 사라짐). 상점 덱은 같은 카드명 {RunRules.MaxCopies}장, 전체 {RunRules.MaxShopDeck}장까지.";
+        }
 
         /// <summary>새로 봉인할 카드가 풀 카드와 같은 레어도여야 하는지.</summary>
         public static bool SameRarity(ShopProduct product) => product == ShopProduct.SwapSameRarity || product == ShopProduct.SwapSameRarityChosen;
@@ -67,6 +83,7 @@ namespace DuelRoguelike.Run
                 case ShopProduct.SwapAny: return "봉인 대상 교체 (레어도 상관없음)";
                 case ShopProduct.SwapAnyChosen: return "봉인 대상 교체 (레어도 상관없음, 직접 고름)";
                 case ShopProduct.Unseal: return "봉인 해제";
+                case ShopProduct.ItemCard: return "아이템 카드";
                 default: return product.ToString();
             }
         }
@@ -88,6 +105,9 @@ namespace DuelRoguelike.Run
                 stock.Add(new ShopOffer(product, RunRules.ShopPrice(product)));
             if (RunRandom.For(seed, floor, RunRandomPurpose.Shop).Next(100) < RunRules.UnsealOfferPercent)
                 stock.Add(new ShopOffer(ShopProduct.Unseal, RunRules.ShopPrice(ShopProduct.Unseal)));
+            // 아이템 카드 1장: 목록에서 무작위 (목록·빈도는 견본, 임시)
+            var item = ItemCards.All[RunRandom.For(seed, floor, RunRandomPurpose.ShopItem).Next(ItemCards.All.Count)];
+            stock.Add(new ShopOffer(ShopProduct.ItemCard, item.Price, card: item.Code));
             return stock;
         }
     }
