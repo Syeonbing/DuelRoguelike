@@ -5,7 +5,7 @@
 // 층 종류는 (런 시드, 묶음 첫 층)으로 정해진다: 같은 시드면 늘 같다. 이벤트 내용은 층에 들어갈 때 정한다 (RunState.EnterFloor).
 // 비전투 층도 층 번호에 센다 (봉인 공식의 층 항, 승리 보상 확률표, 보스 주기가 모두 이 번호를 따른다).
 //
-// 이벤트: 내용은 다음 단계에서 넣는다. 지금은 아무 일도 없이 지나가는 임시 이벤트 하나만 나온다 (TowerEvents).
+// 이벤트: 이벤트 층에 들어가면 성향과 태그로 이벤트를 고른다 (TowerEvent.cs, TowerEventList.cs, RunStateEvent.cs).
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -103,41 +103,5 @@ namespace DuelRoguelike.Run
                 default: return kind.ToString();
             }
         }
-    }
-
-    /// <summary>이벤트 하나: 상황 글 → 선택지 → 결과. 결과는 아직 없다 (임시 이벤트만 있다).</summary>
-    public sealed class TowerEvent
-    {
-        /// <summary>저장 파일에 적는 이름. 바꾸지 않는다.</summary>
-        public string Id { get; }
-        public string Title { get; }
-        public string Text { get; }
-        public IReadOnlyList<string> Choices { get; }
-
-        internal TowerEvent(string id, string title, string text, params string[] choices)
-        {
-            Id = id;
-            Title = title;
-            Text = text;
-            Choices = choices;
-        }
-    }
-
-    /// <summary>
-    /// 이벤트 목록. 지금은 아무 일도 없이 지나가는 임시 이벤트 하나뿐이라, 이벤트 층에는 늘 이것이 나온다.
-    /// 이벤트 내용(글·선택지·조건·효과·태그)은 다음 단계에서 데이터 파일로 넣는다.
-    /// </summary>
-    public static class TowerEvents
-    {
-        public static readonly TowerEvent QuietFloor = new TowerEvent("quiet-floor", "고요한 층",
-            "아무도 없는 조용한 층이다. 둘러보았지만 아무 일도 일어나지 않았다. (임시 이벤트: 이벤트 내용은 아직 없다)",
-            "지나간다");
-
-        public static readonly IReadOnlyList<TowerEvent> All = new[] { QuietFloor };
-
-        public static TowerEvent Find(string id) => All.FirstOrDefault(e => e.Id == id);
-
-        /// <summary>이벤트 층에 들어갈 때 나올 이벤트를 고른다. 지금은 임시 이벤트 하나뿐이다.</summary>
-        internal static TowerEvent Pick() => QuietFloor;
     }
 }

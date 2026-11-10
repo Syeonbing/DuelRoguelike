@@ -20,7 +20,7 @@ namespace DuelRoguelike.Run
         /// <summary>지금 층이 이벤트 층이면 나온 이벤트의 Id (아직 선택지를 고르지 않음). 아니면 null.</summary>
         public string CurrentEventId { get; private set; }
 
-        public TowerEvent CurrentEvent => CurrentEventId == null ? null : TowerEvents.Find(CurrentEventId);
+        public TowerEvent CurrentEvent => CurrentEventId == null ? null : TowerEventList.Find(CurrentEventId);
 
         /// <summary>지금 층이 칩교환소면 진열된 상품 (진열 순서). 아니면 빈 목록.</summary>
         public IReadOnlyList<ShopOffer> Shop => (IReadOnlyList<ShopOffer>)_shop ?? Array.Empty<ShopOffer>();
@@ -37,7 +37,9 @@ namespace DuelRoguelike.Run
         {
             FloorKind = Tower.KindOf(Seed, Floor);
             _shop = FloorKind == FloorKind.ChipExchange ? ChipExchange.Stock(Seed, Floor) : null;
-            CurrentEventId = FloorKind == FloorKind.Event ? TowerEvents.Pick().Id : null;
+            EventDone = false;
+            _eventBattleChoice = -1;
+            CurrentEventId = FloorKind == FloorKind.Event ? PickEvent().Id : null;
             AddEvent(RunEventKind.FloorEntered, DuelsPlayed, e =>
             {
                 e.FloorKind = FloorKind;
@@ -85,7 +87,9 @@ namespace DuelRoguelike.Run
                 reason = PhaseReason();
             else if (Tower.IsBattle(FloorKind))
                 reason = "전투 층은 듀얼에서 이겨야 다음 층으로 갑니다";
-            else if (FloorKind == FloorKind.Event)
+            else if (FloorKind == FloorKind.Event && EventBattlePending)
+                reason = "이벤트 전투를 끝내야 다음 층으로 갑니다";
+            else if (FloorKind == FloorKind.Event && !EventDone)
                 reason = "이벤트의 선택지를 골라야 다음 층으로 갑니다";
             return reason == null;
         }
@@ -95,23 +99,6 @@ namespace DuelRoguelike.Run
         {
             if (!CanLeaveFloor(out string reason))
                 throw new InvalidOperationException($"층을 떠날 수 없습니다: {reason}");
-            AdvanceFloor();
-        }
-
-        /// <summary>이벤트의 선택지를 고른다 (이벤트 층에서 Ready일 때만). 결과를 적용하고 다음 층으로 간다 (지금 이벤트는 결과가 없다).</summary>
-        public void ChooseEventOption(int index)
-        {
-            RequirePhase(RunPhase.Ready, "이벤트 선택지를 고를");
-            var ev = CurrentEvent;
-            if (FloorKind != FloorKind.Event || ev == null)
-                throw new InvalidOperationException($"이벤트 선택지를 고를 수 없습니다: {Floor}층은 {Tower.KindName(FloorKind)} 층");
-            if (index < 0 || index >= ev.Choices.Count)
-                throw new ArgumentOutOfRangeException(nameof(index), index, $"선택지는 0~{ev.Choices.Count - 1}입니다.");
-            AddEvent(RunEventKind.EventResolved, DuelsPlayed, e =>
-            {
-                e.EventId = ev.Id;
-                e.Count = index;
-            });
             AdvanceFloor();
         }
 
@@ -177,6 +164,8 @@ namespace DuelRoguelike.Run
                 reason = "이번 칩교환소에서 이미 삼";
             else if (Chips < offer.Price)
                 reason = $"칩이 모자람 (가격 {offer.Price}, 보유 {Chips})";
+            else if (product == ShopProduct.ItemCard)
+                ShopDeckHasRoom(offer.Card, out reason);
             else if (SealedCount == 0)
                 reason = "봉인된 카드가 없음";
             else if (ReleaseCandidates(product).Count == 0)
@@ -272,10 +261,21 @@ namespace DuelRoguelike.Run
                 e.Code = target;
                 e.Pile = extra ? RunPile.Extra : RunPile.Main;
             });
+            ReleaseEmptyItems();
             CheckMainDeckSize();
         }
 
-        void Pay(ShopProduct product)
+        /// <summary>아이템 카드를 산다: 카드는 상점 덱으로 (컬렉션에는 들어가지 않는다).</summary>
+        public void BuyItem()
+        {
+            if (!CanBuy(ShopProduct.ItemCard, out string reason))
+                throw new InvalidOperationException($"아이템 카드를 살 수 없습니다: {reason}");
+            uint code = OfferOf(ShopProduct.ItemCard).Card;
+            _shopDeck.Add(code);
+            Pay(ShopProduct.ItemCard, code);
+        }
+
+        void Pay(ShopProduct product, uint card = 0)
         {
             var offer = OfferOf(product);
             Chips -= offer.Price;
@@ -285,6 +285,7 @@ namespace DuelRoguelike.Run
                 e.Product = product;
                 e.Count = offer.Price;
                 e.Chips = Chips;
+                e.Code = card;
             });
         }
 

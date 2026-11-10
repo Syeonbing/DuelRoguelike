@@ -150,12 +150,18 @@ if ($chainTotal -gt 0) {
     Write-Host "      엑스트라 덱이 2장 이상일 때 패배 $chainTotal 번: 0장 $($s.ExtraChain[0]), 1장 $($s.ExtraChain[1]), 2장 $($s.ExtraChain[2]), 3장 이상 $($s.ExtraChain[3]) (1장 이상 $(Percent ($chainTotal - $s.ExtraChain[0]) $chainTotal), 기대 20%)"
 }
 Write-Host "    LP: 휴식 층에서 8000으로 맞춤 $($s.RestHeals)번, 보스 격파 $($s.BossClears)번, 패배 회복 $($s.LossHeals)번, 8000보다 높은 LP로 시작한 듀얼 $($s.DuelsAboveFullLp)판"
+Write-Host "    코인 토스: 내가 이김 $($s.CoinTossWins)번 / 듀얼 $($r.Duels)판 ($(Percent $s.CoinTossWins $r.Duels)), 상대가 이겨 선공 고름 $($s.OpponentChoseFirst)번, 후공 듀얼 $($s.SecondDuels)판 (승 $($s.SecondWins), 승률 $(Percent $s.SecondWins $s.SecondDuels))"
+$evTotal = $s.EventTendencies[0] + $s.EventTendencies[1] + $s.EventTendencies[2]
+Write-Host "    이벤트: 나옴 $($evTotal)번 (긍정 $($s.EventTendencies[0]) $(Percent $s.EventTendencies[0] $evTotal), 무성향 $($s.EventTendencies[1]) $(Percent $s.EventTendencies[1] $evTotal), 부정 $($s.EventTendencies[2]) $(Percent $s.EventTendencies[2] $evTotal); 기대 35:15:50, 후보 없는 성향은 빠짐)"
+Write-Host "      고름 $($s.EventChoices), 지나감 $($s.EventPasses), 강제 $($s.EventForced), 이벤트 전투 $($s.EventBattles)판 (승 $($s.EventBattleWins)), 카드 받음 $($s.EventCardsGained)·잃음 $($s.EventCardsLost), 봉인 $($s.EventSeals), 봉인 해제 $($s.EventUnseals), 칩 +$($s.EventChipsGained)/-$($s.EventChipsLost)"
+Write-Host "      이벤트별: $($s.EventsSeenText)"
 $kindNames = '전투', '이벤트', '칩교환소', '휴식', '보스'
 Write-Host ("    탑: 들어간 층 " + ((0..4 | ForEach-Object { "$($kindNames[$_]) $($s.FloorVisits[$_])" }) -join ', '))
 $randomFloors = @(1, 2, 3, 4, 7, 8) | ForEach-Object { "{0}층 {1}/{2}" -f $_, $s.RandomEventFloors[$_], $s.RandomFloorVisits[$_] }
 Write-Host "      확률 이벤트 층 (이벤트/들어감, 규칙 1~3층 10%, 4층 30%, 7~8층 5%): $($randomFloors -join ', ')"
 Write-Host "    칩 (임시 값): 얻음 $($s.ChipsEarned), 씀 $($s.ChipsSpent) / 봉인 해제 진열 $($s.UnsealStocked)곳 (칩교환소 $($s.FloorVisits[2])곳)"
-Write-Host "      구매: 교체(같은 레어도) $($s.Bought[0]), 교체(같은 레어도·직접) $($s.Bought[1]), 교체(레어도 상관없음) $($s.Bought[2]), 교체(레어도 상관없음·직접) $($s.Bought[3]), 봉인 해제 $($s.Bought[4])"
+Write-Host "      구매: 교체(같은 레어도) $($s.Bought[0]), 교체(같은 레어도·직접) $($s.Bought[1]), 교체(레어도 상관없음) $($s.Bought[2]), 교체(레어도 상관없음·직접) $($s.Bought[3]), 봉인 해제 $($s.Bought[4]), 아이템 카드 $($s.Bought[5])"
+Write-Host "      아이템: 진열 $($s.ItemsStockedText), 적용 $($s.ItemsApplied), 풀림 $($s.ItemsReleased), 미리보기 늘린 채 한 듀얼 $($s.DuelsWithPreview), 코인 토스 승률 오른 듀얼 $($s.DuelsWithCoinBonus)"
 Write-Host "    보스 보상: 봉인 해제 $($s.BossUnseals)번, 보상 1장 더 $($s.BossBonusRewards)번 / 런 종료 정산 골드 합 $($s.SettlementGold)"
 Write-Host "    보충: $($s.RefillsRequired)번, $($s.RefillCards)장 / 런 종료 기록 $($s.RunsEnded)번"
 Write-Host '    듀얼 시작 LP별 승률'

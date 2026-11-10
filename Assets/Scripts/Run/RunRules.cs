@@ -13,6 +13,18 @@ namespace DuelRoguelike.Run
         /// <summary>듀얼에서 이기면 남은 LP에 더하는 값 (보스 제외). 더한 LP는 FullLp를 넘을 수 있다.</summary>
         public const int WinLpBonus = 1000;
 
+        /// <summary>코인 토스에서 플레이어가 이길 확률 (퍼센트). 아이템·보스·이벤트가 바꿀 수 있다 (RunState.CoinTossWinPercent).</summary>
+        public const int CoinTossWinPercent = 50;
+
+        /// <summary>상대(AI)가 코인 토스에 이겼을 때 선공을 고를 확률 (퍼센트). 규칙 결정 문서: AI는 대부분 선공을 고른다.</summary>
+        public const int AiChoosesFirstPercent = 90;
+
+        /// <summary>이벤트 성향 가중치 (EventTendency 순서: 긍정 35 : 무성향 15 : 부정 50, 규칙 결정 문서). 그 성향에 나올 이벤트가 없으면 남은 성향에서 고른다.</summary>
+        public static readonly int[] EventTendencyWeights = { 35, 15, 50 };
+
+        /// <summary>조건이 걸린 선택지를 지금 고를 수 있는 이벤트는 가중치를 이만큼 곱한다 (임시 값).</summary>
+        public const int EventConditionMultiplier = 2;
+
         /// <summary>
         /// 이 층의 배수(10, 20, 30…)는 보스 층이다 (탑 구조 10층 묶음의 끝, Tower). 보스를 이기면 LP를 FullLp로 맞춘다 (보너스 대신, 넘쳤어도 낮춘다).
         /// 보스 보상: 보통 승리 보상에 더해 봉인된 카드 1장을 골라 봉인 해제, 봉인된 카드가 없으면 보상 후보를 한 번 더.
@@ -48,7 +60,14 @@ namespace DuelRoguelike.Run
         /// <summary>칩교환소에 봉인 해제가 나올 확률(%) (임시, 등장 빈도는 미정). 봉인 대상 교체는 늘 나온다.</summary>
         public const int UnsealOfferPercent = 50;
 
+        /// <summary>봉인 상품의 가격. 아이템 카드는 카드마다 (ItemCard.Price).</summary>
         public static int ShopPrice(ShopProduct product) => ShopPrices[(int)product];
+
+        /// <summary>상점 덱: 전체 장수 한도 (같은 카드명은 MaxCopies장). 규칙 결정 문서.</summary>
+        public const int MaxShopDeck = 10;
+
+        /// <summary>탑 미리보기: 아이템 없이 바로 위 몇 층의 종류가 보이는지. 규칙 결정 문서: 1층.</summary>
+        public const int BasePreviewFloors = 1;
 
         // ---------------- 런 종료 골드 정산 ----------------
 

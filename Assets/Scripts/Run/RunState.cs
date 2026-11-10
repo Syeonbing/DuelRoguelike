@@ -73,7 +73,36 @@ namespace DuelRoguelike.Run
         public IReadOnlyList<DeckRecipe> Opponents = StarterDecks.All;
     }
 
-    /// <summary>한 층의 듀얼. 플레이어는 늘 팀 0(선공)이고, 상대는 FullLp로 시작한다.</summary>
+    /// <summary>
+    /// 듀얼 전 코인 토스. 이긴 쪽이 선공·후공을 고른다 (규칙 결정 문서).
+    /// 같은 런 시드·듀얼 번호면 결과가 늘 같다 (다시 켜도 바뀌지 않는다).
+    /// </summary>
+    public sealed class CoinToss
+    {
+        /// <summary>플레이어가 이겼는지. 이겼으면 플레이어가 선공·후공을 고른다.</summary>
+        public bool PlayerWon { get; }
+
+        /// <summary>상대가 이겼을 때 상대가 선공을 고르는지 (플레이어가 이겼으면 쓰지 않는다).</summary>
+        public bool OpponentChoosesFirst { get; }
+
+        /// <summary>이 토스에서 플레이어가 이길 확률 (퍼센트, 아이템·보스가 바꾼 값).</summary>
+        public int WinPercent { get; }
+
+        internal CoinToss(bool playerWon, bool opponentChoosesFirst, int winPercent)
+        {
+            PlayerWon = playerWon;
+            OpponentChoosesFirst = opponentChoosesFirst;
+            WinPercent = winPercent;
+        }
+
+        /// <summary>플레이어가 선공인지. playerChoice는 플레이어가 이겼을 때 고른 것 (true = 선공).</summary>
+        public bool PlayerGoesFirst(bool playerChoice) => PlayerWon ? playerChoice : !OpponentChoosesFirst;
+    }
+
+    /// <summary>
+    /// 한 층의 듀얼. 코인 토스로 선후공을 정한다: 선공이 엔진의 팀 0이다 (PlayerTeam).
+    /// 상대는 FullLp로 시작한다.
+    /// </summary>
     public sealed class RunDuel
     {
         public int DuelNumber { get; }
@@ -93,8 +122,17 @@ namespace DuelRoguelike.Run
         public IReadOnlyList<ulong> EngineSeed { get; }
         public int DeckShuffleSeed { get; }
 
+        public CoinToss Toss { get; }
+        public bool PlayerGoesFirst { get; }
+
+        /// <summary>이벤트 전투인지 (이기면 이벤트 결과만 받고, 이기든 지든 다음 층으로 간다).</summary>
+        public bool IsEventBattle { get; }
+
+        /// <summary>엔진에서 플레이어의 팀 (선공 = 0, 후공 = 1).</summary>
+        public int PlayerTeam => PlayerGoesFirst ? 0 : 1;
+
         internal RunDuel(int duelNumber, int floor, DeckRecipe opponent, int playerLp, IReadOnlyList<uint> playerDeck,
-            IReadOnlyList<ulong> engineSeed, int deckShuffleSeed)
+            IReadOnlyList<ulong> engineSeed, int deckShuffleSeed, CoinToss toss, bool playerGoesFirst, bool isEventBattle = false)
         {
             DuelNumber = duelNumber;
             Floor = floor;
@@ -104,28 +142,33 @@ namespace DuelRoguelike.Run
             PlayerDeck = playerDeck;
             EngineSeed = engineSeed;
             DeckShuffleSeed = deckShuffleSeed;
+            Toss = toss;
+            PlayerGoesFirst = playerGoesFirst;
+            IsEventBattle = isEventBattle;
         }
 
-        /// <summary>이 듀얼의 엔진 설정 (덱, 시작 LP, 시드).</summary>
+        /// <summary>이 듀얼의 엔진 설정 (덱, 시작 LP, 시드). 팀 0이 선공이다.</summary>
         public DuelSessionOptions CreateSessionOptions()
         {
+            var mine = PlayerDeck.ToArray();
+            var theirs = OpponentCards.ToArray();
             var options = new DuelSessionOptions
             {
                 Seed = EngineSeed.ToArray(),
-                Decks = new IReadOnlyList<uint>[] { PlayerDeck.ToArray(), OpponentCards.ToArray() },
+                Decks = PlayerGoesFirst ? new IReadOnlyList<uint>[] { mine, theirs } : new IReadOnlyList<uint>[] { theirs, mine },
                 DeckShuffleSeed = DeckShuffleSeed,
             };
-            options.Team1.StartingLP = (uint)PlayerLp;
-            options.Team2.StartingLP = (uint)OpponentLp;
+            options.Team1.StartingLP = (uint)(PlayerGoesFirst ? PlayerLp : OpponentLp);
+            options.Team2.StartingLP = (uint)(PlayerGoesFirst ? OpponentLp : PlayerLp);
             return options;
         }
 
-        /// <summary>끝난 듀얼의 결과 (플레이어 = 팀 0).</summary>
-        public static DuelResult ResultOf(DuelState state)
+        /// <summary>끝난 듀얼의 결과. playerTeam: 엔진에서 플레이어의 팀 (RunDuel.PlayerTeam).</summary>
+        public static DuelResult ResultOf(DuelState state, int playerTeam)
         {
             if (!state.IsFinished)
                 throw new InvalidOperationException("듀얼이 아직 끝나지 않았습니다.");
-            if (state.Winner == 0)
+            if (state.Winner == playerTeam)
                 return DuelResult.Win;
             return state.Winner == OcgConstants.PlayerNone ? DuelResult.Draw : DuelResult.Loss;
         }
@@ -311,26 +354,52 @@ namespace DuelRoguelike.Run
         /// 지금 층의 듀얼을 시작한다 (전투 층·보스 층에서 Ready일 때만). 상대 덱과 엔진 시드를 정한다.
         /// 듀얼이 끝나면 FinishDuel을 부른다.
         /// </summary>
-        public RunDuel BeginDuel()
+        /// <param name="playerFirst">코인 토스에 이겼을 때 플레이어가 고른 것 (true = 선공). 상대가 이겼으면 쓰지 않는다.</param>
+        public RunDuel BeginDuel(bool playerFirst = true)
         {
             RequirePhase(RunPhase.Ready, "듀얼을 시작할");
-            if (!Tower.IsBattle(FloorKind))
+            if (!Tower.IsBattle(FloorKind) && !EventBattlePending)
                 throw new InvalidOperationException($"듀얼을 시작할 수 없습니다: {Floor}층은 {Tower.KindName(FloorKind)} 층");
             int number = DuelsPlayed + 1;
-            CurrentDuel = CreateDuel(number);
+            var toss = CoinTossFor(number);
+            CurrentDuel = CreateDuel(number, toss.PlayerGoesFirst(playerFirst));
             Phase = RunPhase.InDuel;
             AddEvent(RunEventKind.DuelStarted, number, e =>
             {
                 e.DeckId = CurrentDuel.Opponent.Id;
                 e.Lp = Lp;
+                e.Coin = toss.PlayerWon ? CoinTossWinner.Player : CoinTossWinner.Opponent;
+                e.Turn = CurrentDuel.PlayerGoesFirst ? TurnOrder.First : TurnOrder.Second;
             });
             return CurrentDuel;
         }
 
-        /// <summary>듀얼 번호로 상대와 엔진 시드를 정한다 (같은 런 시드·번호면 늘 같다). 저장 파일의 "듀얼 중" 런을 읽을 때도 쓴다.</summary>
-        RunDuel CreateDuel(int number)
+        /// <summary>지금 층 듀얼의 코인 토스 (Ready인 전투 층에서). 화면이 BeginDuel 전에 결과를 보여 주고 선후공을 고르게 한다.</summary>
+        public CoinToss NextCoinToss()
         {
-            var opponent = OpponentFor(number);
+            RequirePhase(RunPhase.Ready, "코인 토스를 할");
+            if (!Tower.IsBattle(FloorKind) && !EventBattlePending)
+                throw new InvalidOperationException($"코인 토스를 할 수 없습니다: {Floor}층은 {Tower.KindName(FloorKind)} 층");
+            return CoinTossFor(DuelsPlayed + 1);
+        }
+
+        /// <summary>코인 토스에서 플레이어가 이길 확률 (퍼센트): 기본값 + 적용한 아이템 (보스·이벤트가 바꿀 자리는 아직 없음).</summary>
+        public int CoinTossWinPercent => Math.Min(100, RunRules.CoinTossWinPercent + ItemBonus(ItemEffectKind.CoinTossWin));
+
+        /// <summary>듀얼 번호의 코인 토스 (런 시드와 번호로 정해진다).</summary>
+        CoinToss CoinTossFor(int number)
+        {
+            var random = RunRandom.For(Seed, number, RunRandomPurpose.CoinToss);
+            int percent = Math.Max(0, Math.Min(100, CoinTossWinPercent));
+            bool won = random.Next(100) < percent;
+            bool opponentFirst = random.Next(100) < RunRules.AiChoosesFirstPercent;
+            return new CoinToss(won, opponentFirst, percent);
+        }
+
+        /// <summary>듀얼 번호로 상대와 엔진 시드를 정한다 (같은 런 시드·번호면 늘 같다). 저장 파일의 "듀얼 중" 런을 읽을 때도 쓴다.</summary>
+        internal RunDuel CreateDuel(int number, bool playerGoesFirst)
+        {
+            var opponent = EventBattlePending ? StarterDecks.Find(PendingEventBattle.BattleDeckId) : OpponentFor(number);
             var random = RunRandom.For(Seed, number, RunRandomPurpose.Duel);
             var engineSeed = new ulong[4];
             for (int i = 0; i < engineSeed.Length; i++)
@@ -338,14 +407,19 @@ namespace DuelRoguelike.Run
             if (engineSeed.All(s => s == 0))
                 engineSeed[0] = 1; // 엔진은 시드가 모두 0이면 듀얼을 만들지 못한다
             int shuffleSeed = random.NextSeed();
-            return new RunDuel(number, Floor, opponent, Lp, _main.Concat(_extra).ToArray(), engineSeed, shuffleSeed);
+            return new RunDuel(number, Floor, opponent, Lp, _main.Concat(_extra).ToArray(), engineSeed, shuffleSeed,
+                CoinTossFor(number), playerGoesFirst, EventBattlePending);
         }
 
         /// <summary>듀얼 번호의 상대 덱 (런 시드와 번호로 정해진다).</summary>
         DeckRecipe OpponentFor(int number) => Opponents[RunRandom.For(Seed, number, RunRandomPurpose.Opponent).Next(Opponents.Count)];
 
-        /// <summary>끝난 듀얼의 결과를 반영한다. 플레이어는 팀 0이다.</summary>
-        public void FinishDuel(DuelState state) => FinishDuel(RunDuel.ResultOf(state), state.Players[0].Lp);
+        /// <summary>끝난 듀얼의 결과를 반영한다. 플레이어의 팀은 선후공에 따라 다르다 (RunDuel.PlayerTeam).</summary>
+        public void FinishDuel(DuelState state)
+        {
+            int team = CurrentDuel?.PlayerTeam ?? 0;
+            FinishDuel(RunDuel.ResultOf(state, team), state.Players[team].Lp);
+        }
 
         /// <summary>듀얼 결과를 반영한다 (InDuel에서만). playerLp는 듀얼이 끝났을 때 플레이어의 LP.</summary>
         public void FinishDuel(DuelResult result, int playerLp)
@@ -357,6 +431,11 @@ namespace DuelRoguelike.Run
             CurrentDuel = null;
             DuelsPlayed = duel.DuelNumber;
             Phase = RunPhase.Ready;
+            if (duel.IsEventBattle)
+            {
+                FinishEventBattle(duel, result, playerLp);
+                return;
+            }
 
             if (result == DuelResult.Win)
             {
@@ -378,6 +457,13 @@ namespace DuelRoguelike.Run
                 return;
             }
 
+            ApplyLoss(duel, result, playerLp);
+            CheckMainDeckSize();
+        }
+
+        /// <summary>패배(무승부 포함): 연패 +1, 봉인, LP 전부 회복. 전투 층과 이벤트 전투가 같이 쓴다.</summary>
+        void ApplyLoss(RunDuel duel, DuelResult result, int playerLp)
+        {
             if (result == DuelResult.Draw)
                 Draws++;
             else
@@ -394,7 +480,6 @@ namespace DuelRoguelike.Run
             Lp = Math.Max(0, playerLp);
             if (playerLp < RunRules.FullLp)
                 ChangeLp(RunRules.FullLp, LpRestoreReason.Loss, duel.DuelNumber);
-            CheckMainDeckSize();
         }
 
         /// <summary>
@@ -491,6 +576,8 @@ namespace DuelRoguelike.Run
             {
                 if (_main.Count <= RunRules.MinMainDeck)
                     reason = $"메인 덱은 {RunRules.MinMainDeck}장 아래로 줄일 수 없음 (먼저 사이드 덱에서 넣기)";
+                else if (IsBound(code))
+                    reason = "귀속: 봉인될 때까지 메인 덱에서 뺄 수 없음";
             }
             else if (!_extra.Contains(code))
                 reason = "메인·엑스트라 덱에 없는 카드";
@@ -510,6 +597,7 @@ namespace DuelRoguelike.Run
                 e.Code = code;
                 e.Pile = fromMain ? RunPile.Main : RunPile.Extra;
             });
+            ReleaseEmptyItems();
         }
 
         /// <summary>
@@ -615,6 +703,7 @@ namespace DuelRoguelike.Run
                 e.Code = code;
                 e.Pile = pile;
             });
+            ReleaseEmptyItems();
         }
 
         void ChangeLp(int lp, LpRestoreReason reason, int duelNumber)

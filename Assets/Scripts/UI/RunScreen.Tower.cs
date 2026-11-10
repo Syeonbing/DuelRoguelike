@@ -7,7 +7,9 @@
 // - 휴식 (tower-rest): 휴식 층에 들어가면 이벤트처럼 한 번 저절로 뜬다. 들어갈 때 맞춘 LP(이전 → 8000)와 다음 층으로 버튼.
 // - 보스 보상 (unseal): 보스를 이기고 봉인된 카드가 있으면 뜬다 (ChoosingUnseal). 닫을 수 없다.
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using DuelRoguelike.Engine.Data;
 using DuelRoguelike.Run;
 using UnityEngine;
 using UnityEngine.UIElements;
@@ -55,7 +57,8 @@ namespace DuelRoguelike.UI
                 int floor = start + i;
                 bool current = floor == _run.Floor;
                 bool past = floor < _run.Floor;
-                FloorKind? kind = current ? _run.FloorKind : past ? kinds[i]
+                bool preview = floor > _run.Floor && floor <= _run.Floor + _run.PreviewFloors && Tower.RandomEventPercent(floor) > 0;
+                FloorKind? kind = current ? _run.FloorKind : past || preview ? kinds[i]
                     : Tower.RandomEventPercent(floor) > 0 ? (FloorKind?)null : Tower.FixedKind(floor);
 
                 var box = Row();
@@ -81,6 +84,15 @@ namespace DuelRoguelike.UI
                 var kindLabel = Text(kind == null ? "?" : Tower.KindName(kind.Value), 16, kind == null ? UiStyle.TextDim : UiStyle.Text, bold: current);
                 kindLabel.style.flexShrink = 0;
                 box.Add(kindLabel);
+                if (preview)
+                {
+                    var seen = Text("미리보기", 12, UiStyle.TextDim);
+                    seen.name = $"tower-preview-{floor}";
+                    seen.style.marginLeft = StyleKeyword.Auto;
+                    seen.style.marginRight = 6;
+                    seen.style.flexShrink = 0;
+                    box.Add(seen);
+                }
                 if (current)
                 {
                     var here = Text("지금", 12, UiStyle.Accent, bold: true);
@@ -91,7 +103,8 @@ namespace DuelRoguelike.UI
                 }
                 panel.Add(box);
             }
-            var note = Text("?: 전투 또는 이벤트 (들어가 봐야 안다)", 12, UiStyle.TextDim, top: 8);
+            var note = Text($"?: 전투 또는 이벤트 (들어가 봐야 안다). 미리보기: 바로 위 {_run.PreviewFloors}층까지 보인다 (아이템으로 늘어남).", 12, UiStyle.TextDim, top: 8);
+            note.name = "tower-preview-note";
             note.style.whiteSpace = WhiteSpace.Normal;
             panel.Add(note);
             var chips = UiStyle.Label($"칩 {_run.Chips}", 22, UiStyle.Accent, bold: true);
@@ -110,11 +123,13 @@ namespace DuelRoguelike.UI
                 case FloorKind.Boss:
                     return $"보스 층: 이기면 칩 {RunRules.ChipsPerBossWin}과 보스 보상 (봉인된 카드가 있으면 1장 봉인 해제, 없으면 승리 보상 1장 더).";
                 case FloorKind.ChipExchange:
-                    return "칩교환소: 칩으로 봉인 대상 교체·봉인 해제를 삽니다. 다 보면 다음 층으로 올라갑니다.";
+                    return "칩교환소: 칩으로 봉인 대상 교체·봉인 해제·아이템 카드를 삽니다. 다 보면 다음 층으로 올라갑니다.";
                 case FloorKind.Rest:
                     return $"휴식 층: LP를 {RunRules.FullLp}로 맞췄습니다. 덱을 정리하고 다음 층으로 올라갑니다.";
                 case FloorKind.Event:
-                    return "이벤트 층: 이벤트의 선택지를 고르면 다음 층으로 올라갑니다.";
+                    return _run.EventBattlePending ? "이벤트 층: 이벤트 전투가 남았습니다. 이기면 결과를 받고, 지면 일반 패배처럼 봉인됩니다."
+                        : _run.EventDone ? "이벤트 층: 이벤트는 끝났습니다. 덱을 정리하고 다음 층으로 올라갑니다."
+                        : "이벤트 층: 이벤트의 선택지를 고르면 결과를 받고 다음 층으로 올라갑니다.";
                 default:
                     return "상대는 듀얼을 시작할 때 스타터 덱 4개 중에서 무작위로 정해집니다.";
             }
@@ -143,7 +158,12 @@ namespace DuelRoguelike.UI
                     buttons.Add(BigButton("leave-floor", "다음 층으로", LeaveFloor, ready));
                     break;
                 case FloorKind.Event:
-                    buttons.Add(BigButton("open-event", "이벤트 보기", OpenEvent, ready));
+                    if (_run.EventBattlePending)
+                        buttons.Add(BigButton("next-duel", "이벤트 전투 시작", StartNextDuel, ready));
+                    else if (_run.EventDone)
+                        buttons.Add(BigButton("leave-floor", "다음 층으로", LeaveFloor, ready));
+                    else
+                        buttons.Add(BigButton("open-event", "이벤트 보기", OpenEvent, ready));
                     break;
             }
         }
@@ -207,7 +227,7 @@ namespace DuelRoguelike.UI
             chips.name = "shop-chips";
             head.Add(chips);
             panel.Add(head);
-            var intro = Text("칩으로 봉인을 다룹니다. 상품마다 이 칩교환소에서 한 번만 살 수 있습니다. 가격은 임시 값입니다.", 15, UiStyle.TextDim, top: 6);
+            var intro = Text($"칩으로 봉인을 다루고 아이템 카드를 삽니다. 상품마다 이 칩교환소에서 한 번만 살 수 있습니다. 가격은 임시 값입니다. 상점 덱 {_run.ShopDeck.Count}/{RunRules.MaxShopDeck}장.", 15, UiStyle.TextDim, top: 6);
             intro.style.whiteSpace = WhiteSpace.Normal;
             panel.Add(intro);
 
@@ -223,13 +243,6 @@ namespace DuelRoguelike.UI
                 none.Add(Text("이번 칩교환소에는 없습니다 (칩교환소마다 확률로 나옵니다).", 14, UiStyle.TextDim, top: 2));
                 list.Add(none);
             }
-            var item = ShopBox("shop-item-card");
-            item.style.opacity = 0.5f;
-            item.Add(UiStyle.Label(ChipExchange.ItemCardSlotTitle, 19, bold: true));
-            var itemText = Text(ChipExchange.ItemCardSlotText, 14, UiStyle.TextDim, top: 2);
-            itemText.style.whiteSpace = WhiteSpace.Normal;
-            item.Add(itemText);
-            list.Add(item);
             panel.Add(list);
 
             var buttons = Row();
@@ -265,8 +278,8 @@ namespace DuelRoguelike.UI
             var texts = UiStyle.Box();
             texts.style.flexGrow = 1;
             texts.style.flexShrink = 1;
-            texts.Add(UiStyle.Label(ChipExchange.Name(offer.Product), 19, bold: true));
-            var description = Text(ChipExchange.Description(offer.Product), 14, UiStyle.TextDim, top: 2);
+            texts.Add(UiStyle.Label(ChipExchange.Name(offer), 19, bold: true));
+            var description = Text(ChipExchange.Description(offer), 14, UiStyle.TextDim, top: 2);
             description.style.whiteSpace = WhiteSpace.Normal;
             texts.Add(description);
             bool ok = _run.CanBuy(offer.Product, out string reason);
@@ -296,6 +309,20 @@ namespace DuelRoguelike.UI
             if (!_run.CanBuy(product, out string reason))
             {
                 Debug.Log($"[런] 칩교환소: {ChipExchange.Name(product)}을(를) 살 수 없음 — {reason}");
+                return;
+            }
+            if (product == ShopProduct.ItemCard)
+            {
+                uint card = _run.Shop.First(o => o.Product == ShopProduct.ItemCard).Card;
+                _run.BuyItem();
+                Persist();
+                _moveNotice = $"칩교환소: 아이템 카드 {_text.CardName(card)} 구매 → 상점 덱 (남은 칩 {_run.Chips})";
+                _moveNoticeIsError = false;
+                Debug.Log($"[런] {_moveNotice}");
+                _selectedPile = Pile.Shop;
+                _selectedCode = card;
+                ShowHub();
+                OpenShop();
                 return;
             }
             _shopProduct = product;
@@ -438,25 +465,59 @@ namespace DuelRoguelike.UI
         void OpenEvent()
         {
             var ev = _run?.CurrentEvent;
-            if (ev == null || _run.Phase != RunPhase.Ready)
+            if (ev == null || _run.Phase != RunPhase.Ready || _run.EventDone)
                 return;
             _eventShownFloor = _run.Floor;
+            if (_run.EventBattlePending)
+            {
+                OpenEventBattle();
+                return;
+            }
             var panel = OpenModal(760);
             panel.name = "tower-event";
             panel.Add(UiStyle.Label($"이벤트 · {_run.Floor}층", 16, UiStyle.TextDim));
             var title = UiStyle.Label(ev.Title, 30, UiStyle.Accent, bold: true);
             title.name = "event-title";
             panel.Add(title);
+            // 성향은 도감에서 모든 선택지를 골라 본 이벤트만 보인다
+            panel.Add(UiStyle.Label(ev.FormName + (_save.Codex.IsComplete(ev) ? $" · {TowerEvent.TendencyName(ev.Tendency)}" : ""), 14, UiStyle.TextDim));
             var text = Text(ev.Text, 18, top: 10);
             text.style.whiteSpace = WhiteSpace.Normal;
             panel.Add(text);
+            bool allLocked = _run.AllEventChoicesLocked;
             for (int i = 0; i < ev.Choices.Count; i++)
             {
+                var option = ev.Choices[i];
+                if (option.IsForced && !allLocked)
+                    continue; // 강제 선택지는 다른 선택지가 모두 잠겼을 때만 나온다
                 int index = i;
-                var choice = UiStyle.Button(ev.Choices[i], () => ChooseEvent(index), 20);
+                bool can = _run.CanChooseEventOption(index, out string reason);
+                var choice = UiStyle.Button(option.Label, () => ChooseEvent(index), 20);
                 choice.name = $"event-choice-{i}";
                 choice.style.marginTop = 10;
+                choice.style.whiteSpace = WhiteSpace.Normal;
+                choice.SetEnabled(can);
                 panel.Add(choice);
+                var notes = new List<string>();
+                if (option.HasCondition)
+                    notes.Add((can ? "조건 충족: " : "잠김 — 조건: ") + RunState.ConditionText(option, ev.Scope));
+                if (option.IsBattle || KnowsResult(ev, index))
+                    notes.Add(KnowsResult(ev, index) ? "결과: " + option.DescribeEffects()
+                        : $"이벤트 전투 (상대 {StarterDecks.Find(option.BattleDeckId)?.Name ?? option.BattleDeckId}) — 지면 일반 패배처럼 봉인");
+                if (notes.Count > 0)
+                {
+                    var note = Text(string.Join("\n", notes), 14, can ? UiStyle.TextDim : UiStyle.Opponent, top: 2);
+                    note.name = $"event-choice-note-{i}";
+                    note.style.whiteSpace = WhiteSpace.Normal;
+                    panel.Add(note);
+                }
+            }
+            if (_run.CanChooseEventOption(-1, out _))
+            {
+                var pass = UiStyle.Button("그냥 지나간다", () => ChooseEvent(-1), 20);
+                pass.name = "event-pass";
+                pass.style.marginTop = 10;
+                panel.Add(pass);
             }
             var later = UiStyle.Button("나중에 (덱 정리)", CloseModal, 16);
             later.name = "event-close";
@@ -465,9 +526,17 @@ namespace DuelRoguelike.UI
             panel.Add(later);
         }
 
+        /// <summary>이 선택지를 전에 골라 봐서 결과를 아는지 (이번 런 또는 도감). 처음 고르는 선택지는 결과를 숨긴다.</summary>
+        bool KnowsResult(TowerEvent ev, int index) =>
+            _save.Codex.Chosen(ev.Id, index) || _run.Events.Any(e => e.Kind == RunEventKind.EventResolved && e.EventId == ev.Id && e.Count == index);
+
         void ChooseEvent(int index)
         {
             var ev = _run.CurrentEvent;
+            if (ev == null)
+                return;
+            int mark = _run.Events.Count;
+            int floor = _run.Floor;
             try
             {
                 _run.ChooseEventOption(index);
@@ -475,12 +544,116 @@ namespace DuelRoguelike.UI
             catch (Exception e)
             {
                 Debug.LogException(e);
+                ShowHub();
+                return;
             }
             Persist();
-            _moveNotice = $"이벤트 「{ev?.Title}」: {ev?.Choices[index]} → {_run.Floor}층 {Tower.KindName(_run.FloorKind)}";
-            _moveNoticeIsError = false;
-            Debug.Log($"[런] {_moveNotice}");
+            var option = index >= 0 ? ev.Choices[index] : null;
+            Debug.Log($"[런] 이벤트 「{ev.Title}」: {option?.Label ?? "그냥 지나감"} → {_run.Floor}층 {Tower.KindName(_run.FloorKind)}");
+            if (_run.EventBattlePending)
+            {
+                ShowHub(); // 층 사이 화면의 버튼을 "이벤트 전투 시작"으로 바꾼 뒤 전투 창
+                OpenEventBattle();
+                return;
+            }
+            _eventResult = new EventResultView(ev, option, floor, won: null, _run.Events.Skip(mark).ToList());
+            if (_run.Floor != floor)
+                SetFloorNotice(floor, FloorKind.Event);
             ShowHub();
+        }
+
+        /// <summary>이벤트 전투를 기다리는 창: 상대와 이기면 받을 것을 보여 주고 듀얼을 시작한다.</summary>
+        void OpenEventBattle()
+        {
+            var ev = _run?.CurrentEvent;
+            var option = _run?.PendingEventBattle;
+            if (ev == null || option == null || _run.Phase != RunPhase.Ready)
+                return;
+            var panel = OpenModal(760);
+            panel.name = "event-battle";
+            panel.Add(UiStyle.Label($"이벤트 전투 · {_run.Floor}층", 16, UiStyle.TextDim));
+            panel.Add(UiStyle.Label(ev.Title, 30, UiStyle.Accent, bold: true));
+            AddWrapped(panel, option.ResultText, 18, UiStyle.Text, 10);
+            AddWrapped(panel, $"상대: {StarterDecks.Find(option.BattleDeckId)?.Name ?? option.BattleDeckId}. " +
+                              "이기면 이벤트의 결과를 받습니다 (일반 승리 보상·칩은 없음, LP는 승리처럼 오름). 지면 일반 패배처럼 봉인됩니다. 어느 쪽이든 다음 층으로 갑니다.",
+                16, UiStyle.TextDim, 8);
+            var start = UiStyle.Button("이벤트 전투 시작", StartNextDuel, 20);
+            start.name = "event-battle-start";
+            start.style.marginTop = 14;
+            panel.Add(start);
+            var later = UiStyle.Button("나중에 (덱 정리)", CloseModal, 16);
+            later.name = "event-battle-close";
+            later.style.marginTop = 14;
+            later.style.alignSelf = Align.FlexEnd;
+            panel.Add(later);
+        }
+
+        /// <summary>이벤트를 고른 뒤(또는 이벤트 전투가 끝난 뒤) 보여 줄 결과. ShowHub가 다른 창보다 먼저 연다.</summary>
+        sealed class EventResultView
+        {
+            public readonly TowerEvent Event;
+            public readonly EventChoice Choice;
+            public readonly int Floor;
+            /// <summary>이벤트 전투면 이겼는지, 아니면 null.</summary>
+            public readonly bool? Won;
+            public readonly List<RunEvent> Happened;
+
+            public EventResultView(TowerEvent ev, EventChoice choice, int floor, bool? won, List<RunEvent> happened)
+            {
+                Event = ev;
+                Choice = choice;
+                Floor = floor;
+                Won = won;
+                Happened = happened.Where(e => e.Kind != RunEventKind.EventResolved && e.Kind != RunEventKind.FloorEntered).ToList();
+            }
+        }
+
+        EventResultView _eventResult;
+
+        void OpenEventResult()
+        {
+            var view = _eventResult;
+            if (view == null)
+                return;
+            var panel = OpenModal(760);
+            panel.name = "event-result";
+            panel.Add(UiStyle.Label($"이벤트 결과 · {view.Floor}층", 16, UiStyle.TextDim));
+            panel.Add(UiStyle.Label(view.Event.Title, 30, UiStyle.Accent, bold: true));
+            panel.Add(UiStyle.Label(view.Choice?.Label ?? "그냥 지나간다", 20, UiStyle.Text, bold: true));
+            string text = view.Won == false ? "이벤트 전투에서 졌습니다. 이벤트의 결과는 받지 못했습니다."
+                : view.Choice?.ResultText ?? "아무 일 없이 지나갔습니다.";
+            AddWrapped(panel, text, 18, UiStyle.Text, 10);
+            var list = new VisualElement { name = "event-result-list" };
+            list.style.marginTop = 10;
+            foreach (var e in view.Happened)
+                list.Add(Text(e.Describe(_text.CardName), 16, EventColor(e.Kind), top: 2));
+            if (view.Happened.Count == 0)
+                list.Add(Text("바뀐 것 없음", 16, UiStyle.TextDim, top: 2));
+            panel.Add(list);
+            var ok = UiStyle.Button("확인", () =>
+            {
+                _eventResult = null;
+                ShowHub();
+            }, 20);
+            ok.name = "event-result-ok";
+            ok.style.marginTop = 14;
+            panel.Add(ok);
+        }
+
+        void AddWrapped(VisualElement panel, string text, int size, Color color, int top)
+        {
+            if (string.IsNullOrEmpty(text))
+                return;
+            var label = Text(text, size, color, top: top);
+            label.style.whiteSpace = WhiteSpace.Normal;
+            panel.Add(label);
+        }
+
+        /// <summary>층을 오른 뒤 상태 줄에 "N층 이벤트 → M층 …"을 띄운다.</summary>
+        void SetFloorNotice(int fromFloor, FloorKind fromKind)
+        {
+            _moveNotice = $"{fromFloor}층 {Tower.KindName(fromKind)} → {_run.Floor}층 {Tower.KindName(_run.FloorKind)}";
+            _moveNoticeIsError = false;
         }
 
         // ================= 휴식 =================

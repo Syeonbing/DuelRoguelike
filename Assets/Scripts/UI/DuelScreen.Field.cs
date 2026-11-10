@@ -259,7 +259,7 @@ namespace DuelRoguelike.UI
         /// 손패 줄. 내 손패는 카드 전체(마우스를 올리면 조금 올라온다),
         /// 상대 손패는 화면 위 가장자리에 걸쳐 카드 아래쪽만 보인다.
         /// </summary>
-        static VisualElement HandRow(byte p)
+        VisualElement HandRow(byte p)
         {
             var row = UiStyle.Box(p == Me ? "my-hand" : "opp-hand", FlexDirection.Row);
             row.style.width = HalfWidth;
@@ -463,7 +463,7 @@ namespace DuelRoguelike.UI
                 if (tile.HasValue)
                 {
                     _holder.style.backgroundColor = UiStyle.ZoneEmpty;
-                    var side = zone.HasValue && zone.Value.Controller == Opp ? UiStyle.Opponent : UiStyle.Mine;
+                    var side = zone.HasValue && zone.Value.Controller == screen.Opp ? UiStyle.Opponent : UiStyle.Mine;
                     UiStyle.BorderColor(_holder, Color.Lerp(UiStyle.Border, side, 0.3f), 1);
                     UiStyle.Radius(_holder, 6);
                 }

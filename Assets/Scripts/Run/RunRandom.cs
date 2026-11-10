@@ -27,6 +27,14 @@ namespace DuelRoguelike.Run
         ShopSwap = 8,
         /// <summary>보스 보상: 봉인된 카드가 없을 때 한 번 더 주는 승리 보상</summary>
         BossBonusReward = 9,
+        /// <summary>듀얼 전 코인 토스 (누가 이기는지, 상대가 이기면 선공·후공 중 무엇을 고르는지). 번호 자리에 듀얼 번호</summary>
+        CoinToss = 10,
+        /// <summary>이벤트 층에서 나올 이벤트 (성향, 그 안의 이벤트). 번호 자리에 층</summary>
+        Event = 11,
+        /// <summary>이벤트 결과의 무작위 (봉인할 카드, 잃을 카드). 번호 자리에 층 × 8 + 선택지 + 1</summary>
+        EventEffect = 12,
+        /// <summary>칩교환소에 진열할 아이템 카드. 번호 자리에 층</summary>
+        ShopItem = 13,
     }
 
     public sealed class RunRandom

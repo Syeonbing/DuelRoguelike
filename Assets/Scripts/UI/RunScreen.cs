@@ -57,6 +57,8 @@ namespace DuelRoguelike.UI
             ShopRelease,
             /// <summary>칩교환소에서 대신 봉인할 카드 후보 (직접 고르는 교체)</summary>
             ShopSeal,
+            /// <summary>상점 덱 (칩교환소에서 산 카드)</summary>
+            Shop,
             /// <summary>보스 보상으로 봉인을 풀 카드 후보</summary>
             Unseal,
         }
@@ -181,14 +183,71 @@ namespace DuelRoguelike.UI
 
         // ================= 듀얼 =================
 
+        /// <summary>"다음 듀얼 시작": 먼저 코인 토스 창을 띄운다. 이긴 쪽이 선공·후공을 고른다 (상대는 대부분 선공).</summary>
         void StartNextDuel()
+        {
+            if (_run == null || _run.Phase != RunPhase.Ready)
+                return;
+            CoinToss toss;
+            try
+            {
+                toss = _run.NextCoinToss();
+            }
+            catch (Exception e)
+            {
+                Debug.LogException(e);
+                ShowHub();
+                return;
+            }
+            var panel = OpenModal(720);
+            panel.name = "coin-toss";
+            panel.Add(UiStyle.Label($"{_run.Floor}층{(_run.FloorKind == FloorKind.Boss ? " · 보스 듀얼" : "")} · 듀얼 전", 16, UiStyle.TextDim));
+            panel.Add(UiStyle.Label("코인 토스", 30, UiStyle.Accent, bold: true));
+            var result = UiStyle.Label(toss.PlayerWon ? "앞면 — 내가 이겼습니다" : "뒷면 — 상대가 이겼습니다", 26,
+                toss.PlayerWon ? UiStyle.Mine : UiStyle.Opponent, bold: true);
+            result.name = "coin-result";
+            result.style.marginTop = 12;
+            panel.Add(result);
+            if (toss.WinPercent != RunRules.CoinTossWinPercent)
+                panel.Add(Text($"이번 코인 토스에서 내가 이길 확률 {toss.WinPercent}%", 15, UiStyle.TextDim, top: 4));
+            var buttons = Row();
+            buttons.style.marginTop = 16;
+            if (toss.PlayerWon)
+            {
+                panel.Add(Text("선공·후공을 고르세요. 선공은 첫 턴에 드로우하지 않고, 후공은 첫 턴부터 공격할 수 있습니다.", 17, top: 10));
+                buttons.Add(CoinButton("coin-first", "선공 (먼저 시작)", true));
+                buttons.Add(CoinButton("coin-second", "후공 (나중에 시작)", false));
+            }
+            else
+            {
+                panel.Add(Text(toss.OpponentChoosesFirst ? "상대가 선공을 골랐습니다. 나는 후공입니다." : "상대가 후공을 골랐습니다. 나는 선공입니다.", 17, top: 10));
+                buttons.Add(CoinButton("coin-start", "듀얼 시작", true));
+            }
+            panel.Add(buttons);
+            var later = UiStyle.Button("나중에", CloseModal, 16);
+            later.name = "coin-close";
+            later.style.marginTop = 14;
+            later.style.alignSelf = Align.FlexEnd;
+            panel.Add(later);
+        }
+
+        Button CoinButton(string name, string text, bool playerFirst)
+        {
+            var b = UiStyle.Button(text, () => BeginNextDuel(playerFirst), 20);
+            b.name = name;
+            b.style.marginRight = 10;
+            return b;
+        }
+
+        /// <param name="playerFirst">코인 토스에 이겼을 때 고른 것 (true = 선공). 상대가 이겼으면 런이 정한다.</param>
+        void BeginNextDuel(bool playerFirst)
         {
             if (_run == null || _run.Phase != RunPhase.Ready)
                 return;
             RunDuel duel;
             try
             {
-                duel = _run.BeginDuel();
+                duel = _run.BeginDuel(playerFirst);
             }
             catch (Exception e)
             {
@@ -205,15 +264,20 @@ namespace DuelRoguelike.UI
             _forfeitNotice = null;
             CloseModal();
             SetVisible(false);
-            Debug.Log($"[런] {floor} 듀얼 {duel.DuelNumber}: 상대 {duel.Opponent.Name}, 나의 LP {duel.PlayerLp}");
-            duelScreen.BeginExternalDuel(duel.CreateSessionOptions(), helperSeed, helperSeed + 7777,
+            string turn = duel.PlayerGoesFirst ? "나의 선공" : "나의 후공";
+            string coin = duel.Toss.PlayerWon ? "코인 토스 승리" : "코인 토스 패배";
+            Debug.Log($"[런] {floor} 듀얼 {duel.DuelNumber}: 상대 {duel.Opponent.Name}, 나의 LP {duel.PlayerLp}, {coin} → {turn}");
+            duelScreen.BeginExternalDuel(duel.CreateSessionOptions(), duel.PlayerTeam, helperSeed, helperSeed + 7777,
                 $"나 · {floor}", $"상대 · {duel.Opponent.Name}",
-                $"{floor} 듀얼 {duel.DuelNumber} (런 시드 {_run.Seed}) — 나: LP {duel.PlayerLp}, 상대: {duel.Opponent.Name} LP {duel.OpponentLp}, 나의 선공, 상대 AI: WindBot",
+                $"{floor} 듀얼 {duel.DuelNumber} (런 시드 {_run.Seed}) — 나: LP {duel.PlayerLp}, 상대: {duel.Opponent.Name} LP {duel.OpponentLp}, {coin} → {turn}, 상대 AI: WindBot",
                 OnDuelLeft);
         }
 
         void OnDuelLeft(DuelState state)
         {
+            var eventBattle = _run.CurrentDuel != null && _run.CurrentDuel.IsEventBattle ? _run.CurrentEvent : null;
+            var eventChoice = eventBattle != null ? _run.PendingEventBattle : null;
+            int mark = _run.Events.Count, floor = _run.Floor;
             try
             {
                 _run.FinishDuel(state);
@@ -221,6 +285,17 @@ namespace DuelRoguelike.UI
             catch (Exception e)
             {
                 Debug.LogException(e);
+            }
+            if (eventBattle != null && eventChoice != null)
+            {
+                var happened = _run.Events.Skip(mark).ToList();
+                bool won = happened.Any(e => e.Kind == RunEventKind.DuelWon);
+                _eventResult = new EventResultView(eventBattle, eventChoice, floor, won, happened);
+                if (_run.Floor != floor)
+                {
+                    _moveNotice = $"{floor}층 이벤트 전투 {(won ? "승리" : "패배")} → {_run.Floor}층 {Tower.KindName(_run.FloorKind)}";
+                    _moveNoticeIsError = false;
+                }
             }
             Persist(); // 보상 후보·봉인이 정해진 상태로 저장. 런이 끝났으면 여기서 정리된다 (골드 누적, 진행 중인 런에서 뺌)
             var lastResult = _run.Events.LastOrDefault(e => e.Kind == RunEventKind.DuelWon || e.Kind == RunEventKind.DuelLost);
@@ -358,10 +433,14 @@ namespace DuelRoguelike.UI
                 case RunEventKind.RewardGold:
                 case RunEventKind.ChipsGained:
                 case RunEventKind.CardUnsealed:
+                case RunEventKind.EventCardGained:
+                case RunEventKind.EventGold:
                     return Positive;
                 case RunEventKind.DuelLost:
                 case RunEventKind.DuelForfeited:
                 case RunEventKind.CardSealed:
+                case RunEventKind.ChipsLost:
+                case RunEventKind.CardLost:
                     return UiStyle.Opponent;
                 case RunEventKind.MovedToDeck:
                 case RunEventKind.MovedToSide:
