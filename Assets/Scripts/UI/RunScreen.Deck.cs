@@ -31,8 +31,29 @@ namespace DuelRoguelike.UI
         static readonly Color Warning = UiStyle.Hex(0xe0a040);
         static readonly Pile[] EditorPiles = { Pile.Collection, Pile.DeckMain, Pile.DeckExtra, Pile.DeckSide };
 
+        /// <summary>컬렉션 보기 정렬. 기본 = 몬스터(레벨 높은 순) → 마법 → 함정 → 엑스트라, 같으면 카드명 순.</summary>
+        enum CollectionSort
+        {
+            Default,
+            Name,
+            Level,
+            Attack,
+            Defense,
+            Rarity,
+        }
+
         RecipeEditor _editor;
         CollectionFilter _filter;
+        /// <summary>정렬은 덱 편집을 다시 열어도 그대로 둔다 (검색어는 열 때마다 비운다).</summary>
+        CollectionSort _sort;
+        string _search = "";
+        /// <summary>검색에 효과문도 포함할지 (아니면 카드명만).</summary>
+        bool _searchText;
+        VisualElement _pickGrid;
+        Label _pickCount;
+        readonly List<(CollectionFilter Filter, Button Button)> _filterButtons = new List<(CollectionFilter, Button)>();
+        readonly List<(CollectionSort Sort, Button Button)> _sortButtons = new List<(CollectionSort, Button)>();
+        Button _searchScopeButton;
         ScrollView _pickScroll, _editorDeckScroll;
         Vector2 _pickScrollOffset, _editorDeckScrollOffset;
         string _editorNotice;
@@ -51,6 +72,7 @@ namespace DuelRoguelike.UI
             _editorNotice = null;
             _confirmLeave = _confirmDelete = false;
             _filter = CollectionFilter.All;
+            _search = "";
             _pickScroll = _editorDeckScroll = null;
             _pickScrollOffset = _editorDeckScrollOffset = Vector2.zero;
             _selectedPile = Pile.Collection;
@@ -98,7 +120,7 @@ namespace DuelRoguelike.UI
         {
             switch (pile)
             {
-                case Pile.Collection: return _collection.Cards.Keys.Where(c => Matches(c, _filter)).ToList();
+                case Pile.Collection: return _collection.Cards.Keys.Where(c => Matches(c, _filter) && MatchesSearch(c)).ToList();
                 case Pile.DeckMain: return _editor.MainDeck.ToList();
                 case Pile.DeckExtra: return _editor.ExtraDeck.ToList();
                 case Pile.DeckSide: return _editor.Side.ToList();
@@ -290,24 +312,66 @@ namespace DuelRoguelike.UI
             head.style.alignItems = Align.Center;
             head.Add(UiStyle.Label($"컬렉션 {_collection.Cards.Count}종 {_collection.TotalCount}장", 18, UiStyle.TextDim, bold: true));
             var filters = Row();
+            _filterButtons.Clear();
             foreach (CollectionFilter filter in Enum.GetValues(typeof(CollectionFilter)))
             {
                 var f = filter;
-                int n = _collection.Cards.Keys.Count(c => Matches(c, f));
-                var b = UiStyle.Button($"{FilterName(f)} {n}", () =>
+                var b = UiStyle.Button(FilterName(f), () =>
                 {
                     _filter = f;
-                    _pickScrollOffset = Vector2.zero;
-                    _pickScroll = null;
-                    ShowEditor();
+                    RefreshCollection(resetScroll: true);
                 }, 14);
                 b.name = "filter-" + f.ToString().ToLowerInvariant();
                 b.style.marginLeft = 4;
-                UiStyle.SetSelected(b, f == _filter);
                 filters.Add(b);
+                _filterButtons.Add((f, b));
             }
             head.Add(filters);
             panel.Add(head);
+
+            // 검색 (카드명, 또는 효과문까지)과 정렬
+            var tools = Row();
+            tools.style.alignItems = Align.Center;
+            tools.style.marginTop = 6;
+            tools.style.flexWrap = Wrap.Wrap;
+            var search = DarkTextField("collection-search", _search, 16);
+            search.style.width = 240;
+            search.RegisterValueChangedCallback(e =>
+            {
+                _search = e.newValue ?? "";
+                RefreshCollection(resetScroll: true);
+            });
+            tools.Add(search);
+            _searchScopeButton = UiStyle.Button("", () =>
+            {
+                _searchText = !_searchText;
+                RefreshCollection(resetScroll: true);
+            }, 14);
+            _searchScopeButton.name = "search-scope";
+            _searchScopeButton.style.marginLeft = 4;
+            tools.Add(_searchScopeButton);
+            var sortLabel = Text("정렬", 14, UiStyle.TextDim);
+            sortLabel.style.marginLeft = 14;
+            sortLabel.style.marginRight = 2;
+            tools.Add(sortLabel);
+            _sortButtons.Clear();
+            foreach (CollectionSort sort in Enum.GetValues(typeof(CollectionSort)))
+            {
+                var s = sort;
+                var b = UiStyle.Button(SortName(s), () =>
+                {
+                    _sort = s;
+                    RefreshCollection(resetScroll: true);
+                }, 14);
+                b.name = "sort-" + s.ToString().ToLowerInvariant();
+                b.style.marginLeft = 4;
+                tools.Add(b);
+                _sortButtons.Add((s, b));
+            }
+            panel.Add(tools);
+            _pickCount = Text("", 13, UiStyle.TextDim, top: 4);
+            _pickCount.name = "collection-count";
+            panel.Add(_pickCount);
             var note = Text("×n은 아직 넣지 않은 장수입니다. 두 번 누르면 덱에 넣고, 오른쪽 칸으로 끌어다 놓으면 그 칸에 넣습니다. " +
                             "흐린 카드는 컬렉션의 장수를 다 넣은 카드입니다. 더 넣을 수는 있지만(\"부족\" 표시) 그 레시피로는 런을 시작할 수 없습니다.",
                 13, UiStyle.TextDim, top: 2);
@@ -317,17 +381,8 @@ namespace DuelRoguelike.UI
             _pickScroll = new ScrollView(ScrollViewMode.Vertical);
             _pickScroll.style.flexGrow = 1;
             _pickScroll.style.marginTop = 6;
-            var grid = Grid(_pickScroll.contentContainer);
-            var shown = EditorCards(Pile.Collection);
-            if (shown.Count == 0)
-                grid.Add(Text("없음", 15, UiStyle.TextDim));
-            foreach (uint code in Sorted(shown))
-            {
-                uint c = code;
-                int left = _editor.Left(c);
-                grid.Add(CardSlot(Pile.Collection, c, CardFaceSize.Medium, count: Math.Max(left, 0), tag: left < 0 ? "부족" : null, dim: left <= 0,
-                    onDoubleClick: () => EditorAdd(c, toSide: false)));
-            }
+            _pickGrid = Grid(_pickScroll.contentContainer);
+            RefreshCollection(resetScroll: false);
             panel.Add(_pickScroll);
             // 덱·사이드 덱의 카드를 컬렉션으로 끌어다 놓으면 뺀다.
             AddDropZone(panel, (pile, code) =>
@@ -364,6 +419,120 @@ namespace DuelRoguelike.UI
                 case CollectionFilter.Trap: return "함정";
                 case CollectionFilter.Extra: return "엑스트라";
                 default: return "전체";
+            }
+        }
+
+        /// <summary>
+        /// 컬렉션 카드 칸만 다시 그린다. 검색 칸에 글자를 칠 때마다 불리므로
+        /// 화면 전체를 다시 그리지 않는다 (그러면 검색 칸의 입력 포커스가 사라진다).
+        /// </summary>
+        void RefreshCollection(bool resetScroll)
+        {
+            if (_pickGrid == null)
+                return;
+            string term = SearchKey(_search);
+            foreach (var (f, b) in _filterButtons)
+            {
+                int n = _collection.Cards.Keys.Count(c => Matches(c, f) && MatchesSearch(c, term));
+                b.text = $"{FilterName(f)} {n}";
+                UiStyle.SetSelected(b, f == _filter);
+            }
+            foreach (var (s, b) in _sortButtons)
+                UiStyle.SetSelected(b, s == _sort);
+            if (_searchScopeButton != null)
+            {
+                _searchScopeButton.text = _searchText ? "카드명+효과문" : "카드명만";
+                UiStyle.SetSelected(_searchScopeButton, _searchText);
+            }
+
+            _pickGrid.Clear();
+            _cardViews.RemoveAll(v => v.Pile == Pile.Collection);
+            var shown = EditorCards(Pile.Collection);
+            if (_pickCount != null)
+                _pickCount.text = (term.Length == 0 ? $"{shown.Count}종" : $"「{_search.Trim()}」 찾은 카드 {shown.Count}종") + " · " + SortNote(_sort);
+            if (shown.Count == 0)
+                _pickGrid.Add(Text(term.Length == 0 ? "없음" : "찾는 카드가 없습니다.", 15, UiStyle.TextDim));
+            foreach (uint code in SortedCollection(shown))
+            {
+                uint c = code;
+                int left = _editor.Left(c);
+                _pickGrid.Add(CardSlot(Pile.Collection, c, CardFaceSize.Medium, count: Math.Max(left, 0), tag: left < 0 ? "부족" : null, dim: left <= 0,
+                    onDoubleClick: () => EditorAdd(c, toSide: false)));
+            }
+            if (resetScroll && _pickScroll != null)
+            {
+                _pickScrollOffset = Vector2.zero;
+                _pickScroll.scrollOffset = Vector2.zero;
+            }
+        }
+
+        bool MatchesSearch(uint code) => MatchesSearch(code, SearchKey(_search));
+
+        /// <summary>대소문자와 띄어쓰기를 무시하고 카드명(설정하면 효과문도)에 검색어가 들어 있는지.</summary>
+        bool MatchesSearch(uint code, string term)
+        {
+            if (term.Length == 0)
+                return true;
+            if (SearchKey(_text.CardName(code)).Contains(term))
+                return true;
+            return _searchText && SearchKey(_text.Record(code)?.Description).Contains(term);
+        }
+
+        static string SearchKey(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return "";
+            var sb = new System.Text.StringBuilder(text.Length);
+            foreach (char ch in text)
+                if (!char.IsWhiteSpace(ch))
+                    sb.Append(char.ToLowerInvariant(ch));
+            return sb.ToString();
+        }
+
+        /// <summary>고른 정렬. 값이 같으면 기본 순서(Sorted)를 그대로 둔다 (OrderBy는 안정 정렬).</summary>
+        IEnumerable<uint> SortedCollection(IEnumerable<uint> cards)
+        {
+            var basic = Sorted(cards).ToList();
+            switch (_sort)
+            {
+                case CollectionSort.Name:
+                    return basic.OrderBy(c => _text.CardName(c), StringComparer.Ordinal);
+                case CollectionSort.Level:
+                    return basic.OrderBy(c => KindOrder(c) == 0 ? 0 : 1).ThenByDescending(c => _text.Record(c)?.Data.Level ?? 0);
+                case CollectionSort.Attack:
+                    return basic.OrderBy(c => KindOrder(c) == 0 ? 0 : 1).ThenByDescending(c => _text.Record(c)?.Data.Attack ?? 0);
+                case CollectionSort.Defense:
+                    return basic.OrderBy(c => KindOrder(c) == 0 ? 0 : 1).ThenByDescending(c => _text.Record(c)?.Data.Defense ?? 0);
+                case CollectionSort.Rarity:
+                    return basic.OrderByDescending(c => _rarities.TryGet(c, out var r) ? (int)r : -1);
+                default:
+                    return basic;
+            }
+        }
+
+        static string SortName(CollectionSort sort)
+        {
+            switch (sort)
+            {
+                case CollectionSort.Name: return "이름";
+                case CollectionSort.Level: return "레벨";
+                case CollectionSort.Attack: return "공격력";
+                case CollectionSort.Defense: return "수비력";
+                case CollectionSort.Rarity: return "레어도";
+                default: return "종류";
+            }
+        }
+
+        static string SortNote(CollectionSort sort)
+        {
+            switch (sort)
+            {
+                case CollectionSort.Name: return "카드명 가나다순";
+                case CollectionSort.Level: return "레벨 높은 순 (몬스터 먼저)";
+                case CollectionSort.Attack: return "공격력 높은 순 (몬스터 먼저)";
+                case CollectionSort.Defense: return "수비력 높은 순 (몬스터 먼저)";
+                case CollectionSort.Rarity: return "레어도 높은 순";
+                default: return "몬스터 → 마법 → 함정 → 엑스트라 순";
             }
         }
 

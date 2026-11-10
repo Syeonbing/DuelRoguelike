@@ -162,6 +162,7 @@ namespace DuelRoguelike.Tests
             Assert.IsTrue(Named("pick-").Count > 0, "마법 거르기에 카드가 없다");
             Click(Find<Button>(RunUi, "filter-all"));
             yield return null;
+            yield return CollectionSearchAndSort();
             Assert.AreEqual(DisplayStyle.Flex, Find<Label>(RunUi, "editor-dirty").style.display.value, "고쳤는데 저장하지 않은 변경 표시가 없다");
             yield return Shot(RunUi, "1a-editor");
             Click(Find<Button>(RunUi, "editor-save"));
@@ -890,6 +891,62 @@ namespace DuelRoguelike.Tests
                 _goldChosen = true;
             _rewards++;
             Debug.Log($"[런 화면 시험] 승리 보상: 카드 {cards.Count}자리, 빈 자리 {golds.Count}곳 → {how}: {notice.text}");
+        }
+
+        /// <summary>
+        /// 덱 편집의 컬렉션 검색과 정렬: 띄어쓰기를 빼고 카드명 검색, 효과문까지 검색, 없는 카드, 정렬 바꾸기.
+        /// 끝나면 검색어를 비우고 기본 정렬로 되돌린다.
+        /// </summary>
+        IEnumerator CollectionSearchAndSort()
+        {
+            const string blackMagician = "pick-46986414";
+            List<string> Shown() => Named("pick-").Select(e => e.name).ToList();
+            string CountText() => Find<Label>(RunUi, "collection-count")?.text ?? "";
+            var all = Shown();
+            var search = Find<TextField>(RunUi, "collection-search");
+            Assert.IsNotNull(search, "컬렉션 검색 칸이 없다");
+            Assert.Contains(blackMagician, all, "시험 전제: 컬렉션에 블랙 매지션이 있어야 한다");
+
+            search.value = "블랙매지션";
+            yield return null;
+            var found = Shown();
+            Assert.Contains(blackMagician, found, "띄어쓰기를 빼고 검색했는데 블랙 매지션이 없다");
+            Assert.Less(found.Count, all.Count, "검색해도 카드가 줄지 않았다");
+            StringAssert.Contains("찾은 카드", CountText(), "검색 결과 장수 표시가 없다");
+            Assert.AreSame(search, Find<TextField>(RunUi, "collection-search"), "글자를 칠 때 검색 칸이 다시 만들어졌다 (입력 포커스가 사라진다)");
+            yield return Shot(RunUi, "1b-editor-search");
+
+            search.value = "공격력";
+            yield return null;
+            int nameOnly = Shown().Count;
+            Click(Find<Button>(RunUi, "search-scope"));
+            yield return null;
+            int withText = Shown().Count;
+            Assert.Greater(withText, nameOnly, "효과문까지 검색해도 결과가 늘지 않았다");
+            Click(Find<Button>(RunUi, "search-scope"));
+            yield return null;
+            Debug.Log($"[런 화면 시험] 「공격력」 검색: 카드명만 {nameOnly}종, 효과문 포함 {withText}종");
+
+            search.value = "없는카드이름zz";
+            yield return null;
+            Assert.AreEqual(0, Shown().Count, "없는 카드를 검색했는데 카드가 보인다");
+            Assert.IsTrue(Find<VisualElement>(RunUi, "editor-collection").Query<Label>().ToList().Any(l => l.text == "찾는 카드가 없습니다."), "검색 결과가 없다는 표시가 없다");
+
+            search.value = "";
+            yield return null;
+            CollectionAssert.AreEqual(all, Shown(), "검색어를 지웠는데 처음 목록으로 돌아오지 않았다");
+
+            Click(Find<Button>(RunUi, "sort-name"));
+            yield return null;
+            var byName = Shown();
+            CollectionAssert.AreEquivalent(all, byName, "정렬을 바꿨는데 카드 종류가 달라졌다");
+            CollectionAssert.AreNotEqual(all, byName, "이름 순으로 바꿨는데 순서가 그대로다");
+            Click(Find<Button>(RunUi, "sort-attack"));
+            yield return null;
+            StringAssert.Contains("공격력 높은 순", CountText(), "공격력 정렬 표시가 없다");
+            Click(Find<Button>(RunUi, "sort-default"));
+            yield return null;
+            CollectionAssert.AreEqual(all, Shown(), "기본 정렬로 되돌렸는데 처음 순서가 아니다");
         }
 
         /// <summary>
