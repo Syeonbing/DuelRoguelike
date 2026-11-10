@@ -5,7 +5,7 @@
 // 칸 고르기(놓을 칸·무효로 할 칸)는 필드 칸(빈칸 포함)을 눌러서 고른다.
 // 진행: 엔진 메시지를 한 단계씩 보여 준다. 발동·공격·데미지 계산·LP·파괴 등에서는 잠깐 멈추고, 그 카드에 테두리를 치고,
 // 가운데 줄에 그 단계를 띄운다 (속도: 빠름·보통·느림, 필드를 누르면 다음 입력까지 건너뜀).
-// 센터 카드, 초상화 그림, 체인 박스 연출은 아직 없다.
+// 체인: 로그 위 체인 목록(번호·카드·효과·처리 상태)과 필드 카드 왼쪽 위 체인 번호. 센터 카드, 초상화 그림은 아직 없다.
 //
 // 두 가지로 쓴다:
 // - 혼자: Duel 씬. 인스펙터의 고정 덱으로 듀얼 하나를 하고, 끝나면 새 시드로 다시 시작한다 (화면 시험용).
@@ -97,6 +97,10 @@ namespace DuelRoguelike.UI
         const ulong HintAttackTarget = 549;   // HINTMSG_ATTACKTARGET: 공격할 대상을 고를 때의 안내
         CardLocation? _attacker;              // 배틀 페이즈에 공격하겠다고 고른 내 몬스터 (공격 대상 예상 결과에 쓴다)
         int _solvingChain;                    // 지금 처리 중인 체인 번호 (0이면 없음)
+        readonly Dictionary<int, string> _chainStatus = new Dictionary<int, string>(); // 체인 번호 → 처리됨·발동 무효·효과 무효
+        VisualElement _chainPanel;            // 오른쪽 위 체인 목록 (체인이 있을 때만)
+        ManualPlayer _manual;                 // 나 (체인 확인 방식을 듀얼 중에 바꾼다)
+        const string ChainPromptPrefKey = "duel.chain-prompt";
         bool _previewing;                     // 카드에 마우스를 올려 카드 정보를 보는 중
 
         DuelInteraction _interaction;
@@ -154,7 +158,13 @@ namespace DuelRoguelike.UI
             RunSafely(StartFreeDuel);
         }
 
-        void Awake() => _speed = (PlaybackSpeed)Mathf.Clamp(PlayerPrefs.GetInt(SpeedPrefKey, (int)PlaybackSpeed.Normal), 0, 2);
+        void Awake()
+        {
+            _speed = (PlaybackSpeed)Mathf.Clamp(PlayerPrefs.GetInt(SpeedPrefKey, (int)PlaybackSpeed.Normal), 0, 2);
+            // 듀얼 화면에서 고른 체인 확인 방식이 있으면 인스펙터 값보다 그것을 쓴다.
+            if (PlayerPrefs.HasKey(ChainPromptPrefKey))
+                chainPrompt = (ChainPromptMode)Mathf.Clamp(PlayerPrefs.GetInt(ChainPromptPrefKey), 0, 2);
+        }
 
         void OnDestroy() => _session?.Dispose();
 
@@ -456,26 +466,31 @@ namespace DuelRoguelike.UI
         {
             if (f.DetailCode == 0)
                 return;
-            var card = _session.State.Find(f.DetailLocation);
-            if (card == null || card.Code != f.DetailCode)
-            {
-                // 아직 배치를 다시 읽기 전이면 카드 DB의 값으로 보인다.
-                var record = _text.Record(f.DetailCode);
-                card = new CardInfo { Code = f.DetailCode, Location = f.DetailLocation };
-                if (record != null)
-                {
-                    card.Type = record.Type;
-                    card.Level = record.Data.Level & 0xff;
-                    card.Attribute = (OcgAttribute)record.Data.Attribute;
-                    card.Race = record.Data.Race;
-                    card.Attack = card.BaseAttack = record.Data.Attack;
-                    card.Defense = card.BaseDefense = record.Data.Defense;
-                }
-            }
+            var card = CardFor(f.DetailCode, f.DetailLocation);
             _pinnedCard = card;
             _pinnedVisible = true;
             if (!_previewing)
                 RenderDetail(card, true);
+        }
+
+        /// <summary>그 자리의 카드 (지금 상태의 공격력 등). 그 자리에 다른 카드가 있거나 없으면 카드 DB의 값으로 만든다.</summary>
+        CardInfo CardFor(uint code, CardLocation loc)
+        {
+            var card = _session.State.Find(loc);
+            if (card != null && card.Code == code)
+                return card;
+            var record = _text.Record(code);
+            card = new CardInfo { Code = code, Location = loc };
+            if (record != null)
+            {
+                card.Type = record.Type;
+                card.Level = record.Data.Level & 0xff;
+                card.Attribute = (OcgAttribute)record.Data.Attribute;
+                card.Race = record.Data.Race;
+                card.Attack = card.BaseAttack = record.Data.Attack;
+                card.Defense = card.BaseDefense = record.Data.Defense;
+            }
+            return card;
         }
 
         /// <summary>
@@ -717,9 +732,9 @@ namespace DuelRoguelike.UI
             _helper = new SimpleAutoPlayer(activateEffects: true, seed: helperSeed);
             _opponentAi = new WindBotPlayer(Opp, _db, seed: opponentSeed, hideOpponentInfo: !opponentSeesHiddenInfo);
             _opponentAi.ProblemReported += text => Debug.LogWarning($"[WindBot] {text}");
-            _session = DuelSession.Create(options, _db, _scripts,
-                new ManualPlayer { ChainPrompt = chainPrompt, PlaceSelect = placeSelect },
-                _opponentAi);
+            _manual = new ManualPlayer { ChainPrompt = chainPrompt, PlaceSelect = placeSelect };
+            _chainStatus.Clear();
+            _session = DuelSession.Create(options, _db, _scripts, _manual, _opponentAi);
             _session.MessageReceived += OnMessage;
             _session.EngineLog += OnEngineLog;
             foreach (var (type, text) in _session.StartupLog)
@@ -761,10 +776,7 @@ namespace DuelRoguelike.UI
 
         void OnMessage(DuelMessage message)
         {
-            if (message is ChainEventMessage solving && message.Type == OcgMessageType.ChainSolving)
-                _solvingChain = solving.ChainCount;
-            else if (message.Type == OcgMessageType.ChainEnd)
-                _solvingChain = 0;
+            TrackChain(message);
             string line = _logFormatter.Format(message, _session.State);
             if (line == null)
                 return;
@@ -836,17 +848,11 @@ namespace DuelRoguelike.UI
             _turnLabel.text = state.Turn == 0 ? "듀얼 준비"
                 : $"{state.Turn}턴 · {_text.Player(state.TurnPlayer)}의 턴 · {DuelText.ShortPhase(state.Phase)}";
             _chainBox.Clear();
-            // 체인: 쌓인 순서대로, 쪽마다 색을 달리하고 지금 처리 중인 체인에 표시한다.
-            for (int i = 0; i < state.Chain.Count; i++)
-            {
-                var link = state.Chain[i];
-                byte owner = link.Location.Controller;
-                bool solving = _solvingChain == i + 1;
-                var label = UiStyle.Label($"{(solving ? "▶ 처리 중 " : "")}체인 {i + 1}: 「{_text.CardName(link.Code)}」 ({_text.Player(owner)})", 15,
-                    solving ? UiStyle.Accent : owner == Opp ? OpponentLine : UiStyle.Mine, bold: solving);
-                label.name = $"chain-{i + 1}";
-                _chainBox.Add(label);
-            }
+            // 체인: 오른쪽 위 체인 목록에 자세히, 가운데 줄에는 한 줄로 알린다.
+            RenderChain(state);
+            if (state.Chain.Count > 0)
+                _chainBox.Add(UiStyle.Label(_solvingChain > 0 ? $"체인 {state.Chain.Count}개 · 체인 {_solvingChain} 처리 중" : $"체인 {state.Chain.Count}개 쌓임",
+                    16, UiStyle.Accent, bold: true));
             RenderStrip(state);
         }
 
@@ -930,8 +936,158 @@ namespace DuelRoguelike.UI
             AddSpeedButton();
         }
 
-        void AddSpeedButton() =>
+        void AddSpeedButton()
+        {
+            AddStripButton($"체인 확인: {ChainPromptName(chainPrompt)}", CycleChainPrompt, false).name = "chain-prompt";
             AddStripButton($"속도: {SpeedName(_speed)}", CycleSpeed, false).name = "playback-speed";
+        }
+
+        static string ChainPromptName(ChainPromptMode mode) =>
+            mode == ChainPromptMode.Always ? "항상" : mode == ChainPromptMode.Never ? "끔" : "자동";
+
+        /// <summary>체인 확인 방식을 바꾼다 (자동 → 항상 → 끔). 듀얼 중에도 바로 적용하고 저장한다.</summary>
+        void CycleChainPrompt()
+        {
+            chainPrompt = chainPrompt == ChainPromptMode.Smart ? ChainPromptMode.Always
+                : chainPrompt == ChainPromptMode.Always ? ChainPromptMode.Never : ChainPromptMode.Smart;
+            if (_manual != null)
+                _manual.ChainPrompt = chainPrompt;
+            PlayerPrefs.SetInt(ChainPromptPrefKey, (int)chainPrompt);
+            string how = chainPrompt == ChainPromptMode.Always ? "발동할 수 있는 카드가 있으면 언제나 묻는다 (상대 턴 엔드 페이즈 등에 함정을 쓰고 싶을 때)"
+                : chainPrompt == ChainPromptMode.Never ? "묻지 않는다 (꼭 골라야 하는 유발 효과만 묻는다)"
+                : "상대 행동에 대응할 수 있을 때만 묻는다";
+            AddLog($"체인 확인: {ChainPromptName(chainPrompt)} — {how}", UiStyle.TextDim);
+            Render();
+        }
+
+        // ================= 체인 =================
+
+        /// <summary>체인 처리 과정을 따라간다: 처리 중인 번호, 처리됨·무효 표시.</summary>
+        void TrackChain(DuelMessage message)
+        {
+            switch (message)
+            {
+                case ChainingMessage m:
+                    _chainStatus.Remove(m.ChainCount);
+                    break;
+                case ChainEventMessage m when m.Type == OcgMessageType.ChainSolving:
+                    _solvingChain = m.ChainCount;
+                    break;
+                case ChainEventMessage m when m.Type == OcgMessageType.ChainSolved:
+                    if (!_chainStatus.ContainsKey(m.ChainCount))
+                        _chainStatus[m.ChainCount] = "처리됨";
+                    break;
+                case ChainEventMessage m when m.Type == OcgMessageType.ChainNegated:
+                    _chainStatus[m.ChainCount] = "발동 무효";
+                    break;
+                case ChainEventMessage m when m.Type == OcgMessageType.ChainDisabled:
+                    _chainStatus[m.ChainCount] = "효과 무효";
+                    break;
+                case SimpleMessage m when m.Type == OcgMessageType.ChainEnd:
+                    _solvingChain = 0;
+                    _chainStatus.Clear();
+                    break;
+            }
+        }
+
+        /// <summary>체인 번호의 처리 상태: 처리 중 / 처리됨 / 발동 무효 / 효과 무효 / 대기.</summary>
+        string ChainStatusOf(int number)
+        {
+            if (_chainStatus.TryGetValue(number, out var status))
+                return status;
+            if (number == _solvingChain)
+                return "처리 중";
+            return _solvingChain > 0 && number > _solvingChain ? "처리됨" : "대기";
+        }
+
+        /// <summary>필드의 이 카드가 아직 처리되지 않은 체인에 있으면 그 번호 (가장 위의 것), 없으면 0.</summary>
+        int ChainNumberOf(CardInfo card)
+        {
+            if (card == null || _session == null)
+                return 0;
+            var chain = _session.State.Chain;
+            var key = new CardKey(card.Location);
+            for (int i = chain.Count - 1; i >= 0; i--)
+            {
+                string status = ChainStatusOf(i + 1);
+                if ((status == "대기" || status == "처리 중") && new CardKey(chain[i].Location).Equals(key))
+                    return i + 1;
+            }
+            return 0;
+        }
+
+        /// <summary>
+        /// 체인 목록 (로그 위). 위에서부터 처리하므로 마지막 체인을 맨 위에 둔다. 줄마다 번호(쪽 색), 카드, 효과, 처리 상태.
+        /// 줄에 마우스를 올리면 카드 정보에 그 카드가 보이고, 누르면 고정한다.
+        /// </summary>
+        void RenderChain(DuelState state)
+        {
+            _chainPanel.Clear();
+            _chainPanel.style.display = state.Chain.Count > 0 ? DisplayStyle.Flex : DisplayStyle.None;
+            if (state.Chain.Count == 0)
+                return;
+            var header = UiStyle.Box(null, FlexDirection.Row);
+            header.style.justifyContent = Justify.SpaceBetween;
+            header.style.alignItems = Align.Center;
+            header.style.marginBottom = 6;
+            header.Add(UiStyle.Label($"체인 {state.Chain.Count}", 18, UiStyle.Accent, bold: true));
+            header.Add(UiStyle.Label("위에서부터 처리", 13, UiStyle.TextDim));
+            _chainPanel.Add(header);
+
+            for (int i = state.Chain.Count - 1; i >= 0; i--)
+            {
+                var link = state.Chain[i];
+                int number = i + 1;
+                byte owner = link.Location.Controller;
+                Color side = owner == Opp ? FocusActor : UiStyle.Mine;
+                string status = ChainStatusOf(number);
+                bool done = status != "대기" && status != "처리 중";
+
+                var row = UiStyle.Box($"chain-{number}", FlexDirection.Row);
+                row.style.alignItems = Align.Center;
+                row.style.backgroundColor = status == "처리 중" ? Color.Lerp(UiStyle.PanelLight, UiStyle.Accent, 0.18f) : UiStyle.PanelLight;
+                UiStyle.Radius(row, 5);
+                UiStyle.Padding(row, 6);
+                row.style.marginBottom = 4;
+                row.style.borderLeftWidth = 4;
+                row.style.borderLeftColor = side;
+                row.style.opacity = done ? 0.5f : 1f;
+
+                var circle = UiStyle.Label(number.ToString(), 18, UiStyle.Background, bold: true);
+                circle.style.width = circle.style.height = 30;
+                circle.style.flexShrink = 0;
+                circle.style.unityTextAlign = TextAnchor.MiddleCenter;
+                circle.style.backgroundColor = side;
+                UiStyle.Radius(circle, 15);
+                circle.style.marginRight = 8;
+                row.Add(circle);
+
+                var texts = UiStyle.Box();
+                texts.style.flexGrow = 1;
+                texts.style.flexShrink = 1;
+                var name = UiStyle.Label($"「{_text.CardName(link.Code)}」", 15, UiStyle.Text, bold: true);
+                name.style.whiteSpace = WhiteSpace.Normal;
+                texts.Add(name);
+                string desc = _text.Description(link.Description);
+                string where = $"{_text.Player(owner)} · {DuelText.Location(link.Location)}";
+                var sub = UiStyle.Label(string.IsNullOrEmpty(desc) || desc.StartsWith(_text.CardName(link.Code)) ? where : $"{where} · {desc}", 13, UiStyle.TextDim);
+                sub.style.whiteSpace = WhiteSpace.Normal;
+                texts.Add(sub);
+                row.Add(texts);
+
+                var statusLabel = UiStyle.Label(status, 14,
+                    status == "처리 중" ? UiStyle.Accent : status.EndsWith("무효") ? FocusTarget : UiStyle.TextDim, bold: status == "처리 중");
+                statusLabel.style.flexShrink = 0;
+                statusLabel.style.marginLeft = 6;
+                row.Add(statusLabel);
+
+                var card = CardFor(link.Code, link.Location);
+                row.RegisterCallback<PointerEnterEvent>(_ => PreviewCard(card, true));
+                row.RegisterCallback<PointerLeaveEvent>(_ => EndPreview());
+                row.RegisterCallback<ClickEvent>(_ => ShowCard(card, true));
+                _chainPanel.Add(row);
+            }
+        }
 
         Button AddStripButton(string label, Action onClick, bool primary)
         {
@@ -948,6 +1104,8 @@ namespace DuelRoguelike.UI
             bool visible = visibleOverride ?? IsVisible(card);
             cell.Set(card, visible);
             cell.SetNote(AttackPreview(card));
+            int chainNumber = ChainNumberOf(card);
+            cell.SetChainNumber(chainNumber, chainNumber > 0 && _session.State.Chain[chainNumber - 1].Location.Controller == Opp ? FocusActor : UiStyle.Mine);
             if (_focus != null)
             {
                 // 멈춰 보여 주는 단계: 발동한 카드·공격하는 몬스터는 주황, 대상·공격받는 쪽은 빨강 테두리 (빈칸이면 칸에).

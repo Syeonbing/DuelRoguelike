@@ -98,6 +98,8 @@ namespace DuelRoguelike.UI
                 case OcgPosition.FaceDownAttack: return "뒷면 공격 표시";
                 case OcgPosition.FaceUpDefense: return "앞면 수비 표시";
                 case OcgPosition.FaceDownDefense: return "뒷면 수비 표시";
+                case OcgPosition.FaceUp: return "앞면";
+                case OcgPosition.FaceDown: return "뒷면";
                 default: return position.ToString();
             }
         }
