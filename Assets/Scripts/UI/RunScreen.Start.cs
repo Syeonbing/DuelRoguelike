@@ -141,6 +141,10 @@ namespace DuelRoguelike.UI
             _moveNotice = null;
             _deckScroll = null;
             _deckScrollOffset = Vector2.zero;
+            // 층에 들어가면 한 번 뜨는 창(이벤트·휴식·칩교환소)은 런마다, 이어하기마다 다시 센다.
+            _eventShownFloor = _restShownFloor = _shopShownFloor = 0;
+            _shopProduct = null;
+            _shopRelease = 0;
         }
 
         // ---- 가운데: 고른 레시피 보기 ----
