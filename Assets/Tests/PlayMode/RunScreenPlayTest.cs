@@ -97,11 +97,17 @@ namespace DuelRoguelike.Tests
             _saveDir = Path.Combine(Path.GetTempPath(), "DuelRoguelike-playtest-" + Guid.NewGuid().ToString("N"));
             Environment.SetEnvironmentVariable(SaveDirVariable, _saveDir);
             _chainPromptPref = PlayerPrefs.HasKey(ChainPromptPrefKey) ? PlayerPrefs.GetInt(ChainPromptPrefKey) : (int?)null;
+            // 시험 중에는 소리를 내지 않는다 (재생 횟수는 그대로 센다).
+            _listenerVolume = AudioListener.volume;
+            AudioListener.volume = 0f;
         }
+
+        float _listenerVolume = 1f;
 
         [TearDown]
         public void TearDown()
         {
+            AudioListener.volume = _listenerVolume;
             if (_chainPromptPref.HasValue)
                 PlayerPrefs.SetInt(ChainPromptPrefKey, _chainPromptPref.Value);
             else
