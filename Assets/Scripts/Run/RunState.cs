@@ -53,7 +53,7 @@ namespace DuelRoguelike.Run
         None,
         /// <summary>메인 덱이 40장 미만인데 사이드 덱에서 보충할 카드가 모자람</summary>
         DeckBelowMinimum,
-        /// <summary>플레이어가 런을 포기함 (진행 중인 런이 있을 때 새 런을 시작)</summary>
+        /// <summary>플레이어가 런을 포기함 (탑 메뉴의 "런 포기", 또는 진행 중인 런이 있을 때 새 런을 시작)</summary>
         Abandoned,
     }
 
@@ -606,10 +606,14 @@ namespace DuelRoguelike.Run
         /// </summary>
         public void Abandon()
         {
-            if (Phase != RunPhase.Ready && Phase != RunPhase.ChoosingReward && Phase != RunPhase.NeedsRefill && Phase != RunPhase.ChoosingUnseal)
+            if (!CanAbandon)
                 throw new InvalidOperationException($"런을 포기할 수 없습니다: 지금 상태는 {Phase} (듀얼 사이에만 포기할 수 있음)");
             EndRun(RunEndReason.Abandoned);
         }
+
+        /// <summary>지금 런을 포기할 수 있는지 (듀얼 사이: Ready, ChoosingReward, NeedsRefill, ChoosingUnseal).</summary>
+        public bool CanAbandon =>
+            Phase == RunPhase.Ready || Phase == RunPhase.ChoosingReward || Phase == RunPhase.NeedsRefill || Phase == RunPhase.ChoosingUnseal;
 
         /// <summary>보충할 때 고를 수 있는 사이드 덱 카드 (같은 카드는 한 번, 사이드 덱 순서). NeedsRefill이 아니면 빈 목록.</summary>
         public List<uint> RefillCandidates()
