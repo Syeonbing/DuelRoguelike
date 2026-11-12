@@ -359,6 +359,7 @@ namespace DuelRoguelike.Tests
             // ---- 듀얼 도중에 끄기 → 그 듀얼은 패배 ----
             yield return ToBattleFloor(1);
             int played = DuelsPlayed();
+            int sealedBefore = SavedCards("sealed-main").Count, mainCards = SavedCards("main").Count, lossFloor = SavedNumber("floor");
             yield return BeginDuelWithCoinToss();
             yield return WaitFor(() => Find<Button>(DuelUi, "auto-to-end") != null || Find<Button>(DuelUi, "leave-duel") != null, LoadTimeout, "듀얼 화면");
             StringAssert.Contains("\nphase InDuel\n", File.ReadAllText(SaveFile), "듀얼을 시작했는데 듀얼 중 상태로 저장되지 않았다");
@@ -372,6 +373,12 @@ namespace DuelRoguelike.Tests
             string forfeited = File.ReadAllText(SaveFile);
             StringAssert.Contains("event DuelForfeited ", forfeited, "듀얼 도중에 끈 듀얼이 패배로 저장되지 않았다");
             Assert.IsFalse(forfeited.Contains("\nphase InDuel\n"), "패배로 처리했는데 저장 파일이 아직 듀얼 중이다");
+            // 패배 패널티: 메인 덱에서 1 + 연패 + 층÷10장을 봉인한다 (RunRules.MainSealCount, 2026-11-13에 앞의 1을 더함).
+            int lossStreak = SavedNumber("streak");
+            int expectedSeals = Math.Min(1 + lossStreak + lossFloor / 10, mainCards);
+            Assert.AreEqual(sealedBefore + expectedSeals, SavedCards("sealed-main").Count,
+                $"{lossFloor}층 {lossStreak}연패의 봉인 장수 (메인 덱 {mainCards}장에서 {expectedSeals}장이어야 함)");
+            Debug.Log($"[런 화면 시험] 패배 패널티: {lossFloor}층 {lossStreak}연패, 메인 덱 봉인 {expectedSeals}장");
             yield return Shot(RunUi, "7b-forfeit");
             Click(Find<Button>(RunUi, "continue-run"));
             yield return null;
@@ -826,6 +833,14 @@ namespace DuelRoguelike.Tests
         {
             var match = Regex.Match(File.ReadAllText(SaveFile).Replace("\r\n", "\n"), $@"\n{Regex.Escape(key)}( [^\n]*)?\n");
             return match.Success ? match.Groups[1].Value.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries).ToList() : new List<string>();
+        }
+
+        /// <summary>저장 파일의 "key 숫자" 줄의 숫자 (floor, streak, lp …). 그 줄이 없으면 실패.</summary>
+        int SavedNumber(string key)
+        {
+            var match = Regex.Match(File.ReadAllText(SaveFile).Replace("\r\n", "\n"), $@"\n{Regex.Escape(key)} (-?\d+)\n");
+            Assert.IsTrue(match.Success, $"저장 파일에 {key} 줄이 없다");
+            return int.Parse(match.Groups[1].Value);
         }
 
         /// <summary>저장 파일의 "key 값…" 줄을 바꾼다 (값이 없는 줄도). 그 줄이 없으면 실패.</summary>

@@ -88,7 +88,13 @@ namespace DuelRoguelike.Run
         public static int SettlementGold(int floor, int chipsEarned, int chipsHeld) =>
             floor + SettlementFloorBonus(floor) + chipsEarned / SettlementEarnedChipsDivisor + chipsHeld / SettlementHeldChipsDivisor;
 
-        /// <summary>봉인 장수 = 연패 횟수 + 층 ÷ 이 값 (버림).</summary>
+        /// <summary>
+        /// 봉인 장수 = 이 값 + 연패 횟수 + 층 ÷ SealFloorStep (버림). 패배마다 연패와 상관없이 더 봉인하는 장수.
+        /// 2026-11-13 사용자 결정 (플레이 소감 "패배 패널티가 조금 더 늘었으면"): 0 → 1.
+        /// </summary>
+        public const int LossSealBase = 1;
+
+        /// <summary>봉인 장수의 층 항: 층 ÷ 이 값 (버림).</summary>
         public const int SealFloorStep = 10;
 
         /// <summary>패배할 때마다 엑스트라 덱이 1장 봉인될 확률(%). 성공하면 실패할 때까지 다시 굴린다.</summary>
@@ -116,8 +122,11 @@ namespace DuelRoguelike.Run
 
         public static bool IsBossFloor(int floor) => floor % BossFloorInterval == 0;
 
-        /// <summary>패배했을 때 메인 덱에서 봉인할 장수. losingStreak는 이번 패배를 포함한 연패 횟수 (첫 패배면 1).</summary>
-        public static int MainSealCount(int losingStreak, int floor) => losingStreak + floor / SealFloorStep;
+        /// <summary>
+        /// 패배했을 때 메인 덱에서 봉인할 장수 = 1 + 연패 횟수 + 층 ÷ 10. losingStreak는 이번 패배를 포함한 연패 횟수 (첫 패배면 1).
+        /// 예: 1~9층 첫 패배 2장, 2연패째 3장, 25층 3연패째 6장.
+        /// </summary>
+        public static int MainSealCount(int losingStreak, int floor) => LossSealBase + losingStreak + floor / SealFloorStep;
 
         /// <summary>엑스트라 덱 봉인 장수: 20%가 성공할 때마다 1장, 실패하거나 엑스트라 덱이 비면 멈춘다.</summary>
         public static int RollExtraSealCount(RunRandom random, int available)
