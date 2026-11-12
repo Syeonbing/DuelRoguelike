@@ -267,7 +267,8 @@ namespace DuelRoguelike.UI
             FitStage();
 
             // ---- 가운데: 필드 (판 전체를 덮는 층. 여기를 누르면 보여 주기를 건너뛴다) ----
-            var field = new VisualElement { name = "field" };
+            ClearFx(render: false); // 옛 화면의 연출은 버린다
+            var field = _fieldLayer = new VisualElement { name = "field" };
             UiStyle.Place(field, 0, 0, StageWidth, StageHeight);
             field.RegisterCallback<PointerDownEvent>(OnFieldPointerDown, TrickleDown.TrickleDown);
             // 듀얼 자리를 구분하는 한 단 어두운 판
@@ -279,6 +280,7 @@ namespace DuelRoguelike.UI
             field.Add(_handRows[Opp] = HandRow(Opp));
             field.Add(FieldSide(Opp));
             field.Add(FieldSide(Me));
+            field.Add(BuildChainBox()); // 체인이 있는 동안 필드 한가운데에 뜬다 (가운데 띠 아래에 깔린다)
             field.Add(CenterStrip());
             field.Add(_handRows[Me] = HandRow(Me));
             // 키 도움말: 필드 위쪽 빈 띠 (상대 패의 양옆). 왼쪽에 이동·결정·취소, 오른쪽에 다음 카드·건너뛰기·효과문.
@@ -291,6 +293,7 @@ namespace DuelRoguelike.UI
             rightHints.style.right = StageWidth - (ColumnX(6) + Tile);
             rightHints.style.top = 26;
             field.Add(rightHints);
+            field.Add(BuildBanner());
             _statusBadge = BuildStatusBadge();
             field.Add(_statusBadge); // 다른 것 위에 겹쳐 그린다 (필드 오른쪽 위 모서리)
             _stage.Add(field);
@@ -315,6 +318,9 @@ namespace DuelRoguelike.UI
 
             // ---- 오른쪽: 턴, 페이즈, 버튼, 체인 목록, 방금 일어난 일, 로그 전체 ----
             _stage.Add(RightPanel());
+
+            // ---- 연출 층 (날아가는 카드, 화살, 테, 떠오르는 숫자) ----
+            _stage.Add(BuildFxLayer());
 
             // ---- 로그 서랍 (닫혀 있으면 화면 오른쪽 밖) ----
             _stage.Add(LogDrawer());
@@ -464,9 +470,10 @@ namespace DuelRoguelike.UI
         {
             text = text ?? "";
             _promptLabel.text = text;
-            _promptLabel.style.fontSize = text.Length > 40 ? 18 : text.Length > 30 ? 22 : 27;
+            // 체인 상자의 맨 위 줄로 올라가 있으면 작게 쓰고 설명 줄은 숨긴다
+            _promptLabel.style.fontSize = _promptCompact ? (text.Length > 30 ? 17 : 21) : text.Length > 40 ? 18 : text.Length > 30 ? 22 : 27;
             _promptDetail.text = detail ?? "";
-            _promptDetail.style.display = string.IsNullOrEmpty(detail) ? DisplayStyle.None : DisplayStyle.Flex;
+            _promptDetail.style.display = string.IsNullOrEmpty(detail) || _promptCompact ? DisplayStyle.None : DisplayStyle.Flex;
         }
 
         VisualElement RightPanel()
@@ -892,6 +899,15 @@ namespace DuelRoguelike.UI
             }
 
             public CardInfo Card => _card;
+            /// <summary>카드 그림이 든 자리 (연출이 접거나 돌린다).</summary>
+            public VisualElement Slot => _slot;
+
+            /// <summary>카드가 날아오는 동안 이 칸의 카드를 숨긴다 (필드 칸은 칸은 남기고 카드만, 패는 통째로).</summary>
+            public void SetCardHidden(bool hidden)
+            {
+                var target = Zone.HasValue ? _slot : _holder;
+                target.style.visibility = hidden ? Visibility.Hidden : Visibility.Visible;
+            }
             public bool Visible => _visible;
             /// <summary>강조 테두리가 켜져 있는지 (할 수 있는 일이 있거나 고를 수 있는 카드·칸). Tab으로 도는 대상이다.</summary>
             public bool Highlighted { get; private set; }

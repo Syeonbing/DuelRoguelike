@@ -179,6 +179,7 @@ namespace DuelRoguelike.UI
                 AdvancePlayback();
             UpdateStatusBadge();
             UpdateKeyCursor();
+            UpdateFx();
         }
 
         // ================= 모서리 상태 표시 =================
@@ -242,6 +243,7 @@ namespace DuelRoguelike.UI
         void BeginSkip()
         {
             _skipping = true;
+            ClearFx(); // 틀고 있던 연출은 지우고 결과만 남긴다
             _badgeUntil = Time.realtimeSinceStartup + BadgeLingerSeconds;
             SetBadge(SkipText, UiStyle.Accent);
         }
@@ -434,6 +436,7 @@ namespace DuelRoguelike.UI
             _onLeave = null;
             _autoPlay = false;
             ResetPlayback();
+            ClearFx(render: false);
             _session.Dispose();
             _session = null;
             _interaction = null;
@@ -482,6 +485,8 @@ namespace DuelRoguelike.UI
         void SetAutoPlay(bool on)
         {
             _autoPlay = on;
+            if (on)
+                ClearFx(); // 자동 진행 중에는 연출을 틀지 않는다
             CloseMenu();
             CloseModal();
             Render();
@@ -721,7 +726,9 @@ namespace DuelRoguelike.UI
                         : m.Kind == LpChangeKind.Damage || m.Kind == LpChangeKind.PayCost ? -(int)m.Amount : 0;
                     break;
                 case MoveMessage m:
-                    seconds = 0.6f;
+                    // 파괴(번쩍이고 조각남)와 제외(돌며 빨려 듦)는 연출이 길다
+                    seconds = m.To.Location == OcgLocation.Grave && m.From.IsOnField && (m.Reason & OcgReason.Destroy) != 0 ? 1.1f
+                        : m.To.Location == OcgLocation.Removed ? 1.0f : 0.6f;
                     f.Add(m.To, FocusTarget);
                     break;
                 case SummoningMessage m:
@@ -744,8 +751,17 @@ namespace DuelRoguelike.UI
                     f.Add(m.Target, FocusTarget);
                     break;
                 case TossMessage _:
-                case NewTurnMessage _:
                     seconds = 0.7f;
+                    break;
+                case NewTurnMessage _:
+                    seconds = 0.9f; // 턴 넘김 띠 알림
+                    break;
+                case DrawMessage m:
+                    // 덱에서 패로 한 장씩 날아오는 동안
+                    seconds = 0.5f + 0.08f * Mathf.Max(0, m.Codes.Count - 1);
+                    break;
+                case WinMessage _:
+                    seconds = 1.6f; // 승리·패배 띠 알림
                     break;
                 default:
                     return null;
@@ -794,6 +810,7 @@ namespace DuelRoguelike.UI
             _autoPlay = false;
             ResetPlayback();
             _log.Clear();
+            ClearFx();
             _recentLines.Clear();
             RenderRecentLog();
             SetLogDrawer(false, instant: true);
@@ -860,6 +877,8 @@ namespace DuelRoguelike.UI
             string line = _logFormatter.Format(message, _session.State);
             if (line == null)
                 return;
+            if (_pacing && !_skipping)
+                BuildFx(message); // 이 단계가 멈춰 있는 동안 틀 연출
             if (_pacing)
                 _nextFocus = BuildFocus(message, line);
             // 상대 행동 줄은 색을 달리한다.
@@ -911,7 +930,8 @@ namespace DuelRoguelike.UI
                 int lp = System.Math.Max(0, player.Lp);
                 _lp[p].text = lp.ToString();
                 // LP 막대: 시작 LP(8000)를 꽉 찬 것으로 본다. 넘으면 꽉 찬 채로 둔다.
-                _lpBar[p].style.width = Length.Percent(Mathf.Clamp01(lp / 8000f) * 100f);
+                if (!_lpBarBusy[p])
+                    _lpBar[p].style.width = Length.Percent(Mathf.Clamp01(lp / 8000f) * 100f);
                 bool lpFocus = _focus != null && _focus.LpPlayer == p;
                 _lp[p].style.color = lpFocus ? FocusTarget : UiStyle.Text;
                 // LP가 바뀌는 단계: 바뀐 양을 LP 옆에 띄운다.
@@ -942,6 +962,7 @@ namespace DuelRoguelike.UI
             }
             // 체인: 오른쪽 체인 목록에 번호·카드·처리 상태를 보인다.
             RenderChain(state);
+            RenderChainBox(state);
             _stripButtons.Clear();
             _smallButtons.Clear();
             _firstPrimary = true;
@@ -1228,6 +1249,7 @@ namespace DuelRoguelike.UI
         {
             bool visible = visibleOverride ?? IsVisible(card);
             cell.Set(card, visible);
+            cell.SetCardHidden(IsHidden(card)); // 카드가 날아오는 중이면 도착할 때까지 숨긴다
             cell.SetNote(AttackPreview(card));
             int chainNumber = ChainNumberOf(card);
             cell.SetChainNumber(chainNumber, chainNumber > 0 && _session.State.Chain[chainNumber - 1].Location.Controller == Opp ? FocusActor : UiStyle.Mine);
@@ -1568,6 +1590,7 @@ namespace DuelRoguelike.UI
                 bool visible = p == Me || card.IsFaceUp || card.IsPublic || location == OcgLocation.Grave;
                 var cell = WindowCell($"pile-card-{i}", refresh: () => OpenPileWindow(p, location));
                 cell.Set(card, visible);
+            cell.SetCardHidden(IsHidden(card)); // 카드가 날아오는 중이면 도착할 때까지 숨긴다
                 cell.SetHighlight(HighlightFor(card));
                 grid.Add(cell.Root);
             }

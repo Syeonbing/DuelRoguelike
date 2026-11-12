@@ -1591,6 +1591,8 @@ namespace DuelRoguelike.Tests
                         if (!attack && line.StartsWith("상대:") && line.Contains("공격"))
                         {
                             attack = true;
+                            // 연출: 공격하는 카드에서 대상으로 뻗는 화살이 연출 층에 있어야 한다
+                            Assert.Greater(Find<VisualElement>(DuelUi, "fx-layer")?.childCount ?? 0, 0, "상대가 공격을 선언했는데 연출(화살)이 없다");
                             yield return Shot(DuelUi, "2e-duel-attack");
                         }
                         else if (attack && line.StartsWith("데미지 계산"))
@@ -1609,6 +1611,9 @@ namespace DuelRoguelike.Tests
                     {
                         _lpSeen = true;
                         StringAssert.IsMatch("^[+−][0-9]+$", delta.text, "LP 옆 바뀐 양 표시가 이상하다");
+                        // 연출: 같은 숫자가 연출 층에 크게 떠오른다
+                        Assert.IsTrue(Find<VisualElement>(DuelUi, "fx-layer").Query<Label>().ToList().Any(l => l.text == delta.text),
+                            $"LP가 바뀌었는데 떠오르는 숫자({delta.text})가 없다");
                         Debug.Log($"[런 화면 시험] LP 변화: {delta.name} {delta.text}");
                         yield return Shot(DuelUi, "2l-lp-delta");
                     }
@@ -1618,6 +1623,10 @@ namespace DuelRoguelike.Tests
                 if (!_chainSeen && chainPanel != null && chainPanel.style.display.value == DisplayStyle.Flex && chainPanel.Q("chain-1") != null)
                 {
                     _chainSeen = true;
+                    // 체인 상자: 필드 한가운데에 뜨고, 체인에 오른 카드가 번호를 달고 들어 있다
+                    var chainBox = Find<VisualElement>(DuelUi, "chain-box");
+                    Assert.IsTrue(chainBox != null && chainBox.style.display.value == DisplayStyle.Flex, "체인이 쌓였는데 필드 한가운데의 체인 상자가 없다");
+                    Assert.IsNotNull(chainBox.Q("chain-card-1"), "체인 상자에 체인 1의 카드가 없다");
                     Debug.Log($"[런 화면 시험] 체인 목록: {string.Join(" / ", chainPanel.Query<Label>().ToList().Select(l => l.text))}");
                     yield return Shot(DuelUi, "2k-chain");
                 }
