@@ -133,6 +133,31 @@ namespace DuelRoguelike.UI
                 RewardKey(nav);
                 return;
             }
+            if (modal && LogOpen)
+            {
+                _navOn = false;
+                LogKey(nav); // 런 기록 서랍
+                return;
+            }
+            if (modal && CodexOpen)
+            {
+                _navOn = false;
+                CodexKey(nav); // 이벤트 도감
+                return;
+            }
+            if (!modal && EndKeysOpen)
+            {
+                _navOn = false;
+                EndKey(nav); // 런 종료 화면의 버튼 줄
+                return;
+            }
+            if (modal && PickOpen)
+            {
+                // 카드 고르기 창 (봉인 해제, 보충, 칩교환소의 카드 고르기)
+                _navOn = false;
+                PickKey(nav);
+                return;
+            }
             if (modal && WindowKeysOpen)
             {
                 // 제 목록이나 버튼 줄이 있는 창 (이벤트, 칩교환소, 휴식 등)

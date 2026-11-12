@@ -259,67 +259,38 @@ namespace DuelRoguelike.UI
             OpenShopPicker();
         }
 
-        /// <summary>사는 중: 1) 봉인을 풀 카드 고르기, 2) 직접 고르는 교체면 대신 봉인할 카드 고르기.</summary>
+        /// <summary>사는 중: 1) 봉인을 풀 카드 고르기, 2) 직접 고르는 교체면 대신 봉인할 카드 고르기. 카드 고르기 창의 틀을 쓴다.</summary>
         void OpenShopPicker()
         {
             var product = _shopProduct.Value;
             bool second = _shopRelease != 0;
             var pile = second ? Pile.ShopSeal : Pile.ShopRelease;
             var candidates = second ? _run.NewSealCandidates(product, _shopRelease) : _run.ReleaseCandidates(product);
-
-            var panel = OpenModal(1500);
-            panel.name = "shop-pick";
-            panel.style.height = Length.Percent(88);
-            panel.Add(UiStyle.Label($"{ChipExchange.Name(product)} · 칩 {RunRules.ShopPrice(product)}", 28, UiStyle.Accent, bold: true));
             string rarity = ChipExchange.SameRarity(product) ? "같은 레어도의 " : "";
-            string step = product == ShopProduct.Unseal
-                ? "봉인을 풀 카드를 고르세요. 풀린 카드는 사이드 덱으로 갑니다."
+            string intro = product == ShopProduct.Unseal
+                ? "봉인을 풀 카드 1장을 고른다. 풀린 카드는 사이드 덱으로 간다."
                 : second
-                    ? $"「{_text.CardName(_shopRelease)}」 대신 봉인할 카드를 고르세요 (같은 덱의 {rarity}카드)."
-                    : "봉인을 풀 카드를 고르세요. 풀린 카드는 사이드 덱으로 갑니다. " +
+                    ? $"「{_text.CardName(_shopRelease)}」 대신 봉인할 카드를 고른다. 같은 덱의 {rarity}카드만 나온다."
+                    : "봉인을 풀 카드 1장을 고른다. 풀린 카드는 사이드 덱으로 간다. " +
                       (ChipExchange.ChoosesNewSeal(product)
-                          ? "다음에 대신 봉인할 카드를 고릅니다."
-                          : $"대신 봉인할 카드는 같은 덱의 {rarity}카드 중에서 무작위로 정해집니다.");
-            var intro = Text(step + " 두 번 누르면 바로 고릅니다.", 16, UiStyle.TextDim, top: 6);
-            intro.style.whiteSpace = WhiteSpace.Normal;
-            panel.Add(intro);
-
-            var body = Row();
-            body.style.flexGrow = 1;
-            body.style.marginTop = 12;
-            var scroll = new ScrollView(ScrollViewMode.Vertical);
-            scroll.style.flexGrow = 1;
-            var grid = Grid(scroll.contentContainer);
-            foreach (uint candidate in Sorted(candidates))
-            {
-                uint code = candidate;
-                grid.Add(CardSlot(pile, code, CardFaceSize.Medium, onDoubleClick: () => PickShopCard(pile, code), draggable: false));
-            }
-            body.Add(scroll);
-            var detail = UiStyle.PanelBox("shop-detail");
-            detail.style.width = 380;
-            detail.style.marginLeft = 12;
-            detail.style.backgroundColor = UiStyle.PanelLight;
-            body.Add(detail);
-            panel.Add(body);
-
-            var buttons = Row();
-            buttons.style.marginTop = 12;
-            buttons.style.justifyContent = Justify.FlexEnd;
-            var back = UiStyle.Button("뒤로", () =>
+                          ? "이어서 대신 봉인할 카드를 고른다."
+                          : $"대신 봉인할 카드는 같은 덱의 {rarity}카드 중에서 무작위로 정해진다.");
+            string backText = second ? "뒤로" : "그만둔다";
+            var back = KeyButton("shop-back", backText, () =>
             {
                 if (_shopRelease != 0)
                     _shopRelease = 0;
                 else
                     _shopProduct = null;
                 OpenShop();
-            }, 20);
-            back.name = "shop-back";
-            buttons.Add(back);
-            panel.Add(buttons);
-
-            _detail = detail;
-            _renderDetail = RenderShopDetail;
+            }, "X", "K", second ? 112 : 150);
+            var grid = OpenCardPick("shop-pick", product == ShopProduct.Unseal ? "봉인 해제" : second ? "대신 봉인할 카드" : "봉인 대상 교체",
+                $"칩 {RunRules.ShopPrice(product)} · " + intro, null, "shop-detail", RenderShopDetail, back, backText);
+            foreach (uint candidate in Sorted(candidates))
+            {
+                uint code = candidate;
+                grid.Add(PickSlot(pile, code, () => PickShopCard(pile, code)));
+            }
             ShowDetail(_selectedPile, _selectedCode, pinned: true);
         }
 
@@ -331,21 +302,15 @@ namespace DuelRoguelike.UI
             bool second = _shopRelease != 0;
             if (code == 0 || pile != (second ? Pile.ShopSeal : Pile.ShopRelease))
             {
-                panel.Add(Text("왼쪽에서 카드를 고르세요.", 17, UiStyle.TextDim));
+                AddPickEmpty(panel, "왼쪽에서 카드를 고른다.");
                 return;
             }
-            AddCardDetail(panel, code, pinned);
-            if (_rarities.TryGet(code, out var rarity))
-                panel.Add(Text($"레어도 {rarity}", 14, UiStyle.TextDim, top: 6));
-            if (!pinned)
-                return;
-            string text = second ? "이 카드를 대신 봉인하고 사기"
-                : product != ShopProduct.Unseal && ChipExchange.ChoosesNewSeal(product) ? "이 카드를 풀기 (다음: 대신 봉인할 카드)"
-                : "이 카드의 봉인을 풀고 사기";
-            var confirm = UiStyle.Button(text, () => PickShopCard(pile, code), 18);
-            confirm.name = "shop-confirm";
-            confirm.style.marginTop = 10;
-            panel.Add(confirm);
+            // 값을 치르는 단계의 버튼에 값을 쓴다
+            string price = $" · 칩 {RunRules.ShopPrice(product)}";
+            string text = second ? "대신 봉인한다" + price
+                : product != ShopProduct.Unseal && ChipExchange.ChoosesNewSeal(product) ? "이 카드의 봉인을 푼다"
+                : "봉인을 푼다" + price;
+            AddPickDetail(panel, code, _rarities.TryGet(code, out var grade) ? $"레어도 {grade}" : null, "shop-confirm", text, () => PickShopCard(pile, code), pinned);
         }
 
         void PickShopCard(Pile pile, uint code)
@@ -696,37 +661,16 @@ namespace DuelRoguelike.UI
 
         // ================= 보스 보상: 봉인 해제 =================
 
+        /// <summary>보스 보상: 봉인된 카드 1장을 골라 푼다. 카드 고르기 창의 틀을 쓴다. 닫을 수 없다.</summary>
         void OpenUnseal()
         {
-            var panel = OpenModal(1500);
-            panel.name = "unseal";
-            panel.style.height = Length.Percent(88);
-            panel.Add(UiStyle.Label($"보스 보상 · {_run.Floor}층", 30, UiStyle.Accent, bold: true));
-            var intro = Text("보스를 이겼습니다. 봉인된 카드 1장을 골라 봉인을 풉니다. 풀린 카드는 사이드 덱으로 갑니다. 두 번 누르면 바로 고릅니다.",
-                16, UiStyle.TextDim, top: 6);
-            intro.style.whiteSpace = WhiteSpace.Normal;
-            panel.Add(intro);
-            var body = Row();
-            body.style.flexGrow = 1;
-            body.style.marginTop = 12;
-            var scroll = new ScrollView(ScrollViewMode.Vertical);
-            scroll.style.flexGrow = 1;
-            var grid = Grid(scroll.contentContainer);
+            var grid = OpenCardPick("unseal", "보스 보상", "봉인된 카드 1장을 골라 봉인을 푼다. 풀린 카드는 사이드 덱으로 간다.",
+                null, "unseal-detail", RenderUnsealDetail);
             foreach (uint candidate in Sorted(_run.SealedCards()))
             {
                 uint code = candidate;
-                grid.Add(CardSlot(Pile.Unseal, code, CardFaceSize.Medium, onDoubleClick: () => ConfirmUnseal(code), draggable: false));
+                grid.Add(PickSlot(Pile.Unseal, code, () => ConfirmUnseal(code)));
             }
-            body.Add(scroll);
-            var detail = UiStyle.PanelBox("unseal-detail");
-            detail.style.width = 380;
-            detail.style.marginLeft = 12;
-            detail.style.backgroundColor = UiStyle.PanelLight;
-            body.Add(detail);
-            panel.Add(body);
-
-            _detail = detail;
-            _renderDetail = RenderUnsealDetail;
             ShowDetail(_selectedPile, _selectedCode, pinned: true);
         }
 
@@ -734,16 +678,10 @@ namespace DuelRoguelike.UI
         {
             if (code == 0 || pile != Pile.Unseal)
             {
-                panel.Add(Text("왼쪽에서 봉인을 풀 카드를 고르세요.", 17, UiStyle.TextDim));
+                AddPickEmpty(panel, "왼쪽에서 봉인을 풀 카드를 고른다.");
                 return;
             }
-            AddCardDetail(panel, code, pinned);
-            if (!pinned)
-                return;
-            var confirm = UiStyle.Button("이 카드의 봉인 풀기", () => ConfirmUnseal(code), 20);
-            confirm.name = "unseal-confirm";
-            confirm.style.marginTop = 10;
-            panel.Add(confirm);
+            AddPickDetail(panel, code, _rarities.TryGet(code, out var grade) ? $"레어도 {grade}" : null, "unseal-confirm", "이 카드의 봉인을 푼다", () => ConfirmUnseal(code), pinned);
         }
 
         void ConfirmUnseal(uint code)

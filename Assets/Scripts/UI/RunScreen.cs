@@ -393,91 +393,126 @@ namespace DuelRoguelike.UI
 
         // ================= 런 종료 =================
 
+        /// <summary>런 종료 화면의 버튼 줄 (좌우로 고른다).</summary>
+        ButtonRow _endRow;
+
+        bool EndKeysOpen => _endRow != null && _endRow.Root.panel != null;
+
+        /// <summary>
+        /// 런 종료 화면: 도달한 층 높이의 탑 장면을 어둡게 덮고, 가운데에 제목과 끝난 까닭, 숫자 판 다섯 개, 얻은 카드, 골드 정산, 버튼.
+        /// 런 로그는 이 화면에 두지 않고 "런 기록"으로 연다.
+        /// </summary>
         void ShowEnd()
         {
             StopClimb();
             BeginScreen();
-            var panel = CenterPanel(1600);
-            panel.name = "run-end";
-            panel.style.height = Length.Percent(94);
-            panel.Add(UiStyle.Label("런 종료", 40, UiStyle.Accent, bold: true));
+            var stage = NewStage("run-end");
+            stage.Add(new TowerScene { Marker = Mathf.Max(1, _run.Floor), Opponent = 0 });
+            var dim = new VisualElement();
+            dim.pickingMode = PickingMode.Ignore;
+            UiStyle.Place(dim, 0, 0, StageWidth, StageHeight);
+            dim.style.backgroundColor = new Color(0.04f, 0.03f, 0.024f, 0.74f);
+            stage.Add(dim);
+            var column = UiStyle.Box("run-end-body");
+            UiStyle.Place(column, 0, 0, StageWidth, StageHeight);
+            column.style.alignItems = Align.Center;
+            column.style.paddingTop = 66;
+            stage.Add(column);
+
+            column.Add(WindowTitle("런 종료", 64));
             string reason = _run.EndReason == RunEndReason.DeckBelowMinimum
-                ? $"패배로 메인 덱이 {RunRules.MinMainDeck}장보다 적어졌는데, 사이드 덱에서 채울 카드가 모자라 런이 끝났습니다."
-                : _run.EndReason == RunEndReason.Abandoned ? "런을 포기했습니다."
-                : "런이 끝났습니다.";
-            panel.Add(Text(reason, 17, top: 6));
-            panel.Add(Text($"시작 덱 {_run.StartDeckName} · 시드 {_run.Seed}", 14, UiStyle.TextDim, top: 2));
+                ? $"메인 덱이 {RunRules.MinMainDeck}장보다 적어졌는데 사이드 덱에서 채울 카드가 모자랐다."
+                : _run.EndReason == RunEndReason.Abandoned ? "런을 포기했다."
+                : "런이 끝났다.";
+            column.Add(Text(reason, 24, top: 2));
+            column.Add(Text($"{_run.StartDeckName} · 시드 {_run.Seed}", 19, UiStyle.TextDim));
 
             var rewards = _run.Events.Where(e => e.Kind == RunEventKind.RewardGained).ToList();
             var stats = Row();
-            stats.style.marginTop = 14;
-            stats.Add(Stat("도달한 층", $"{_run.Floor}층"));
-            stats.Add(Stat("끝낸 듀얼", $"{_run.DuelsPlayed}판"));
-            stats.Add(Stat("전적", $"{_run.Wins}승 {_run.Losses}패" + (_run.Draws > 0 ? $" {_run.Draws}무" : "")));
-            stats.Add(Stat("얻은 카드", $"{rewards.Count}장"));
-            stats.Add(Stat($"얻은 골드 (정산 {_run.SettlementGold} 포함)", $"{_run.Gold + _run.SettlementGold}"));
-            stats.Add(Stat($"남은 칩 (얻은 칩 {_run.ChipsEarned})", $"{_run.Chips}"));
-            stats.Add(Stat("봉인 (메인 + 엑스트라)", $"{_run.SealedMain.Count} + {_run.SealedExtra.Count}"));
-            panel.Add(stats);
+            stats.style.marginTop = 24;
+            stats.Add(EndStat("도달한 층", $"{_run.Floor}층", UiStyle.Gold));
+            stats.Add(EndStat("전적", $"{_run.Wins}승 {_run.Losses}패" + (_run.Draws > 0 ? $" {_run.Draws}무" : ""), UiStyle.Text));
+            stats.Add(EndStat("얻은 카드", $"{rewards.Count}장", UiStyle.Text));
+            stats.Add(EndStat("봉인된 카드", $"{_run.SealedMain.Count + _run.SealedExtra.Count}장", UiStyle.Text));
+            stats.Add(EndStat("골드", $"+{_run.Gold + _run.SettlementGold}", UiStyle.Good));
+            column.Add(stats);
 
-            var body = Row();
-            body.style.flexGrow = 1;
-            body.style.marginTop = 14;
-            var left = UiStyle.PanelBox();
-            left.style.flexGrow = 1;
-            left.style.marginRight = 12;
-            left.style.backgroundColor = UiStyle.PanelLight;
-            left.Add(UiStyle.Label("얻은 카드 (컬렉션에 더해짐)", 18, UiStyle.TextDim, bold: true));
-            var list = new ScrollView(ScrollViewMode.Vertical);
-            list.style.flexGrow = 1;
-            list.style.marginTop = 8;
-            var grid = Grid(list.contentContainer);
-            if (rewards.Count == 0)
-                list.Add(Text("없음", 15, UiStyle.TextDim));
-            foreach (var e in rewards)
+            column.Add(Text(rewards.Count > 0 ? "얻은 카드 · 컬렉션에 더해졌다" : "얻은 카드 없음", 19, UiStyle.TextDim, top: 24));
+            if (rewards.Count > 0)
             {
-                var face = _faces.Build(e.Code, CardFaceSize.Medium, tag: $"{e.Floor}층");
-                UiStyle.Margin(face, 6);
-                grid.Add(face);
+                // 한 줄에 14장, 두 줄까지. 더 많으면 두 줄에 다 들어가게 카드를 줄인다.
+                const float rowWidth = 1640, gap = 10;
+                int columns = rewards.Count <= 28 ? Mathf.Min(rewards.Count, 14) : (rewards.Count + 1) / 2;
+                float cardWidth = Mathf.Min(108f, Mathf.Floor((rowWidth - gap * (columns - 1)) / columns));
+                var grid = Grid();
+                grid.name = "run-end-cards";
+                grid.style.justifyContent = Justify.Center;
+                grid.style.width = columns * (cardWidth + gap);
+                grid.style.marginTop = 8;
+                foreach (var e in rewards)
+                {
+                    var face = _faces.Build(e.Code, cardWidth, tag: $"{e.Floor}층");
+                    face.style.marginLeft = face.style.marginRight = gap / 2;
+                    face.style.marginBottom = gap;
+                    grid.Add(face);
+                }
+                column.Add(grid);
             }
-            left.Add(list);
+
             int floorBonus = RunRules.SettlementFloorBonus(_run.Floor);
             var settlement = Text($"골드 정산 {_run.SettlementGold} = 도달 {_run.Floor}층 + 10층 보너스 {floorBonus} + 얻은 칩 {_run.ChipsEarned}÷{RunRules.SettlementEarnedChipsDivisor} " +
-                                  $"+ 남은 칩 {_run.Chips}÷{RunRules.SettlementHeldChipsDivisor}. 이번 런의 골드 {_run.Gold} (보상 빈 자리·등급 대체)와 정산을 더해 " +
-                                  $"골드 누적 {_save.Gold}. 골드를 쓰는 곳은 아직 없습니다.", 14, UiStyle.TextDim, top: 6);
+                                  $"+ 남은 칩 {_run.Chips}÷{RunRules.SettlementHeldChipsDivisor} · 이번 런에서 얻은 골드 {_run.Gold} · 골드 누적 {_save.Gold}", 19, UiStyle.TextDim, top: 12);
             settlement.name = "run-settlement";
             settlement.style.whiteSpace = WhiteSpace.Normal;
-            left.Add(settlement);
-            body.Add(left);
+            settlement.style.unityTextAlign = TextAnchor.MiddleCenter;
+            settlement.style.maxWidth = 1640;
+            column.Add(settlement);
 
-            var right = UiStyle.PanelBox();
-            right.style.width = 620;
-            right.style.backgroundColor = UiStyle.PanelLight;
-            right.Add(UiStyle.Label("런 로그", 18, UiStyle.TextDim, bold: true));
-            right.Add(EventLog());
-            body.Add(right);
-            panel.Add(body);
-
-            var again = UiStyle.Button("새 런", GoToStart, 22);
-            again.name = "new-run";
-            again.style.marginTop = 14;
-            again.style.alignSelf = Align.FlexStart;
-            again.style.paddingLeft = again.style.paddingRight = 28;
-            panel.Add(again);
+            var buttons = new ButtonRow();
+            buttons.Root.style.marginTop = 24;
+            buttons.Add("new-run", "새 런", GoToStart, gold: true, width: 300);
+            buttons.Add("end-log", "런 기록", OpenLog, width: 260);
+            buttons.Select(0);
+            _endRow = buttons;
+            column.Add(buttons.Root);
+            var hints = Hints(("←", "A", null), ("→", "D", "고르기"), ("Z", "J", "결정"));
+            hints.style.marginTop = 14;
+            column.Add(hints);
+            ApplyKeyCaps();
             Debug.Log($"[런] 종료: {_run.Floor}층, 듀얼 {_run.DuelsPlayed}판, {_run.Wins}승 {_run.Losses}패 {_run.Draws}무, 얻은 카드 {rewards.Count}장");
         }
 
-        static VisualElement Stat(string label, string value)
+        /// <summary>런 종료 화면의 숫자 판 하나.</summary>
+        static VisualElement EndStat(string label, string value, Color color)
         {
-            var box = UiStyle.Box();
-            box.style.backgroundColor = UiStyle.PanelLight;
-            UiStyle.Radius(box, 6);
-            UiStyle.Padding(box, 12);
-            box.style.marginRight = 10;
-            box.style.minWidth = 200;
-            box.Add(UiStyle.Label(label, 14, UiStyle.TextDim));
-            box.Add(UiStyle.Label(value, 26, bold: true));
+            var box = new VisualElement();
+            UiStyle.Slab(box);
+            box.style.width = 250;
+            box.style.height = 120;
+            box.style.marginLeft = box.style.marginRight = 7;
+            box.style.alignItems = Align.Center;
+            box.style.justifyContent = Justify.Center;
+            box.Add(UiStyle.Label(label, 18, UiStyle.TextDim));
+            var number = UiStyle.Label(value, 44, color);
+            UiStyle.Black(number);
+            box.Add(number);
             return box;
+        }
+
+        void EndKey(Nav nav)
+        {
+            switch (nav)
+            {
+                case Nav.Left:
+                    _endRow.Move(-1);
+                    break;
+                case Nav.Right:
+                    _endRow.Move(1);
+                    break;
+                case Nav.Confirm:
+                    _endRow.Activate();
+                    break;
+            }
         }
 
         // ================= 런 로그 =================
@@ -490,7 +525,8 @@ namespace DuelRoguelike.UI
             foreach (var e in _run.Events)
             {
                 bool head = e.Kind == RunEventKind.DuelStarted || e.Kind == RunEventKind.RunStarted || e.Kind == RunEventKind.FloorEntered;
-                var line = Text((head ? "" : "    ") + e.Describe(_text.CardName), 15, EventColor(e.Kind), top: head ? 6 : 1);
+                var line = Text((head ? "" : "    ") + e.Describe(_text.CardName), 19, EventColor(e.Kind), top: head ? 8 : 1);
+                line.style.whiteSpace = WhiteSpace.Normal;
                 log.Add(line);
             }
             // 최근 일이 보이도록 맨 아래로. 배치가 정해지거나 화면 크기가 바뀔 때마다 다시 내린다.

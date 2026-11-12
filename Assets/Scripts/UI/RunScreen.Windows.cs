@@ -52,6 +52,44 @@ namespace DuelRoguelike.UI
             panel.style.scale = new Scale(new Vector3(scale, scale, 1f));
         }
 
+        /// <summary>
+        /// 화면 전체를 쓰는 1920×1080 무대를 새로 만든다 (런 종료, 처음 화면). 허브의 무대와 같은 방식으로 화면에 맞춘다.
+        /// </summary>
+        VisualElement NewStage(string name)
+        {
+            _stage = new VisualElement { name = name };
+            UiStyle.Place(_stage, 0, 0, StageWidth, StageHeight);
+            _stage.style.overflow = Overflow.Hidden;
+            _stage.style.transformOrigin = new TransformOrigin(Length.Percent(0), Length.Percent(0));
+            _root.Add(_stage);
+            if (!_stageFitHooked)
+            {
+                _stageFitHooked = true;
+                _root.RegisterCallback<GeometryChangedEvent>(_ => FitStage());
+            }
+            FitStage();
+            return _stage;
+        }
+
+        /// <summary>
+        /// 창 층에 무대와 같은 자리·배율의 1920×1080 판을 깔고 돌려준다 (서랍처럼 화면의 정해진 자리에 붙는 창).
+        /// </summary>
+        VisualElement OpenStageLayer(string name, float dim)
+        {
+            var layer = OpenPlain(name, dim);
+            UiStyle.Place(layer, 0, 0, StageWidth, StageHeight);
+            layer.style.transformOrigin = new TransformOrigin(Length.Percent(0), Length.Percent(0));
+            float w = _root.layout.width, h = _root.layout.height;
+            if (!float.IsNaN(w) && !float.IsNaN(h) && w > 0 && h > 0)
+            {
+                float scale = Mathf.Min(w / StageWidth, h / StageHeight);
+                layer.style.scale = new Scale(new Vector3(scale, scale, 1f));
+                layer.style.left = (w - StageWidth * scale) / 2;
+                layer.style.top = (h - StageHeight * scale) / 2;
+            }
+            return layer;
+        }
+
         /// <summary>창의 제목: "[ 제목. ]".</summary>
         static Label WindowTitle(string text, int size = 38)
         {

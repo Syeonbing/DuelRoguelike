@@ -1042,21 +1042,55 @@ namespace DuelRoguelike.UI
             return string.Join(" · ", events);
         }
 
+        /// <summary>런 기록 서랍 안의 스크롤 (키보드로 위아래로 넘긴다).</summary>
+        ScrollView _logScroll;
+
+        bool LogOpen => _logScroll != null && _logScroll.panel != null && _modalLayer.style.display != DisplayStyle.None;
+
+        /// <summary>
+        /// 런 기록: 듀얼의 로그 서랍과 같은 자리와 폭의 서랍(x 1280, 폭 640, 위 막대 아래부터 바닥까지)이 오른쪽에 뜬다.
+        /// 위아래 키로 넘기고 취소·결정 키로 닫는다.
+        /// </summary>
         void OpenLog()
         {
-            var panel = OpenModal(1100);
-            panel.name = "run-log";
-            panel.style.height = Length.Percent(86);
-            var head = Row();
-            head.style.justifyContent = Justify.SpaceBetween;
-            head.style.alignItems = Align.Center;
-            head.Add(UiStyle.Label("런 로그", 26, UiStyle.Accent, bold: true));
-            var close = UiStyle.Button("닫기", CloseModal, 18);
-            close.name = "close-log";
-            head.Add(close);
-            panel.Add(head);
-            panel.Add(Text($"시작 덱 {_run.StartDeckName} · 시드 {_run.Seed}", 15, UiStyle.TextDim, top: 2));
-            panel.Add(EventLog());
+            var layer = OpenStageLayer("run-log", 0.35f);
+            var drawer = new VisualElement { name = "run-log-drawer" };
+            UiStyle.Slab(drawer);
+            UiStyle.Place(drawer, 1280, TopBarHeight + 3, 640, StageHeight - TopBarHeight - 3);
+            drawer.style.paddingLeft = drawer.style.paddingRight = 24;
+            drawer.style.paddingTop = 20;
+            drawer.style.paddingBottom = 18;
+            layer.Add(drawer);
+            var title = UiStyle.Label("런 기록", 30, UiStyle.Gold);
+            UiStyle.Black(title);
+            drawer.Add(title);
+            drawer.Add(Text($"{_run.StartDeckName} · 시드 {_run.Seed}", 19, UiStyle.TextDim));
+            _logScroll = EventLog();
+            _logScroll.style.marginTop = 12;
+            _logScroll.style.marginBottom = 12;
+            drawer.Add(_logScroll);
+            var close = KeyButton("close-log", "런 기록 닫기", CloseModal, "X", "K", 586);
+            close.style.unityTextAlign = TextAnchor.MiddleCenter;
+            close.style.flexShrink = 0;
+            drawer.Add(close);
+            ApplyKeyCaps();
+        }
+
+        void LogKey(Nav nav)
+        {
+            switch (nav)
+            {
+                case Nav.Up:
+                    _logScroll.scrollOffset = new Vector2(0, Mathf.Max(0, _logScroll.scrollOffset.y - 120));
+                    break;
+                case Nav.Down:
+                    _logScroll.scrollOffset = new Vector2(0, _logScroll.scrollOffset.y + 120);
+                    break;
+                case Nav.Confirm:
+                case Nav.Cancel:
+                    CloseModal();
+                    break;
+            }
         }
 
         /// <summary>
@@ -1202,50 +1236,26 @@ namespace DuelRoguelike.UI
 
         // ================= 보충 고르기 =================
 
+        /// <summary>보충: 메인 덱이 모자라면 사이드 덱에서 한 장씩 골라 넣는다. 카드 고르기 창의 틀을 쓴다. 닫을 수 없다.</summary>
         void OpenRefill()
         {
             var candidates = _run.RefillCandidates();
             if (!candidates.Contains(_refillSelected))
                 _refillSelected = 0;
-            var panel = OpenModal(1500);
-            panel.name = "refill";
-            panel.style.height = Length.Percent(88);
-            panel.Add(UiStyle.Label($"보충: 메인 덱 {_run.MainDeck.Count}장 → {RunRules.MinMainDeck}장", 28, UiStyle.Accent, bold: true));
-            panel.Add(Text($"메인 덱이 {RunRules.MinMainDeck}장보다 적어졌습니다. 사이드 덱에서 메인 덱 카드 {_run.RefillNeeded}장을 더 골라 넣으세요. " +
-                           $"두 번 누르면 바로 넣습니다. 같은 카드명은 덱에 {RunRules.MaxCopies}장까지 넣을 수 있고, 다 채우면 이 창이 닫힙니다.",
-                16, UiStyle.TextDim, top: 6));
             var sealedNames = _run.Events.Where(e => e.DuelNumber == _run.DuelsPlayed && e.Kind == RunEventKind.CardSealed)
                 .Select(e => _text.CardName(e.Code)).ToList();
-            if (sealedNames.Count > 0)
-                panel.Add(Text("이번 패배로 봉인된 카드: " + string.Join(", ", sealedNames), 15, UiStyle.Opponent, top: 6));
-
-            var body = Row();
-            body.style.flexGrow = 1;
-            body.style.marginTop = 12;
-            var scroll = new ScrollView(ScrollViewMode.Vertical);
-            scroll.style.flexGrow = 1;
-            var grid = Grid(scroll.contentContainer);
+            var grid = OpenCardPick("refill", "보충",
+                $"메인 덱이 {_run.MainDeck.Count}장이라 {RunRules.MinMainDeck}장에 모자란다. 사이드 덱에서 {_run.RefillNeeded}장을 더 골라 메인 덱에 넣는다. 다 채우면 이 창이 닫힌다.",
+                sealedNames.Count > 0 ? "이번 패배로 봉인된 카드: " + string.Join(", ", sealedNames) : null, "refill-detail", RenderRefillDetail);
             foreach (uint candidate in Sorted(candidates))
             {
                 uint code = candidate;
-                grid.Add(CardSlot(Pile.Refill, code, CardFaceSize.Medium, count: _run.SideDeck.Count(c => c == code),
-                    onDoubleClick: () =>
-                    {
-                        _refillSelected = code;
-                        ConfirmRefill();
-                    }, draggable: false));
+                grid.Add(PickSlot(Pile.Refill, code, () =>
+                {
+                    _refillSelected = code;
+                    ConfirmRefill();
+                }, count: _run.SideDeck.Count(c => c == code)));
             }
-            body.Add(scroll);
-
-            var detail = UiStyle.PanelBox("refill-detail");
-            detail.style.width = 380;
-            detail.style.marginLeft = 12;
-            detail.style.backgroundColor = UiStyle.PanelLight;
-            body.Add(detail);
-            panel.Add(body);
-
-            _detail = detail;
-            _renderDetail = RenderRefillDetail;
             ShowDetail(Pile.Refill, _refillSelected, pinned: true);
         }
 
@@ -1253,17 +1263,11 @@ namespace DuelRoguelike.UI
         {
             if (code == 0)
             {
-                panel.Add(Text("왼쪽에서 넣을 카드를 고르세요.", 17, UiStyle.TextDim));
+                AddPickEmpty(panel, "왼쪽에서 메인 덱에 넣을 카드를 고른다.");
                 return;
             }
-            AddCardDetail(panel, code, pinned);
-            panel.Add(Text($"사이드 덱 {_run.SideDeck.Count(c => c == code)}장 · 덱 {_run.DeckCopies(code)}장", 14, UiStyle.TextDim, top: 6));
-            if (!pinned)
-                return;
-            var confirm = UiStyle.Button("메인 덱에 넣기", ConfirmRefill, 20);
-            confirm.name = "refill-confirm";
-            confirm.style.marginTop = 10;
-            panel.Add(confirm);
+            AddPickDetail(panel, code, $"사이드 덱 {_run.SideDeck.Count(c => c == code)}장 · 덱 {_run.DeckCopies(code)}장 · 같은 카드명은 덱에 {RunRules.MaxCopies}장까지",
+                "refill-confirm", "메인 덱에 넣는다", ConfirmRefill, pinned);
         }
 
         void ConfirmRefill()
