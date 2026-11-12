@@ -1014,8 +1014,13 @@ namespace DuelRoguelike.Tests
             if (_coinWins + _coinLosses == 0)
             {
                 yield return Shot(RunUi, "2a-coin-toss");
-                Click(Find<Button>(RunUi, "coin-close"));
-                yield return null;
+                // 창의 공통 키보드: 첫 키는 금색 테를 켜고, 취소 키는 "나중에"를 누른다 (듀얼 창으로 돌아간다)
+                var keyRing = Find<VisualElement>(RunUi, "run-key-ring");
+                Assert.IsTrue(keyRing != null && keyRing.style.display.value == DisplayStyle.None, "키를 누르기 전인데 금색 테가 보인다");
+                Assert.IsNotNull(Find<VisualElement>(RunUi, "modal-hints"), "창 아래에 키 도움말이 없다");
+                yield return Tap(UnityEngine.InputSystem.Key.DownArrow);
+                Assert.AreEqual(DisplayStyle.Flex, keyRing.style.display.value, "코인 토스 창에서 이동 키를 눌렀는데 금색 테가 켜지지 않았다");
+                yield return Tap(UnityEngine.InputSystem.Key.X);
                 Assert.IsNull(Find<VisualElement>(RunUi, "coin-toss"), "코인 토스 창이 닫히지 않았다");
                 Assert.IsNotNull(Find<Button>(RunUi, "next-duel"), "코인 토스 창을 닫았는데 듀얼 시작 버튼이 없다");
                 Click(Find<Button>(RunUi, "next-duel"));
@@ -1203,16 +1208,35 @@ namespace DuelRoguelike.Tests
                 Click(confirm);
                 how = "빈 자리(골드) 누르고 받기";
             }
-            else if (_rewards % 2 == 0)
+            else if (_rewards % 3 == 0)
             {
                 Click(Find<VisualElement>(RunUi, cards[0]));
                 yield return null;
                 confirm = Find<Button>(RunUi, "reward-confirm");
                 Assert.IsTrue(confirm.enabledSelf, "후보를 골랐는데 받기 버튼이 꺼져 있다");
                 StringAssert.EndsWith("받기", confirm.text, "후보를 골랐는데 받기 버튼 글이 이상하다");
+                yield return null;
+                // 고른 후보는 올라오고 (22) 상세 카드로 보인다
+                var chosen = Find<VisualElement>(RunUi, cards[0]);
+                Assert.Less(chosen.resolvedStyle.translate.y, -10f, "고른 후보가 올라오지 않았다");
+                Assert.IsNotNull(chosen.Q("card-detail-face"), "보상 후보가 상세 카드로 보이지 않는다");
                 yield return Shot(RunUi, "10-reward");
                 Click(confirm);
                 how = "카드 누르고 받기";
+            }
+            else if (_rewards % 3 == 2)
+            {
+                // 키보드: 좌우로 후보를 고르고 결정 키로 받는다
+                yield return Tap(UnityEngine.InputSystem.Key.D);
+                confirm = Find<Button>(RunUi, "reward-confirm");
+                Assert.IsTrue(confirm != null && confirm.enabledSelf, "D를 눌렀는데 후보가 골라지지 않았다");
+                string first = confirm.text;
+                yield return Tap(UnityEngine.InputSystem.Key.D);
+                if (cards.Count + golds.Count > 1)
+                    Assert.AreNotEqual(first, Find<Button>(RunUi, "reward-confirm")?.text, "D를 한 번 더 눌렀는데 다음 후보로 가지 않았다");
+                gold = Find<Button>(RunUi, "reward-confirm").text.StartsWith("골드");
+                yield return Tap(UnityEngine.InputSystem.Key.J);
+                how = "키보드로 고르고 받기";
             }
             else
             {

@@ -118,6 +118,7 @@ namespace DuelRoguelike.UI
             _modalLayer.style.alignItems = Align.Center;
             _modalLayer.style.display = DisplayStyle.None;
             _docRoot.Add(_modalLayer);
+            BuildKeyLayer();
 
             try
             {
@@ -698,13 +699,40 @@ namespace DuelRoguelike.UI
         {
             _modalLayer.Clear();
             _modalLayer.style.display = DisplayStyle.Flex;
+            _modalLayer.style.backgroundColor = new Color(0, 0, 0, 0.55f);
             var panel = UiStyle.PanelBox();
             panel.style.width = width;
             panel.style.maxWidth = Length.Percent(96);
             UiStyle.Padding(panel, 20);
             UiStyle.BorderColor(panel, UiStyle.Accent, 2);
             _modalLayer.Add(panel);
+            // 창 아래쪽 가운데에 키 도움말 (창마다 따로 넣지 않는다)
+            var hints = Hints(("← ↑ ↓ →", "W A S D", "고르기"), ("Z", "J", "결정"), ("X", "K", "닫기"));
+            hints.name = "modal-hints";
+            hints.pickingMode = PickingMode.Ignore;
+            hints.style.position = Position.Absolute;
+            hints.style.bottom = 10;
+            hints.style.alignSelf = Align.Center;
+            hints.style.paddingLeft = 12;
+            hints.style.paddingTop = hints.style.paddingBottom = 4;
+            hints.style.backgroundColor = UiStyle.Alpha(UiStyle.Stone9, 0.7f);
+            UiStyle.Radius(hints, 6);
+            _modalLayer.Add(hints);
+            ApplyKeyCaps();
             return panel;
+        }
+
+        /// <summary>
+        /// 창틀 없이 화면을 어둡게 덮고 그 위에 내용을 놓는다 (보상 고르기). 돌려준 상자에 내용을 넣는다.
+        /// </summary>
+        VisualElement OpenPlain(string name, float dim)
+        {
+            _modalLayer.Clear();
+            _modalLayer.style.display = DisplayStyle.Flex;
+            _modalLayer.style.backgroundColor = new Color(0, 0, 0, dim);
+            var box = UiStyle.Box(name);
+            _modalLayer.Add(box);
+            return box;
         }
 
         void CloseModal()

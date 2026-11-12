@@ -932,6 +932,7 @@ namespace DuelRoguelike.UI
             _eventShownFloor = _run.Floor;
             var panel = OpenModal(800);
             panel.name = "duel-window";
+            _modalLayer.Q("modal-hints")?.RemoveFromHierarchy(); // 이 창은 제 키 도움말이 따로 있다
             panel.style.alignItems = Align.Center;
             panel.style.paddingLeft = panel.style.paddingRight = 30;
             panel.style.paddingTop = panel.style.paddingBottom = 26;
