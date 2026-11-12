@@ -20,7 +20,7 @@
 // 설정 창: 처음 화면의 "설정"에서 효과음·배경음 음량을 버튼과 키로 바꿔 보고 처음 값으로 되돌린다 (음량은 PlayerPrefs에 남는다).
 // 오류 로그(Debug.LogError·LogException)가 하나라도 나오면 실패한다.
 // 환경 변수 DUELROGUELIKE_SCREENSHOT_DIR에 폴더를 주면 화면마다 처음 한 번 1920×1080 PNG로 저장한다 (화면 모양 확인용).
-// DUELROGUELIKE_SCREEN_THOROUGH=1이면 한 단계씩 보여 주기를 더 오래(더 많은 듀얼에서) 지켜보며 가끔만 생기는 장면(체인 2 이상, 상대 체인, 선택 창)도 기다린다.
+// DUELROGUELIKE_SCREEN_THOROUGH=1이면 한 단계씩 보여 주기를 더 오래(더 많은 듀얼에서) 지켜보며 가끔만 생기는 장면(체인 2 이상, 상대 체인, 선택 창, 내 체인 확인에서 우클릭)도 기다린다.
 //
 // 실행: 에디터의 Test Runner 창(Window > General > Test Runner) PlayMode 탭, 또는 에디터를 닫고 배치 모드로
 //   & "C:\Program Files\Unity\Hub\Editor\6000.3.28f1\Editor\Unity.exe" -batchmode -projectPath C:\Dev\DuelRoguelike -runTests -testPlatform PlayMode -testResults C:\Dev\playmode-results.xml -logFile C:\Dev\playmode.log
@@ -74,6 +74,11 @@ namespace DuelRoguelike.Tests
         bool _speedSeen;
         bool _lpSeen;
         bool _duelMusicSeen, _towerMusicSeen;
+        bool _rightClickSeen;
+        string _chainModeOriginal;
+        /// <summary>체인 확인 방식은 PlayerPrefs에 남는다. 시험이 바꾼 것을 끝나면 되돌린다.</summary>
+        const string ChainPromptPrefKey = "duel.chain-prompt";
+        int? _chainPromptPref;
         // 필드 보기는 선택 창(묘지·덱에서 고르기, 예/아니오 등)이 뜰 때만 있어서 기다리지 않는다. 뜨면 확인한다.
         bool PlaybackAllSeen => _previewSeen && _skipSeen && _chainSeen && _speedSeen && _lpSeen && _enterSeen;
         bool _enterSeen;
@@ -82,7 +87,7 @@ namespace DuelRoguelike.Tests
         bool _skipSeen;
         static readonly bool Thorough = Environment.GetEnvironmentVariable("DUELROGUELIKE_SCREEN_THOROUGH") == "1";
         static readonly int MaxPlaybackTries = Thorough ? 8 : 3;
-        bool RareSeen => _chain2Seen && _chainOpponentSeen && _fieldViewSeen;
+        bool RareSeen => _chain2Seen && _chainOpponentSeen && _fieldViewSeen && _rightClickSeen;
 
         string SaveFile => Path.Combine(_saveDir, "save.txt");
 
@@ -91,11 +96,16 @@ namespace DuelRoguelike.Tests
         {
             _saveDir = Path.Combine(Path.GetTempPath(), "DuelRoguelike-playtest-" + Guid.NewGuid().ToString("N"));
             Environment.SetEnvironmentVariable(SaveDirVariable, _saveDir);
+            _chainPromptPref = PlayerPrefs.HasKey(ChainPromptPrefKey) ? PlayerPrefs.GetInt(ChainPromptPrefKey) : (int?)null;
         }
 
         [TearDown]
         public void TearDown()
         {
+            if (_chainPromptPref.HasValue)
+                PlayerPrefs.SetInt(ChainPromptPrefKey, _chainPromptPref.Value);
+            else
+                PlayerPrefs.DeleteKey(ChainPromptPrefKey);
             Environment.SetEnvironmentVariable(SaveDirVariable, null);
             if (Directory.Exists(_saveDir))
                 Directory.Delete(_saveDir, true);
@@ -959,7 +969,7 @@ namespace DuelRoguelike.Tests
         static readonly string[] DuelSounds =
         {
             "Draw", "Set", "Flip", "Shuffle", "Summon", "SpecialSummon", "Activate", "Target", "ToGrave", "ToHand", "Destroy", "Banish", "Equip",
-            "Attack", "Damage", "Recover", "NewTurn", "Phase", "Coin", "Dice",
+            "Attack", "DirectHit", "Damage", "Recover", "NewTurn", "Phase", "Coin", "Dice",
         };
 
         /// <summary>
@@ -1812,6 +1822,10 @@ namespace DuelRoguelike.Tests
             int steps = 0;
             bool attack = false, battle = false;
             string last = null;
+            // 내 체인 확인이 자주 뜨게 체인 확인을 "항상"으로 둔다 (우클릭으로 넘기기를 보려고). 우클릭을 보면 되돌린다.
+            _chainModeOriginal = _chainModeOriginal ?? ChainPromptMode();
+            if (!_rightClickSeen)
+                SetChainPrompt("항상");
             while (!(battle && PlaybackAllSeen && (!Thorough || RareSeen)) && Time.realtimeSinceStartup < until && Find<Button>(DuelUi, "leave-duel") == null)
             {
                 yield return DismissReveal();
@@ -1903,13 +1917,19 @@ namespace DuelRoguelike.Tests
                     _fieldViewSeen = true;
                     Debug.Log("[런 화면 시험] 선택 창: Esc → 필드 확인 중, Esc → 창 다시 열림, 필드 보기 → 필드 확인 중");
                 }
-                // 상대 공격을 본 뒤: 건너뛰기 → 모서리에 "건너뛰는 중"
+                // 상대 공격을 본 뒤: 빨리 넘기기 → 모서리에 "빨리 넘김", 한 번 더 → "건너뜀"
                 var skip = Find<Button>(DuelUi, "skip-playback");
                 if (battle && !_skipSeen && skip != null)
                 {
                     Click(skip);
                     var badge = Find<Label>(DuelUi, "status-badge");
-                    StringAssert.StartsWith("건너뜀", badge?.text ?? "", "건너뛰기를 눌렀는데 모서리 표시가 다르다");
+                    StringAssert.StartsWith("빨리 넘김", badge?.text ?? "", "빨리 넘기기를 눌렀는데 모서리 표시가 다르다");
+                    yield return Shot(DuelUi, "2i0-fast-forward");
+                    skip = Find<Button>(DuelUi, "skip-playback");
+                    if (skip == null) // 그 사이 다음 입력까지 왔다: 다음에 다시 본다
+                        continue;
+                    Click(skip);
+                    StringAssert.StartsWith("건너뜀", badge.text, "빨리 넘기는 중에 한 번 더 눌렀는데 모서리 표시가 다르다");
                     _skipSeen = true;
                     yield return Shot(DuelUi, "2i-skip");
                     // 건너뛰기가 끝나면 표시가 흐려지며 사라진다 (바로 사라지지 않는다).
@@ -1931,17 +1951,33 @@ namespace DuelRoguelike.Tests
                 // 건너뛰기를 본 뒤: 보여 주는 중 스페이스를 누르고 있으면 모서리에 "가속 중"
                 if (_skipSeen && !_speedSeen && Find<Button>(DuelUi, "skip-playback") != null)
                     yield return CheckSpeedUp();
-                // 가속 중을 본 뒤: 보여 주는 중 엔터 → 모서리에 "건너뜀"
+                // 가속 중을 본 뒤: 보여 주는 중 엔터 → 모서리에 "빨리 넘김" (연출과 효과음은 짧게 계속 나온다)
                 if (_speedSeen && !_enterSeen && Find<Button>(DuelUi, "skip-playback") != null)
                 {
                     yield return Tap(UnityEngine.InputSystem.Key.Enter);
-                    if (BadgeText().StartsWith("건너뜀"))
+                    if (BadgeText().StartsWith("빨리 넘김"))
                     {
                         _enterSeen = true;
-                        Debug.Log("[런 화면 시험] 보여 주는 중 엔터 → 건너뜀");
+                        Debug.Log("[런 화면 시험] 보여 주는 중 엔터 → 빨리 넘김");
                     }
                     else // 그 사이 보여 주기가 끝났으면 다음에 다시 본다
-                        Assert.IsNull(Find<Button>(DuelUi, "skip-playback"), "보여 주는 중 엔터를 눌렀는데 모서리에 건너뜀이 안 뜬다");
+                        Assert.IsNull(Find<Button>(DuelUi, "skip-playback"), "보여 주는 중 엔터를 눌렀는데 모서리에 빨리 넘김이 안 뜬다");
+                }
+                // 체인 확인이 뜨면 (뜰 때만): 우클릭 한 번 → "발동하지 않음"으로 답한다
+                if (!_rightClickSeen && Find<Button>(DuelUi, "skip-playback") == null && (Find<Label>(DuelUi, "prompt-detail")?.text ?? "").Contains("우클릭"))
+                {
+                    string prompt = Find<Label>(DuelUi, "prompt-label").text;
+                    int cancels = SoundCount("Cancel");
+                    SendPointer(Find<Label>(DuelUi, "prompt-label"), EventType.MouseDown, new Vector2(960, 540), 1, button: 1);
+                    yield return null;
+                    // 우클릭이 "발동하지 않음"으로 답했으면 취소 소리가 난다. 다음 시점의 체인 확인이 같은 문구로 바로 다시 뜰 수 있어 문구로는 가리지 않는다.
+                    string after = Find<Label>(DuelUi, "prompt-label")?.text ?? "";
+                    Assert.Greater(SoundCount("Cancel"), cancels,
+                        $"체인 확인({prompt})에서 우클릭했는데 발동하지 않음으로 답하지 않았다 (지금 문구: {after} / {Find<Label>(DuelUi, "prompt-detail")?.text})");
+                    _rightClickSeen = true;
+                    Debug.Log($"[런 화면 시험] 체인 확인 우클릭 → 발동하지 않음 ({prompt} → {after})");
+                    if (_chainModeOriginal != null)
+                        SetChainPrompt(_chainModeOriginal);
                 }
                 var once = Find<Button>(DuelUi, "auto-once");
                 if (once != null)
@@ -1949,12 +1985,35 @@ namespace DuelRoguelike.Tests
                 yield return null;
             }
             _playbackDone = battle && PlaybackAllSeen && (!Thorough || RareSeen);
+            if (_chainModeOriginal != null)
+                SetChainPrompt(_chainModeOriginal);
+            if (steps == 0 && Find<Button>(DuelUi, "leave-duel") != null)
+            {
+                // 자동 응답이 그 사이 듀얼을 끝냈다 (보여 줄 단계 전에): 이번은 세지 않고 다음 듀얼에서 다시 본다
+                _playbackTries--;
+                Debug.Log("[런 화면 시험] 한 단계씩 보여 주기: 보기 전에 듀얼이 끝나 다음 듀얼에서 다시 본다");
+                yield break;
+            }
             Assert.Greater(steps, 0, "자동(한 번)으로 답했는데 멈춰 보여 주는 단계가 없다");
             Assert.Greater(SoundCount(DuelSounds), sounds, "한 단계씩 보여 주는 동안 듀얼 효과음이 하나도 나지 않았다");
             Debug.Log("[런 화면 시험] 지금까지의 듀얼 효과음: " + string.Join(", ", DuelSounds.Select(n => (n, c: SoundCount(n))).Where(x => x.c > 0).Select(x => $"{x.n} {x.c}")));
             Debug.Log($"[런 화면 시험] 한 단계씩 보여 주기 ({_playbackTries}번째): 멈춘 단계 {steps}개, 상대 공격 {(attack ? "봄" : "못 봄")}, 그 뒤 데미지 계산 {(battle ? "봄" : "못 봄")}"
                 + $", 필드 확인 중 {(_fieldViewSeen ? "봄" : "못 봄")}, 가속 중 {(_speedSeen ? "봄" : "못 봄")}, LP 변화 {(_lpSeen ? "봄" : "못 봄")}"
-                + $", 체인 2 이상 {(_chain2Seen ? "봄" : "못 봄")}, 상대 체인 {(_chainOpponentSeen ? "봄" : "못 봄")}");
+                + $", 체인 2 이상 {(_chain2Seen ? "봄" : "못 봄")}, 상대 체인 {(_chainOpponentSeen ? "봄" : "못 봄")}, 체인 확인 우클릭 {(_rightClickSeen ? "봄" : "못 봄")}");
+        }
+
+        /// <summary>듀얼 화면의 체인 확인 방식 ("자동"·"항상"·"끔"). 버튼이 없으면 null.</summary>
+        static string ChainPromptMode()
+        {
+            string text = Find<Button>(DuelUi, "chain-prompt")?.text;
+            return text == null ? null : text.Substring(text.LastIndexOf(' ') + 1);
+        }
+
+        /// <summary>체인 확인 방식을 바꾼다 (버튼을 누를 때마다 자동 → 항상 → 끔 → 자동). 버튼이 없으면 그대로 둔다.</summary>
+        static void SetChainPrompt(string mode)
+        {
+            for (int i = 0; i < 3 && ChainPromptMode() != null && ChainPromptMode() != mode; i++)
+                Click(Find<Button>(DuelUi, "chain-prompt"));
         }
 
         static string BadgeText()
@@ -2165,9 +2224,9 @@ namespace DuelRoguelike.Tests
                 SendPointer(root, EventType.MouseMove, new Vector2(4, 4), 0);
         }
 
-        static void SendPointer(VisualElement target, EventType type, Vector2 position, int clicks)
+        static void SendPointer(VisualElement target, EventType type, Vector2 position, int clicks, int button = 0)
         {
-            var system = new Event { type = type, mousePosition = position, clickCount = clicks, button = 0 };
+            var system = new Event { type = type, mousePosition = position, clickCount = clicks, button = button };
             EventBase e = type == EventType.MouseDown ? PointerDownEvent.GetPooled(system)
                 : type == EventType.MouseUp ? (EventBase)PointerUpEvent.GetPooled(system)
                 : PointerMoveEvent.GetPooled(system);

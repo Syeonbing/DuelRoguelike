@@ -1,6 +1,7 @@
 // 듀얼 화면의 키보드 커서. docs/UI.md "키보드" › "듀얼의 키보드 커서".
 // 기본 자리 두 가지를 함께 받는다: 방향키 + Z(결정)·X(취소), W A S D + J(결정)·K(취소). 내가 답할 차례이거나 창·메뉴가 떠 있으면
-// Enter·Space도 결정, Backspace·Esc도 취소다 (진행을 보여 주는 중에는 스페이스·엔터가 넘기기·건너뛰기라서 결정으로 쓰지 않는다).
+// Enter·Space도 결정, Backspace·Esc도 취소다 (진행을 보여 주는 중에는 스페이스·엔터가 넘기기·빨리 넘기기라서 결정으로 쓰지 않는다).
+// 마우스 우클릭은 체인 확인에 "발동하지 않음"으로 답한다 (OnRightClick).
 // - 필드 커서: 패의 카드 하나 또는 필드의 칸 하나를 가리킨다. 줄은 아래에서부터 패, 내 마법·함정, 내 몬스터, (양끝 열의 제외 칸),
 //   상대 몬스터, 상대 마법·함정. 결정 키는 그 칸을 마우스로 누른 것과 같다 (카드 메뉴, 카드·칸 고르기, 더미의 카드 목록).
 //   Tab은 테두리로 강조된 카드·칸(할 수 있는 일이 있거나 고를 수 있는 것)만 차례로 돌고, F는 패와 필드 사이를 건너뛴다.
@@ -112,6 +113,28 @@ namespace DuelRoguelike.UI
             }, TrickleDown.TrickleDown);
             // 화면을 마우스로 누르면 키보드 커서는 풀린다
             docRoot.RegisterCallback<PointerDownEvent>(_ => _cursorOn = false, TrickleDown.TrickleDown);
+            docRoot.RegisterCallback<PointerDownEvent>(OnRightClick, TrickleDown.TrickleDown);
+        }
+
+        /// <summary>
+        /// 우클릭: 체인 확인(체인할 수 있어요 / 발동할 수 있는 카드가 있어요)에 한 번 눌러 "발동하지 않음"으로 답한다.
+        /// 카드 메뉴가 떠 있으면 메뉴만 닫는다. 꼭 발동해야 하는 효과를 고를 때와 창이 떠 있을 때는 하지 않는다.
+        /// </summary>
+        void OnRightClick(PointerDownEvent evt)
+        {
+            if (evt.button != 1 || _autoPlay || _session == null || _interaction == null || _focus != null)
+                return;
+            if (_menuLayer != null && _menuLayer.style.display == DisplayStyle.Flex)
+            {
+                CloseMenu();
+                evt.StopPropagation();
+                return;
+            }
+            if (_modalOpen || !(_interaction.Request is SelectChainRequest chain) || chain.Forced)
+                return;
+            Sound.Play(Sfx.Cancel);
+            Respond(DuelResponses.NoChain());
+            evt.StopPropagation();
         }
 
         // ================= 커서가 가리키는 것 =================

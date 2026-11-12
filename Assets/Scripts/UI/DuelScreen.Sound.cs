@@ -13,6 +13,22 @@ namespace DuelRoguelike.UI
         /// <summary>한 번에 여러 장·여러 번 일어날 때(드로우, 코인 토스) 소리를 낼 최대 횟수.</summary>
         const int MaxRepeatSounds = 3;
 
+        /// <summary>직접 공격을 받는 플레이어 (그 데미지에 묵직한 타격음을 낸다). 없으면 -1.</summary>
+        int _directHitTo = -1;
+
+        /// <summary>
+        /// 직접 공격을 기억한다: 직접 공격 선언부터 데미지 스텝이 끝날 때까지. 공격이 무효가 되거나 페이즈·턴이 바뀌면 잊는다.
+        /// 소리를 내지 않는 동안(건너뛰기·자동 진행)에도 따라가야 하므로 모든 메시지에서 부른다.
+        /// </summary>
+        void TrackDirectHit(DuelMessage message)
+        {
+            if (message is AttackMessage attack)
+                _directHitTo = attack.IsDirect ? 1 - attack.Attacker.Controller : -1;
+            else if (message is NewPhaseMessage || message is NewTurnMessage
+                || message.Type == OcgMessageType.DamageStepEnd || message.Type == OcgMessageType.AttackDisabled)
+                _directHitTo = -1;
+        }
+
         void PlayMessageSound(DuelMessage message)
         {
             switch (message)
@@ -51,6 +67,13 @@ namespace DuelRoguelike.UI
                 case LpChangeMessage m:
                     if (m.Kind == LpChangeKind.Recover)
                         Sound.Play(Sfx.Recover);
+                    else if (m.Kind == LpChangeKind.Damage && m.Player == _directHitTo)
+                    {
+                        // 직접 공격이 들어갔다: 펀치와 낮은 쿵
+                        _directHitTo = -1;
+                        Sound.Play(Sfx.DirectHit);
+                        Sound.Play(Sfx.DirectHitBoom, 0.02f);
+                    }
                     else if (m.Kind == LpChangeKind.Damage)
                         Sound.Play(Sfx.Damage);
                     else if (m.Kind == LpChangeKind.PayCost)
