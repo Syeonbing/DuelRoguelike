@@ -1733,6 +1733,18 @@ namespace DuelRoguelike.Tests
                 // 선택 창이 뜨면 (뜰 때만): Esc → 창을 닫고 "필드 확인 중", Esc → 창이 다시 열림, "필드 보기" → "필드 확인 중"
                 if (!_fieldViewSeen && Find<Button>(DuelUi, "field-view") != null)
                 {
+                    // 고를 카드의 강조 테두리는 카드를 바깥에서 둘러야 한다 (카드보다 작거나 어긋나면 안 된다)
+                    foreach (var candidate in Root(DuelUi).Query<VisualElement>().Where(e => e.name != null && e.name.StartsWith("candidate-")).ToList())
+                    {
+                        var ring = candidate.Q("highlight");
+                        var face = candidate.Q(className: "card-face") ?? candidate.ElementAt(0).ElementAt(0);
+                        if (ring == null || ring.resolvedStyle.display == DisplayStyle.None || face.worldBound.width <= 0)
+                            continue;
+                        Rect r = ring.worldBound, f = face.worldBound;
+                        Assert.IsTrue(r.xMin <= f.xMin + 0.5f && r.yMin <= f.yMin + 0.5f && r.xMax >= f.xMax - 0.5f && r.yMax >= f.yMax - 0.5f,
+                            $"선택 창 {candidate.name}의 강조 테두리 {r}가 카드 {f}를 두르지 않는다");
+                    }
+                    yield return Shot(DuelUi, "2h0-selection-window");
                     yield return Tap(UnityEngine.InputSystem.Key.Escape);
                     StringAssert.StartsWith("필드 확인 중", BadgeText(), "선택 창에서 Esc를 눌렀는데 모서리 표시가 다르다");
                     Assert.IsNull(Find<Button>(DuelUi, "field-view"), "Esc를 눌렀는데 선택 창이 닫히지 않았다");

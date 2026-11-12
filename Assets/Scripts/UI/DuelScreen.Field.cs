@@ -171,10 +171,16 @@ namespace DuelRoguelike.UI
             var cell = new CardCell(this, CardFaceSize.Medium, refresh: refresh, name: name, faceWidth: faceWidth);
             if (faceWidth > 0)
             {
-                // 칸을 카드 크기에 맞춘다 (기본 칸은 중간 크기 카드에 맞춰져 있다)
+                // 칸과 강조 테두리를 카드 크기에 맞춘다 (기본 칸과 테두리는 중간 크기 카드에 맞춰져 있다).
+                // 칸이 카드보다 사방으로 5씩 크므로, 테두리는 칸에 꼭 맞추면 카드 바깥 5 자리에 놓인다.
+                float width = faceWidth + 10, height = faceWidth * 158f / 108f + 10;
                 var holder = cell.Root.ElementAt(0);
-                holder.style.width = faceWidth + 10;
-                holder.style.height = faceWidth * 158f / 108f + 10;
+                holder.style.width = width;
+                holder.style.height = height;
+                var ring = holder.Q("highlight");
+                ring.style.left = ring.style.top = 0;
+                ring.style.width = width;
+                ring.style.height = height;
             }
             cell.Root.style.marginRight = 8;
             cell.Root.style.marginBottom = 10;
