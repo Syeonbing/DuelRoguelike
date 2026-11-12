@@ -110,7 +110,7 @@ namespace DuelRoguelike.Tests
                 Assert.IsNotNull(Find<Button>(RunUi, "recipe-" + id), $"새 게임에 스타터 덱 레시피 {id}가 없다");
             Click(Find<Button>(RunUi, "recipe-Yugi"));
             yield return null;
-            StringAssert.Contains("시작할 수 있습니다", Find<Label>(RunUi, "start-recipe-status").text, "스타터 덱 레시피로 런을 시작할 수 없다고 나온다");
+            StringAssert.Contains("시작할 수 있다", Find<Label>(RunUi, "start-recipe-status").text, "스타터 덱 레시피로 런을 시작할 수 없다고 나온다");
 
             // ---- 덱 편집: 유희 편 레시피의 시작 사이드 덱 3장 (꽉 참), 빼기·두 번 누르기·끌어다 놓기 ----
             yield return OpenEditor("edit-recipe");
@@ -200,18 +200,17 @@ namespace DuelRoguelike.Tests
             StringAssert.Contains("저장했습니다", EditorNotice(), "컬렉션보다 많은 레시피가 저장되지 않았다");
             Click(Find<Button>(RunUi, "editor-back"));
             yield return WaitFor(() => Find<Button>(RunUi, "start-run") != null, 10, "런 시작 화면");
-            StringAssert.Contains("시작 불가", Find<Button>(RunUi, "recipe-Yugi").text, "컬렉션보다 많은 레시피에 시작 불가 표시가 없다");
+            StringAssert.Contains("시작 불가", HubTextOf("recipe-Yugi"), "컬렉션보다 많은 레시피에 시작 불가 표시가 없다");
             var shortSlot = Find<VisualElement>(RunUi, "deck-main-" + once) ?? Find<VisualElement>(RunUi, "deck-extra-" + once);
             Assert.IsNotNull(shortSlot, "런 시작 화면의 레시피 보기에 컬렉션보다 많이 넣은 카드가 없다");
             Assert.IsTrue(shortSlot.Query<Label>().ToList().Any(l => l.text == "부족"), "런 시작 화면의 레시피 보기에 부족 표시가 없다");
-            var startSide = Find<VisualElement>(RunUi, "deck-side-" + picked[0]);
-            var startScroll = Find<VisualElement>(RunUi, "start-recipe").Q<ScrollView>();
-            Assert.IsNotNull(startSide, "런 시작 화면의 레시피 보기에 시작 사이드 덱 카드가 없다");
-            Assert.IsTrue(startSide.worldBound.yMin >= startScroll.worldBound.yMax - 1, "시작 사이드 덱이 스크롤 아래에 고정돼 있지 않다");
+            yield return StartTab("side");
+            Assert.IsNotNull(Find<VisualElement>(RunUi, "deck-side-" + picked[0]), "새 런 창의 시작 사이드 탭에 시작 사이드 덱 카드가 없다");
+            yield return StartTab("main");
             Click(Find<Button>(RunUi, "start-run"));
             yield return null;
             Assert.IsFalse(IsHub(), "컬렉션보다 많은 레시피로 런이 시작됐다");
-            StringAssert.Contains("런을 시작할 수 없습니다", Find<Label>(RunUi, "start-error").text, "런 시작을 막은 까닭 알림이 없다");
+            StringAssert.Contains("런을 시작할 수 없다", Find<Label>(RunUi, "start-error").text, "런 시작을 막은 까닭 알림이 없다");
             yield return Shot(RunUi, "1b-start-blocked");
             Debug.Log($"[런 화면 시험] 컬렉션 초과 레시피: {Find<Label>(RunUi, "start-error").text}");
 
@@ -242,7 +241,7 @@ namespace DuelRoguelike.Tests
             Assert.IsNotNull(Find<Button>(RunUi, "editor-leave"), "저장하지 않은 변경이 있는데 나가기 확인이 없다");
             Click(Find<Button>(RunUi, "editor-leave"));
             yield return WaitFor(() => Find<Button>(RunUi, "start-run") != null, 10, "런 시작 화면");
-            StringAssert.Contains("시작할 수 있습니다", Find<Label>(RunUi, "start-recipe-status").text, "저장하지 않고 나갔는데 레시피가 바뀌었다");
+            StringAssert.Contains("시작할 수 있다", Find<Label>(RunUi, "start-recipe-status").text, "저장하지 않고 나갔는데 레시피가 바뀌었다");
 
             // ---- 복사해서 새 레시피, 지우기, 빈 새 레시피 ----
             yield return OpenEditor("copy-recipe");
@@ -272,8 +271,10 @@ namespace DuelRoguelike.Tests
             Click(Find<Button>(RunUi, "recipe-Yugi"));
             yield return null;
             SetSeed(1);
+            yield return StartTab("side");
             foreach (string code in picked)
                 Assert.IsNotNull(Find<VisualElement>(RunUi, "deck-side-" + code), $"런 시작 화면의 레시피 보기에 시작 사이드 덱 카드 {code}가 없다");
+            yield return StartTab("main");
             Click(Named("deck-main-").First()); // 화면 확인용: 카드 하나를 고른 상태
             yield return null;
             yield return Shot(RunUi, "1-start");
@@ -334,7 +335,10 @@ namespace DuelRoguelike.Tests
             Click(Find<Button>(RunUi, "to-title"));
             yield return null;
             Assert.IsNotNull(Find<Button>(RunUi, "continue-run"), "처음 화면에 이어하기가 없다");
-            StringAssert.Contains("시험 런 덱", Find<Button>(RunUi, "recipe-deck-1")?.text ?? "", "지금 덱으로 저장한 레시피가 런 시작 화면 목록에 없다");
+            yield return OpenNewRun();
+            StringAssert.Contains("시험 런 덱", HubTextOf("recipe-deck-1"), "지금 덱으로 저장한 레시피가 새 런 창의 목록에 없다");
+            yield return Shot(RunUi, "7a-new-run-continue");
+            yield return CloseNewRun();
             yield return Shot(RunUi, "7-continue");
             Click(Find<Button>(RunUi, "continue-run"));
             yield return null;
@@ -383,8 +387,10 @@ namespace DuelRoguelike.Tests
             yield return WaitFor(() => Find<Button>(RunUi, "start-run") != null, 10, "새 런의 런 시작 화면");
             Assert.IsNull(Find<Button>(RunUi, "continue-run"), "끝난 런이 진행 중인 런으로 남아 있다");
             StringAssert.Contains("유희 편", Find<Label>(RunUi, "start-recipe-name").text, "마지막으로 시작한 레시피를 고른 상태가 아니다");
+            yield return StartTab("side");
             foreach (string code in picked)
                 Assert.IsNotNull(Find<VisualElement>(RunUi, "deck-side-" + code), $"레시피의 시작 사이드 덱 카드 {code}가 남아 있지 않다");
+            yield return StartTab("main");
 
             // ---- 진행 중인 런이 있을 때 새 런: 취소, 그리고 포기 ----
             SetSeed(2);
@@ -393,6 +399,7 @@ namespace DuelRoguelike.Tests
             yield return Step(2);
             Click(Find<Button>(RunUi, "to-title"));
             yield return null;
+            yield return OpenNewRun();
             SetSeed(3);
             Click(Find<Button>(RunUi, "start-run"));
             yield return null;
@@ -824,7 +831,40 @@ namespace DuelRoguelike.Tests
             SceneManager.LoadScene("Run");
             yield return null;
             yield return null;
-            yield return WaitFor(() => Find<Button>(RunUi, "start-run") != null, LoadTimeout, "런 시작 화면");
+            yield return WaitFor(() => Find<Button>(RunUi, "title-new-run") != null, LoadTimeout, "처음 화면");
+            yield return Shot(RunUi, "0a-title");
+            // 처음 화면의 명령 메뉴: 위아래 키로 고른다. 시험의 대부분은 새 런 창에서 시작한다.
+            Assert.IsTrue(Named("title-").Concat(Named("continue-run")).OfType<Button>().Any(b => b.ClassListContains("selected")), "처음 화면의 메뉴에 가리키는 항목이 없다");
+            yield return OpenNewRun();
+        }
+
+        /// <summary>처음 화면에서 새 런 창을 연다 (이미 열려 있으면 그대로).</summary>
+        static IEnumerator OpenNewRun()
+        {
+            if (Find<Button>(RunUi, "start-run") == null)
+            {
+                Click(Find<Button>(RunUi, "title-new-run"));
+                yield return null;
+            }
+            Assert.IsNotNull(Find<Button>(RunUi, "start-run"), "새 런 창이 열리지 않았다");
+        }
+
+        /// <summary>새 런 창을 닫고 처음 화면으로 돌아간다.</summary>
+        static IEnumerator CloseNewRun()
+        {
+            Click(Find<Button>(RunUi, "start-back"));
+            yield return null;
+            Assert.IsNull(Find<VisualElement>(RunUi, "recipe-window"), "새 런 창이 닫히지 않았다");
+            Assert.IsNotNull(Find<Button>(RunUi, "title-new-run"), "새 런 창을 닫았는데 처음 화면의 메뉴가 없다");
+        }
+
+        /// <summary>새 런 창의 탭을 바꾼다 ("main", "extra", "side").</summary>
+        static IEnumerator StartTab(string tab)
+        {
+            var button = Find<Button>(RunUi, "start-tab-" + tab);
+            Assert.IsNotNull(button, $"새 런 창에 {tab} 탭이 없다");
+            Click(button);
+            yield return null;
         }
 
         /// <summary>

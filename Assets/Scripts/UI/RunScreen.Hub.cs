@@ -166,6 +166,7 @@ namespace DuelRoguelike.UI
         /// <summary>1920×1080 판을 화면 안에 꽉 차게 맞춰 가운데에 놓는다 (16:9가 아니면 남는 쪽에 여백).</summary>
         void FitStage()
         {
+            FitModal(); // 열려 있는 창도 같은 배율로
             if (_stage == null || _stage.parent != _root)
                 return;
             float w = _root.layout.width, h = _root.layout.height;
@@ -606,6 +607,8 @@ namespace DuelRoguelike.UI
             readonly List<(Button Button, Label Mark, Action Run)> _items = new List<(Button, Label, Action)>();
 
             public int Index { get; private set; } = -1;
+            /// <summary>마우스를 올리면 그 줄을 가리킬지. 고른 것을 보여 주는 목록(레시피 목록)은 끈다.</summary>
+            public bool HoverSelects = true;
             public int Count => _items.Count;
 
             /// <summary>
@@ -639,7 +642,11 @@ namespace DuelRoguelike.UI
                 mark.pickingMode = PickingMode.Ignore;
                 button.Add(mark);
                 button.SetEnabled(enabled);
-                button.RegisterCallback<MouseEnterEvent>(_ => Select(index));
+                button.RegisterCallback<MouseEnterEvent>(_ =>
+                {
+                    if (HoverSelects)
+                        Select(index);
+                });
                 _items.Add((button, mark, run));
                 Root.Add(button);
                 return button;

@@ -133,6 +133,18 @@ namespace DuelRoguelike.UI
                 RewardKey(nav);
                 return;
             }
+            if (modal && RecipeWindowOpen)
+            {
+                _navOn = false;
+                RecipeWindowKey(nav); // 새 런·덱 레시피 창
+                return;
+            }
+            if (!modal && TitleKeysOpen)
+            {
+                _navOn = false;
+                TitleKey(nav); // 처음 화면의 명령 메뉴
+                return;
+            }
             if (modal && LogOpen)
             {
                 _navOn = false;

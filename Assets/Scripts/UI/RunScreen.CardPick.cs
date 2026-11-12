@@ -59,7 +59,7 @@ namespace DuelRoguelike.UI
             body.style.marginTop = 14;
             var scroll = new ScrollView(ScrollViewMode.Vertical);
             scroll.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
-            scroll.style.width = PickColumns * (PickCardWidth + 12) + 8;
+            scroll.style.width = PickColumns * (PickCardWidth + 12) + 28; // 세로 스크롤 막대 자리까지
             scroll.style.flexShrink = 0;
             var grid = Grid(scroll.contentContainer);
             body.Add(scroll);

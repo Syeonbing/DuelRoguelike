@@ -411,7 +411,7 @@ namespace DuelRoguelike.UI
             var dim = new VisualElement();
             dim.pickingMode = PickingMode.Ignore;
             UiStyle.Place(dim, 0, 0, StageWidth, StageHeight);
-            dim.style.backgroundColor = new Color(0.04f, 0.03f, 0.024f, 0.74f);
+            dim.style.backgroundColor = new Color(0.04f, 0.03f, 0.024f, 0.86f);
             stage.Add(dim);
             var column = UiStyle.Box("run-end-body");
             UiStyle.Place(column, 0, 0, StageWidth, StageHeight);
@@ -470,8 +470,9 @@ namespace DuelRoguelike.UI
 
             var buttons = new ButtonRow();
             buttons.Root.style.marginTop = 24;
-            buttons.Add("new-run", "새 런", GoToStart, gold: true, width: 300);
+            buttons.Add("new-run", "새 런", GoToNewRun, gold: true, width: 300);
             buttons.Add("end-log", "런 기록", OpenLog, width: 260);
+            buttons.Add("end-title", "처음 화면으로", GoToStart, width: 300);
             buttons.Select(0);
             _endRow = buttons;
             column.Add(buttons.Root);

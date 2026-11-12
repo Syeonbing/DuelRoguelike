@@ -38,9 +38,12 @@ namespace DuelRoguelike.UI
             panel.style.paddingBottom = 24;
             UiStyle.BorderColor(panel, UiStyle.Stone9, 3);
             panel.style.borderTopColor = UiStyle.SlabTop;
+            panel.AddToClassList(FitWindowClass);
             FitWindow(panel);
             return panel;
         }
+
+        const string FitWindowClass = "fit-window", FitLayerClass = "fit-layer";
 
         /// <summary>창을 허브의 무대와 같은 배율로 줄인다 (1920×1080 기준).</summary>
         void FitWindow(VisualElement panel)
@@ -50,6 +53,32 @@ namespace DuelRoguelike.UI
                 return;
             float scale = Mathf.Min(w / StageWidth, h / StageHeight);
             panel.style.scale = new Scale(new Vector3(scale, scale, 1f));
+        }
+
+        /// <summary>창 층의 1920×1080 판을 무대와 같은 자리·배율에 놓는다.</summary>
+        void FitLayer(VisualElement layer)
+        {
+            float w = _root.layout.width, h = _root.layout.height;
+            if (float.IsNaN(w) || float.IsNaN(h) || w <= 0 || h <= 0)
+                return;
+            float scale = Mathf.Min(w / StageWidth, h / StageHeight);
+            layer.style.scale = new Scale(new Vector3(scale, scale, 1f));
+            layer.style.left = (w - StageWidth * scale) / 2;
+            layer.style.top = (h - StageHeight * scale) / 2;
+        }
+
+        /// <summary>화면 크기가 바뀌면 열려 있는 창도 다시 맞춘다 (FitStage가 부른다).</summary>
+        void FitModal()
+        {
+            if (_modalLayer == null)
+                return;
+            foreach (var child in _modalLayer.Children())
+            {
+                if (child.ClassListContains(FitWindowClass))
+                    FitWindow(child);
+                else if (child.ClassListContains(FitLayerClass))
+                    FitLayer(child);
+            }
         }
 
         /// <summary>
@@ -79,14 +108,8 @@ namespace DuelRoguelike.UI
             var layer = OpenPlain(name, dim);
             UiStyle.Place(layer, 0, 0, StageWidth, StageHeight);
             layer.style.transformOrigin = new TransformOrigin(Length.Percent(0), Length.Percent(0));
-            float w = _root.layout.width, h = _root.layout.height;
-            if (!float.IsNaN(w) && !float.IsNaN(h) && w > 0 && h > 0)
-            {
-                float scale = Mathf.Min(w / StageWidth, h / StageHeight);
-                layer.style.scale = new Scale(new Vector3(scale, scale, 1f));
-                layer.style.left = (w - StageWidth * scale) / 2;
-                layer.style.top = (h - StageHeight * scale) / 2;
-            }
+            layer.AddToClassList(FitLayerClass);
+            FitLayer(layer);
             return layer;
         }
 
