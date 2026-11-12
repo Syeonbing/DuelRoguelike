@@ -10,7 +10,7 @@
 //         그 등급 카드가 상대 덱에 없으면 골드로 대신 준다 (고르기 없음).
 //         보스를 이기면 이어서 봉인된 카드 1장을 골라 봉인 해제한다 (ChoosingUnseal). 봉인된 카드가 없으면 보상 후보를 한 번 더 받는다.
 //         보상을 다 받으면 다음 층으로 올라간다 (그때까지 Floor는 이긴 층 그대로).
-// - 패배: 연패 +1, 메인 덱에서 "연패 횟수 + 층÷10"장, 엑스트라 덱에서 20% 연쇄로 봉인. LP는 전부 회복한다. 칩은 잃지 않는다.
+// - 패배: 연패 +1, 메인 덱에서 "1 + 연패 횟수 + 층÷10"장, 엑스트라 덱에서 20% 연쇄로 봉인. LP는 전부 회복한다. 칩은 잃지 않는다.
 //         메인 덱이 40장 미만이면 사이드 덱에서 보충해야 하고(NeedsRefill), 보충할 카드가 모자라면 런이 끝난다.
 // - 듀얼 사이에는 사이드 덱과 메인·엑스트라 덱의 카드를 옮길 수 있다. 같은 카드명은 메인·엑스트라 덱에 3장까지 (카드 DB의 alias 기준),
 //   사이드 덱에는 제한이 없다. 봉인된 카드는 쓸 수 없다.
@@ -53,7 +53,7 @@ namespace DuelRoguelike.Run
         None,
         /// <summary>메인 덱이 40장 미만인데 사이드 덱에서 보충할 카드가 모자람</summary>
         DeckBelowMinimum,
-        /// <summary>플레이어가 런을 포기함 (진행 중인 런이 있을 때 새 런을 시작)</summary>
+        /// <summary>플레이어가 런을 포기함 (탑 메뉴의 "런 포기", 또는 진행 중인 런이 있을 때 새 런을 시작)</summary>
         Abandoned,
     }
 
@@ -606,10 +606,14 @@ namespace DuelRoguelike.Run
         /// </summary>
         public void Abandon()
         {
-            if (Phase != RunPhase.Ready && Phase != RunPhase.ChoosingReward && Phase != RunPhase.NeedsRefill && Phase != RunPhase.ChoosingUnseal)
+            if (!CanAbandon)
                 throw new InvalidOperationException($"런을 포기할 수 없습니다: 지금 상태는 {Phase} (듀얼 사이에만 포기할 수 있음)");
             EndRun(RunEndReason.Abandoned);
         }
+
+        /// <summary>지금 런을 포기할 수 있는지 (듀얼 사이: Ready, ChoosingReward, NeedsRefill, ChoosingUnseal).</summary>
+        public bool CanAbandon =>
+            Phase == RunPhase.Ready || Phase == RunPhase.ChoosingReward || Phase == RunPhase.NeedsRefill || Phase == RunPhase.ChoosingUnseal;
 
         /// <summary>보충할 때 고를 수 있는 사이드 덱 카드 (같은 카드는 한 번, 사이드 덱 순서). NeedsRefill이 아니면 빈 목록.</summary>
         public List<uint> RefillCandidates()

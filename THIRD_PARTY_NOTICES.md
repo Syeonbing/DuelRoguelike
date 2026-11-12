@@ -61,6 +61,8 @@ Freesound 파일은 원본 대신 Freesound가 만든 고음질 미리듣기(.og
 | `gong.ogg` | Deep Gong Tolling.mp3 | Yin_Yang_Jake007 | https://freesound.org/people/Yin_Yang_Jake007/sounds/415200/ | CC0 1.0 |
 | `arrive.ogg` | Pressure Plate | proolsen | https://freesound.org/people/proolsen/sounds/466272/ | CC0 1.0 |
 | `heartbeat.ogg` | Single Hearbeat (Deep Bass Kick) | unfa | https://freesound.org/people/unfa/sounds/217456/ | CC0 1.0 |
+| `hit-punch.ogg` | Punch (2) | johnfolker | https://freesound.org/people/johnfolker/sounds/269232/ | CC0 1.0 |
+| `hit-boom.ogg` | FX Cinematic Impact.wav | Johnnie_Holiday | https://freesound.org/people/Johnnie_Holiday/sounds/671375/ | CC0 1.0 |
 
 - CC BY 4.0 파일 3개는 위 표의 만든 사람·출처·라이선스 표기가 저작자 표시다 (https://creativecommons.org/licenses/by/4.0/). 게임 안에 크레딧 화면을 만들면 거기에도 같은 내용을 넣는다.
 

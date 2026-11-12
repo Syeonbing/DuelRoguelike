@@ -17,7 +17,7 @@ namespace DuelRoguelike.UI
     {
         // 듀얼
         Draw, Set, Flip, Shuffle, Summon, SpecialSummon, Activate, ActivateSwoosh, Target, ToGrave, ToHand, Destroy, Banish, Equip,
-        Attack, Damage, Recover, NewTurn, Phase, Coin, Dice, Win, Lose, GameDraw,
+        Attack, DirectHit, DirectHitBoom, Damage, Recover, NewTurn, Phase, Coin, Dice, Win, Lose, GameDraw,
         // 조작
         Confirm, Move, Cancel, WindowOpen,
         // 탑
@@ -39,6 +39,8 @@ namespace DuelRoguelike.UI
             public float MinGap = 0.06f;
             /// <summary>조작음 (건너뛰기의 Hush에 줄이지 않는다).</summary>
             public bool Ui;
+            /// <summary>크기 맞춤의 기준 세기 (RMS). 묵직하게 들려야 하는 소리는 더 크게 둔다.</summary>
+            public float Rms = TargetRms;
 
             public Cue(float volume, params string[] files)
             {
@@ -65,6 +67,9 @@ namespace DuelRoguelike.UI
             { Sfx.Banish, new Cue(0.9f, "banish") { MinGap = 0.08f } },
             { Sfx.Equip, new Cue(0.9f, "equip") },
             { Sfx.Attack, new Cue(0.85f, "attack") },
+            // 직접 공격의 데미지: 펀치와 낮은 쿵을 같이 낸다 (DuelScreen.Sound.cs)
+            { Sfx.DirectHit, new Cue(1f, "hit-punch") { Rms = 0.3f } },
+            { Sfx.DirectHitBoom, new Cue(1f, "hit-boom") { Rms = 0.3f, MaxSeconds = 2f } },
             { Sfx.Damage, new Cue(0.85f, "damage") { MaxSeconds = 1.6f } },
             { Sfx.Recover, new Cue(0.75f, "recover") },
             { Sfx.NewTurn, new Cue(0.6f, "turn") { MaxSeconds = 2.0f, MinGap = 0.3f } },
@@ -103,7 +108,7 @@ namespace DuelRoguelike.UI
         static int? _sfxLevel, _musicLevel;
         static SoundPlayer _player;
         static readonly Dictionary<string, AudioClip> Clips = new Dictionary<string, AudioClip>();
-        static readonly Dictionary<AudioClip, float> Gains = new Dictionary<AudioClip, float>();
+        static readonly Dictionary<AudioClip, float> Loudness = new Dictionary<AudioClip, float>();
         static readonly Dictionary<Sfx, float> LastPlayed = new Dictionary<Sfx, float>();
         static readonly Dictionary<Sfx, int> Counts = new Dictionary<Sfx, int>();
         static readonly Dictionary<Sfx, int> NextVariant = new Dictionary<Sfx, int>();
@@ -178,7 +183,7 @@ namespace DuelRoguelike.UI
             var clip = NextClip(sfx, cue);
             if (clip == null)
                 return;
-            Player().Play(clip, cue.Volume * volume * GainOf(clip), cue.Pitch * pitch, Mathf.Max(0f, delay), cue.MaxSeconds, cue.Ui);
+            Player().Play(clip, cue.Volume * volume * GainOf(clip, cue.Rms), cue.Pitch * pitch, Mathf.Max(0f, delay), cue.MaxSeconds, cue.Ui);
         }
 
         /// <summary>배경음을 바꾼다 (같은 곡이면 그대로 둔다). 천천히 넘어간다. None이면 멈춘다.</summary>
@@ -222,22 +227,24 @@ namespace DuelRoguelike.UI
             return clip;
         }
 
-        /// <summary>파일의 크기 맞춤: 가장 큰 순간(50ms 창)의 RMS가 TargetRms보다 크면 그만큼 줄이는 배율. 처음 한 번 잰다.</summary>
-        static float GainOf(AudioClip clip)
+        /// <summary>파일의 크기 맞춤: 가장 큰 순간(50ms 창)의 RMS가 기준(target)보다 크면 그만큼 줄이는 배율. 세기는 처음 한 번 잰다.</summary>
+        static float GainOf(AudioClip clip, float target) => GainFor(LoudnessOf(clip), target);
+
+        /// <summary>가장 큰 순간(50ms 창)의 RMS. 아직 읽는 중이면 0 (다음에 다시 잰다).</summary>
+        static float LoudnessOf(AudioClip clip)
         {
-            if (Gains.TryGetValue(clip, out float gain))
-                return gain;
-            gain = 1f;
+            if (Loudness.TryGetValue(clip, out float loudest))
+                return loudest;
+            loudest = 0f;
             if (clip.loadState != AudioDataLoadState.Loaded)
                 clip.LoadAudioData();
             if (clip.loadState != AudioDataLoadState.Loaded)
-                return gain; // 아직 읽는 중: 다음에 잰다
+                return loudest; // 아직 읽는 중: 다음에 잰다
             int channels = Mathf.Max(1, clip.channels);
             var data = new float[clip.samples * channels];
             if (data.Length > 0 && clip.GetData(data, 0))
             {
                 int window = Mathf.Max(channels, (int)(clip.frequency * 0.05f) * channels);
-                float loudest = 0f;
                 for (int start = 0; start < data.Length; start += window)
                 {
                     int end = Mathf.Min(data.Length, start + window);
@@ -246,14 +253,14 @@ namespace DuelRoguelike.UI
                         sum += data[i] * data[i];
                     loudest = Mathf.Max(loudest, Mathf.Sqrt((float)(sum / Mathf.Max(1, end - start))));
                 }
-                if (loudest > TargetRms)
-                    gain = TargetRms / loudest;
                 if (LogLevels)
-                    Debug.Log($"[소리] {clip.name}: {clip.length:0.00}초, 가장 큰 세기 {loudest:0.000} → {gain:0.00}배");
+                    Debug.Log($"[소리] {clip.name}: {clip.length:0.00}초, 가장 큰 세기 {loudest:0.000} (기준 {TargetRms} → {GainFor(loudest, TargetRms):0.00}배)");
             }
-            Gains[clip] = gain;
-            return gain;
+            Loudness[clip] = loudest;
+            return loudest;
         }
+
+        static float GainFor(float loudest, float target) => loudest > target ? target / loudest : 1f;
 
         static SoundPlayer Player()
         {

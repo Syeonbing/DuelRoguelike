@@ -504,8 +504,8 @@ namespace DuelRoguelike.Dev
             Expect(_run.PendingReward == null && !events.Any(e => e.Kind == RunEventKind.RewardOffered || e.Kind == RunEventKind.RewardGained
                                                                   || e.Kind == RunEventKind.RewardSubstituted), $"{where}: 패배했는데 보상");
 
-            // 메인 덱 봉인: 연패 횟수 + 층÷10(버림)장, 메인 덱보다 많으면 전부.
-            int expectedMain = Math.Min(streak + b.Floor / 10, b.Main.Count);
+            // 메인 덱 봉인: 1 + 연패 횟수 + 층÷10(버림)장, 메인 덱보다 많으면 전부 (앞의 1은 2026-11-13에 더함).
+            int expectedMain = Math.Min(1 + streak + b.Floor / 10, b.Main.Count);
             var sealedMain = events.Where(e => e.Kind == RunEventKind.CardSealed && e.Pile == RunPile.Main).Select(e => e.Code).ToList();
             var sealedExtra = events.Where(e => e.Kind == RunEventKind.CardSealed && e.Pile == RunPile.Extra).Select(e => e.Code).ToList();
             Expect(sealedMain.Count == expectedMain, $"{where}: 메인 덱 봉인 {sealedMain.Count}장 (기대 {expectedMain}장, 연패 {streak}, {b.Floor}층)");

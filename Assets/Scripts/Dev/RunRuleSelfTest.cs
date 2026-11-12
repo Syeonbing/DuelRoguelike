@@ -246,7 +246,7 @@ namespace DuelRoguelike.Dev
         /// <summary>칩교환소: 진열, 가격, 칩 모자람, 봉인 대상 교체(같은 레어도·완전, 무작위·직접), 봉인 해제, 한 번만, 저장·읽기, 교체 뒤 보충.</summary>
         void ChipExchangeShop()
         {
-            // 1층 2연패로 봉인 3장 (1 + 2), 그리고 4번 이겨 5층 칩교환소에 칩 80.
+            // 1층 2연패로 봉인 5장 (2 + 3), 그리고 4번 이겨 5층 칩교환소에 칩 80.
             var save = GameSave.NewGame();
             var run = save.StartRun(new RunSetup { Seed = PlainSeed, StartDeck = StarterDecks.Yugi }, _db, _rarities);
             Play(run, DuelResult.Loss, 0);
@@ -254,7 +254,7 @@ namespace DuelRoguelike.Dev
             for (int i = 0; i < 4; i++)
                 Play(run, DuelResult.Win, 8000);
             int chips = 4 * RunRules.ChipsPerWin;
-            Expect(run.Floor == 5 && run.FloorKind == FloorKind.ChipExchange && run.Chips == chips && run.SealedCount == 3 && run.MainDeck.Count == 47,
+            Expect(run.Floor == 5 && run.FloorKind == FloorKind.ChipExchange && run.Chips == chips && run.SealedCount == 5 && run.MainDeck.Count == 45,
                 $"5층 칩교환소: {run.Floor}층 {run.FloorKind}, 칩 {run.Chips}, 봉인 {run.SealedCount}, 메인 {run.MainDeck.Count}");
             var products = run.Shop.Select(o => o.Product).ToList();
             Expect(products.Take(4).SequenceEqual(new[] { ShopProduct.SwapSameRarity, ShopProduct.SwapSameRarityChosen, ShopProduct.SwapAny, ShopProduct.SwapAnyChosen })
@@ -276,7 +276,7 @@ namespace DuelRoguelike.Dev
             run.BuySwap(ShopProduct.SwapSameRarity, release);
             chips -= RunRules.ShopPrice(ShopProduct.SwapSameRarity);
             var sealedNow = run.Events.Skip(mark).Where(e => e.Kind == RunEventKind.CardSealed).ToList();
-            Expect(run.Chips == chips && run.SealedCount == 3 && run.SideDeck.Count == side + 1 && run.SideDeck.Last() == release && run.MainDeck.Count == 46
+            Expect(run.Chips == chips && run.SealedCount == 5 && run.SideDeck.Count == side + 1 && run.SideDeck.Last() == release && run.MainDeck.Count == 44
                    && sealedNow.Count == 1 && RarityOf(sealedNow[0].Code) == RarityOf(release) && run.SealedMain.Contains(sealedNow[0].Code),
                 $"같은 레어도 교체: 칩 {run.Chips}, 봉인 {run.SealedCount}, 사이드 {run.SideDeck.Count}, 메인 {run.MainDeck.Count}");
             var bought = run.Events.Skip(mark).ToList();
@@ -295,7 +295,7 @@ namespace DuelRoguelike.Dev
             uint target = targets.Last();
             run.BuySwap(ShopProduct.SwapSameRarityChosen, release2, target);
             chips -= RunRules.ShopPrice(ShopProduct.SwapSameRarityChosen);
-            Expect(run.Chips == chips && chips == 0 && run.SealedMain.Contains(target) && run.SideDeck.Contains(release2) && run.MainDeck.Count == 45,
+            Expect(run.Chips == chips && chips == 0 && run.SealedMain.Contains(target) && run.SideDeck.Contains(release2) && run.MainDeck.Count == 43,
                 $"직접 고른 교체: 칩 {run.Chips}, {target} 봉인");
             Expect(!run.CanBuy(ShopProduct.SwapAny, out string none) && none.Contains("칩이 모자람"), "칩 0");
 
@@ -307,16 +307,16 @@ namespace DuelRoguelike.Dev
 
             // 40장 덱: 교체하면 메인 덱이 39장이 되어 보충한다 (풀린 카드가 사이드 덱에 있어 채울 수 있다).
             var forty = new DeckRecipe("Test40", "시험 덱 40장", StarterDecks.Yugi.Entries.Take(40).ToList());
-            var spare = StarterDecks.Yugi.Entries.Skip(40).Take(1).Select(e => e.Code).ToList();
+            var spare = StarterDecks.Yugi.Entries.Skip(40).Take(2).Select(e => e.Code).ToList();
             var thin = NewRun(forty, side: spare);
             Play(thin, DuelResult.Loss, 0);
-            Play(thin, DuelResult.Win, 8000); // 보충(사이드 덱 1장) 뒤 1층 승리
+            Play(thin, DuelResult.Win, 8000); // 보충(사이드 덱 2장) 뒤 1층 승리
             while (thin.Floor < 5)
                 Play(thin, DuelResult.Win, 8000);
-            Expect(thin.Floor == 5 && thin.MainDeck.Count == 40 && thin.SealedCount == 1 && thin.Chips == 80,
+            Expect(thin.Floor == 5 && thin.MainDeck.Count == 40 && thin.SealedCount == 2 && thin.Chips == 80,
                 $"40장 덱 5층: 메인 {thin.MainDeck.Count}, 사이드 {thin.SideDeck.Count}, 봉인 {thin.SealedCount}, 칩 {thin.Chips}");
             uint x = thin.SealedCards()[0];
-            Expect(thin.CanBuy(ShopProduct.SwapAny, out string why) && thin.ReleaseCandidates(ShopProduct.SwapAny).SequenceEqual(new[] { x }), $"40장 덱도 교체 가능 ({why})");
+            Expect(thin.CanBuy(ShopProduct.SwapAny, out string why) && thin.ReleaseCandidates(ShopProduct.SwapAny).SequenceEqual(thin.SealedCards()), $"40장 덱도 교체 가능 ({why})");
             thin.BuySwap(ShopProduct.SwapAny, x);
             Expect(thin.Phase == RunPhase.NeedsRefill && thin.RefillNeeded == 1 && thin.RefillCandidates().Contains(x), $"교체 뒤 보충: {thin.Phase}, {thin.RefillNeeded}장");
             Expect(!thin.CanLeaveFloor(out _) && !thin.CanBuy(ShopProduct.SwapAnyChosen, out _), "보충 중에는 떠나거나 살 수 없음");
@@ -326,7 +326,7 @@ namespace DuelRoguelike.Dev
             // 봉인 해제 (150): 칩을 모아 진열된 칩교환소에서 산다.
             var rich = NewRun(StarterDecks.Yugi);
             Play(rich, DuelResult.Loss, 0);
-            Play(rich, DuelResult.Loss, 0); // 봉인 3장: 10층 보스 보상으로 1장 풀려도 남는다
+            Play(rich, DuelResult.Loss, 0); // 봉인 5장: 10층 보스 보상으로 1장 풀려도 남는다
             while (rich.Phase != RunPhase.Ended && rich.Floor < 120 && !(rich.FloorKind == FloorKind.ChipExchange && rich.Shop.Any(o => o.Product == ShopProduct.Unseal) && rich.Chips >= 150))
                 Play(rich, DuelResult.Win, 8000);
             bool reached = rich.FloorKind == FloorKind.ChipExchange && rich.CanBuy(ShopProduct.Unseal, out _);
@@ -688,7 +688,7 @@ namespace DuelRoguelike.Dev
                 {
                     int main = run.MainDeck.Count;
                     run.FinishDuel(DuelResult.Loss, 0);
-                    int expectSealed = Math.Min(1 + floor / 10, main);
+                    int expectSealed = Math.Min(2 + floor / 10, main); // 1 + 연패 1 + 층÷10
                     Expect(run.LosingStreak == 1 && run.SealedMain.Count == expectSealed && run.Chips == chips && run.SideDeck.Count == side
                            && (run.Phase != RunPhase.Ready || run.Floor == floor + 1 && run.Lp == 8000),
                         $"이벤트 전투 패배: 봉인 {run.SealedMain.Count} (기대 {expectSealed}), {run.Phase}, {run.Floor}층, LP {run.Lp}");
@@ -906,6 +906,12 @@ namespace DuelRoguelike.Dev
         static RunDuel Begin(RunState run)
         {
             PassFloors(run);
+            // 지나간 이벤트의 결과로 봉인되어 메인 덱이 모자라면 보충(첫 후보)하고 남은 비전투 층을 마저 지나간다.
+            while (run.Phase == RunPhase.NeedsRefill)
+            {
+                run.MoveToDeck(run.RefillCandidates()[0]);
+                PassFloors(run);
+            }
             return run.BeginDuel();
         }
 
@@ -940,15 +946,15 @@ namespace DuelRoguelike.Dev
             var run = NewRun(StarterDecks.Yugi);
             Expect(run.MainDeck.Count == 50 && run.ExtraDeck.Count == 0 && run.SideDeck.Count == 0 && run.Gold == 0, "유희 편 시작 장수");
 
-            // 1층 2연패: 1장, 2장 봉인. LP는 8000, 층은 그대로.
+            // 1층 2연패: 2장, 3장 봉인 (1 + 연패 + 층÷10). LP는 8000, 층은 그대로.
             int mark = run.Events.Count;
             Play(run, DuelResult.Loss, 0);
-            Expect(run.LosingStreak == 1 && run.Floor == 1 && run.Lp == 8000 && run.MainDeck.Count == 49, $"1패 뒤: 연패 {run.LosingStreak}, {run.Floor}층, LP {run.Lp}, 메인 {run.MainDeck.Count}");
-            Expect(CountNew(run, mark, RunEventKind.CardSealed, RunPile.Main) == 1 && run.SealedMain.Count == 1, "1층 1연패는 1장 봉인");
+            Expect(run.LosingStreak == 1 && run.Floor == 1 && run.Lp == 8000 && run.MainDeck.Count == 48, $"1패 뒤: 연패 {run.LosingStreak}, {run.Floor}층, LP {run.Lp}, 메인 {run.MainDeck.Count}");
+            Expect(CountNew(run, mark, RunEventKind.CardSealed, RunPile.Main) == 2 && run.SealedMain.Count == 2, "1층 1연패는 2장 봉인");
             mark = run.Events.Count;
             Play(run, DuelResult.Draw, 0);
-            Expect(run.LosingStreak == 2 && run.Draws == 1 && run.MainDeck.Count == 47, $"무승부는 패배로: 연패 {run.LosingStreak}, 메인 {run.MainDeck.Count}");
-            Expect(CountNew(run, mark, RunEventKind.CardSealed, RunPile.Main) == 2, "1층 2연패는 2장 봉인");
+            Expect(run.LosingStreak == 2 && run.Draws == 1 && run.MainDeck.Count == 45, $"무승부는 패배로: 연패 {run.LosingStreak}, 메인 {run.MainDeck.Count}");
+            Expect(CountNew(run, mark, RunEventKind.CardSealed, RunPile.Main) == 3, "1층 2연패는 3장 봉인");
 
             // 승리: 연패 0, 남은 LP + 1000, 칩 +20, 보상 1개 (후보 또는 골드 대체). 보상을 다 받으면 다음 층.
             mark = run.Events.Count;
@@ -1021,14 +1027,14 @@ namespace DuelRoguelike.Dev
                 "보스 격파 LP 이벤트 (+1000은 없음)");
             if (run.Phase == RunPhase.ChoosingReward)
                 run.ChooseReward(0);
-            Expect(run.Phase == RunPhase.ChoosingUnseal && run.Floor == 10 && run.SealedCount == 3 && HasNew(run, mark, e => e.Kind == RunEventKind.UnsealOffered && e.Count == 3),
+            Expect(run.Phase == RunPhase.ChoosingUnseal && run.Floor == 10 && run.SealedCount == 5 && HasNew(run, mark, e => e.Kind == RunEventKind.UnsealOffered && e.Count == 5),
                 $"보스 보상: 봉인 해제 고르기 ({run.Phase}, 봉인 {run.SealedCount}장)");
             ExpectThrows<InvalidOperationException>(() => run.ChooseUnseal(run.MainDeck[0]), "봉인되지 않은 카드를 봉인 해제");
             uint unsealed = run.SealedCards()[0];
             int sideBefore = run.SideDeck.Count;
             mark = run.Events.Count;
             run.ChooseUnseal(unsealed);
-            Expect(run.Floor == 11 && run.Phase == RunPhase.Ready && run.SealedCount == 2 && run.SideDeck.Count == sideBefore + 1 && run.SideDeck.Last() == unsealed
+            Expect(run.Floor == 11 && run.Phase == RunPhase.Ready && run.SealedCount == 4 && run.SideDeck.Count == sideBefore + 1 && run.SideDeck.Last() == unsealed
                    && HasNew(run, mark, e => e.Kind == RunEventKind.CardUnsealed && e.Code == unsealed && e.IsBonus && e.Pile == RunPile.Main),
                 $"보스 보상 봉인 해제 → 사이드 덱, 11층 ({run.Floor}층, 봉인 {run.SealedCount}장)");
 
@@ -1039,11 +1045,11 @@ namespace DuelRoguelike.Dev
             Expect(run.Lp == 8500, $"승리 LP는 8000을 넘을 수 있음: {run.Lp}");
             Expect(Begin(run).PlayerLp == 8500, "12층은 8500으로 시작");
 
-            // 12층 패배: 1 + 12÷10 = 2장, LP 8000으로 회복. 칩은 잃지 않는다.
+            // 12층 패배: 1 + 연패 1 + 12÷10 = 3장, LP 8000으로 회복. 칩은 잃지 않는다.
             mark = run.Events.Count;
             chips = run.Chips;
             run.FinishDuel(DuelResult.Loss, 0);
-            Expect(CountNew(run, mark, RunEventKind.CardSealed, RunPile.Main) == 2 && run.Lp == 8000 && run.Chips == chips, "12층 1연패는 2장 봉인, LP 회복, 칩 그대로");
+            Expect(CountNew(run, mark, RunEventKind.CardSealed, RunPile.Main) == 3 && run.Lp == 8000 && run.Chips == chips, "12층 1연패는 3장 봉인, LP 회복, 칩 그대로");
 
             // 19층 휴식: LP가 8000보다 높아도 8000으로 맞춘다. 20층(보스)은 8000으로 시작.
             while (run.Floor < 18)
@@ -1058,7 +1064,7 @@ namespace DuelRoguelike.Dev
             Expect(run.Lp == 8000 && CountNew(run, mark, RunEventKind.LpRestored) == 0, "보스 층을 LP 8000으로 이기면 LP 이벤트 없음");
             Choose(run);
 
-            // 24층 3연패: 3, 4, 5장 (연패 + 24÷10).
+            // 24층 3연패: 4, 5, 6장 (1 + 연패 + 24÷10).
             while (run.Floor < 24)
                 Play(run, DuelResult.Win, 5000);
             for (int streak = 1; streak <= 3; streak++)
@@ -1069,10 +1075,10 @@ namespace DuelRoguelike.Dev
                 int mainBefore = run.Phase == RunPhase.NeedsRefill ? 40 : run.MainDeck.Count;
                 Play(run, DuelResult.Loss, 0);
                 int sealedCount = CountNew(run, mark, RunEventKind.CardSealed, RunPile.Main);
-                Expect(sealedCount == Math.Min(streak + 2, mainBefore), $"24층 {streak}연패: {sealedCount}장 봉인 (기대 {streak + 2}장)");
+                Expect(sealedCount == Math.Min(streak + 3, mainBefore), $"24층 {streak}연패: {sealedCount}장 봉인 (기대 {streak + 3}장)");
             }
-            Expect(RunRules.MainSealCount(3, 25) == 5 && RunRules.MainSealCount(1, 9) == 1 && RunRules.MainSealCount(1, 10) == 2,
-                "봉인 장수 공식");
+            Expect(RunRules.MainSealCount(3, 25) == 6 && RunRules.MainSealCount(1, 9) == 2 && RunRules.MainSealCount(2, 9) == 3 && RunRules.MainSealCount(1, 10) == 3,
+                "봉인 장수 공식 (1 + 연패 + 층÷10)");
         }
 
         void EndAndRefill()
@@ -1089,25 +1095,23 @@ namespace DuelRoguelike.Dev
             ExpectThrows<InvalidOperationException>(() => run.BeginDuel(), "끝난 런에서 듀얼 시작");
 
             // 사이드 덱이 있으면 보충할 때까지 듀얼을 시작할 수 없고, 40장이 되면 Ready.
+            // 1연패(2장 봉인)를 사이드 덱 3장 중 2장으로 한 장씩 채운다.
             run = NewRun(forty, side: spare);
             Play(run, DuelResult.Loss, 0);
-            Expect(run.Phase == RunPhase.NeedsRefill && run.RefillNeeded == 1 && run.RefillCandidates().Count == 3,
+            Expect(run.Phase == RunPhase.NeedsRefill && run.RefillNeeded == 2 && run.RefillCandidates().Count == 3,
                 $"보충 필요: {run.Phase}, {run.RefillNeeded}장, 후보 {run.RefillCandidates().Count}");
             ExpectThrows<InvalidOperationException>(() => run.BeginDuel(), "보충 전에 듀얼 시작");
             Expect(!run.CanMoveToSide(run.MainDeck[0], out _), "보충 중에는 사이드 덱으로 옮길 수 없음");
             run.MoveToDeck(spare[1]);
-            Expect(run.Phase == RunPhase.Ready && run.MainDeck.Count == 40 && run.SideDeck.Count == 2
+            Expect(run.Phase == RunPhase.NeedsRefill && run.RefillNeeded == 1 && run.SideDeck.Count == 2, "1장 보충 뒤 아직 1장 더");
+            ExpectThrows<InvalidOperationException>(() => run.BeginDuel(), "보충이 덜 끝났는데 듀얼 시작");
+            run.MoveToDeck(run.RefillCandidates()[0]);
+            Expect(run.Phase == RunPhase.Ready && run.MainDeck.Count == 40 && run.SideDeck.Count == 1
                    && run.Events.Last().Kind == RunEventKind.MovedToDeck && run.Events.Last().IsRefill, "보충 뒤 Ready");
 
-            // 2연패(2장)인데 사이드 덱 2장으로 채울 수 있으면 보충, 1장 모자라면 종료.
+            // 2연패(3장 봉인)인데 사이드 덱이 1장뿐이면 채울 수 없어 런 종료.
             Play(run, DuelResult.Loss, 0);
-            Expect(run.Phase == RunPhase.NeedsRefill && run.RefillNeeded == 2, $"2장 보충 필요: {run.Phase} {run.RefillNeeded}");
-            run.MoveToDeck(run.RefillCandidates()[0]);
-            Expect(run.Phase == RunPhase.NeedsRefill && run.RefillNeeded == 1, "1장 보충 뒤 아직 1장 더");
-            run.MoveToDeck(run.RefillCandidates()[0]);
-            Expect(run.Phase == RunPhase.Ready && run.SideDeck.Count == 0, "2장 보충 뒤 Ready");
-            Play(run, DuelResult.Loss, 0);
-            Expect(run.Phase == RunPhase.Ended, "3연패, 사이드 덱이 비어 런 종료");
+            Expect(run.Phase == RunPhase.Ended && run.EndReason == RunEndReason.DeckBelowMinimum, $"2연패(3장)에 사이드 덱 1장이면 런 종료 ({run.Phase})");
 
             // 봉인 장수가 메인 덱보다 많으면 전부 봉인 (여기서는 40장 런을 많이 지게 하지 않고 공식만 본다).
             Expect(RunRules.MainSealCount(50, 1) > 40, "봉인 장수에 상한 없음");
@@ -1178,14 +1182,14 @@ namespace DuelRoguelike.Dev
             var joey40 = new DeckRecipe("Joey40", "조이 편 40장 + 엑스트라 1장",
                 StarterDecks.Joey.Entries.Where(e => !IsExtra(e.Code)).Take(40).Append(StarterDecks.Joey.Entries.First(e => IsExtra(e.Code))).ToList());
             uint joeyFusion = StarterDecks.Joey.Entries.First(e => IsExtra(e.Code)).Code;
-            uint joeySpare = StarterDecks.Joey.Entries.Where(e => !IsExtra(e.Code)).Skip(40).First().Code;
-            run = NewRun(joey40, side: new[] { joeySpare });
-            run.MoveToSide(joeyFusion); // 엑스트라 덱을 비워 봉인은 메인 덱에서만
+            var joeySpares = StarterDecks.Joey.Entries.Where(e => !IsExtra(e.Code)).Skip(40).Take(2).Select(e => e.Code).ToList();
+            run = NewRun(joey40, side: joeySpares);
+            run.MoveToSide(joeyFusion); // 엑스트라 덱을 비워 봉인은 메인 덱에서만 (1연패 2장)
             Play(run, DuelResult.Loss, 0);
             if (run.Phase == RunPhase.NeedsRefill)
             {
                 Expect(!run.CanMoveToDeck(joeyFusion, out _), "보충 중 엑스트라 덱 카드");
-                Expect(run.RefillCandidates().SequenceEqual(new[] { joeySpare }), "보충 후보는 메인 덱 카드만");
+                Expect(run.RefillCandidates().SequenceEqual(joeySpares.Distinct()), "보충 후보는 메인 덱 카드만");
             }
             else
                 Expect(false, $"조이 40장 1패 뒤 보충 필요 ({run.Phase})");
@@ -1558,8 +1562,8 @@ namespace DuelRoguelike.Dev
             Expect(r.Lp == 8000, $"LP 0으로 진 것으로 쳐서 8000 (시작 LP 8600을 남기지 않음): {r.Lp}");
             var forfeited = r.Events.Where(e => e.Kind == RunEventKind.DuelForfeited).ToList();
             Expect(forfeited.Count == 1 && forfeited[0].DuelNumber == 2
-                   && r.Events.Count(e => e.Kind == RunEventKind.CardSealed && e.DuelNumber == 2 && e.Pile == RunPile.Main) == 1,
-                "DuelForfeited 이벤트 1개, 2층 1연패 메인 덱 봉인 1장");
+                   && r.Events.Count(e => e.Kind == RunEventKind.CardSealed && e.DuelNumber == 2 && e.Pile == RunPile.Main) == 2,
+                "DuelForfeited 이벤트 1개, 2층 1연패 메인 덱 봉인 2장");
 
             // 규칙만으로 같은 듀얼을 LP 0으로 진 것과 같다 (DuelForfeited 이벤트만 더).
             run.FinishDuel(DuelResult.Loss, 0);

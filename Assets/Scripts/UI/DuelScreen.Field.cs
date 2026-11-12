@@ -471,6 +471,7 @@ namespace DuelRoguelike.UI
             _promptLabel.pickingMode = PickingMode.Ignore;
             _promptLabel.style.whiteSpace = WhiteSpace.NoWrap;
             _promptDetail = UiStyle.Label("", 14, UiStyle.TextDim);
+            _promptDetail.name = "prompt-detail";
             _promptDetail.pickingMode = PickingMode.Ignore;
             _promptDetail.style.whiteSpace = WhiteSpace.NoWrap;
             _promptDetail.style.marginTop = -3;

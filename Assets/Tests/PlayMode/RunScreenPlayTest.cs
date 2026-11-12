@@ -15,12 +15,14 @@
 // 승리 보상 창은 자리 3개를 확인하고, 누르고 받기·두 번 누르기를 번갈아 하며, 빈 자리(골드)가 나오면 한 번 골드를 고른다.
 // 보충 고르기를 한 번 이상 거칠 때까지 런을 더 한다. 비전투 층(칩교환소·휴식·이벤트)은 다음 층으로 지나가고, 보스 보상 창은 첫 카드를 고른다.
 // 탑·칩교환소 시험(TowerAndChipExchange): 저장 파일을 고쳐 5층 칩교환소로 가서 교체·봉인 해제를 사고, 이벤트 창, 휴식 창(LP 3000 → 8000) → 보스, 보스 보상 창을 본다.
+// 끝에 탑 메뉴의 "런 포기"를 해 본다: 확인 창(계속한다·취소 키·결정 키로는 끝나지 않음) → 포기 → 런 종료 화면, 저장 파일에서 런이 빠지고 골드 정산.
+// 패배 패널티: 듀얼 도중에 끈 패배에서 메인 덱 봉인 장수가 1 + 연패 + 층÷10인지 본다.
 // 듀얼 화면은 한 번, 6턴쯤에 자동 진행을 멈추고 카드에 마우스 올리기(왼쪽 카드 정보)와 묘지 누르기(카드 목록 창)를 해 본다.
 // 소리: 효과음 파일이 다 있는지, 처음 화면·탑은 탑 곡·듀얼은 듀얼 곡인지, 버튼·키·올라가기·한 단계씩 보여 주기에 소리가 나는지 (낸 횟수로 본다).
 // 설정 창: 처음 화면의 "설정"에서 효과음·배경음 음량을 버튼과 키로 바꿔 보고 처음 값으로 되돌린다 (음량은 PlayerPrefs에 남는다).
 // 오류 로그(Debug.LogError·LogException)가 하나라도 나오면 실패한다.
 // 환경 변수 DUELROGUELIKE_SCREENSHOT_DIR에 폴더를 주면 화면마다 처음 한 번 1920×1080 PNG로 저장한다 (화면 모양 확인용).
-// DUELROGUELIKE_SCREEN_THOROUGH=1이면 한 단계씩 보여 주기를 더 오래(더 많은 듀얼에서) 지켜보며 가끔만 생기는 장면(체인 2 이상, 상대 체인, 선택 창)도 기다린다.
+// DUELROGUELIKE_SCREEN_THOROUGH=1이면 한 단계씩 보여 주기를 더 오래(더 많은 듀얼에서) 지켜보며 가끔만 생기는 장면(체인 2 이상, 상대 체인, 선택 창, 내 체인 확인에서 우클릭)도 기다린다.
 //
 // 실행: 에디터의 Test Runner 창(Window > General > Test Runner) PlayMode 탭, 또는 에디터를 닫고 배치 모드로
 //   & "C:\Program Files\Unity\Hub\Editor\6000.3.28f1\Editor\Unity.exe" -batchmode -projectPath C:\Dev\DuelRoguelike -runTests -testPlatform PlayMode -testResults C:\Dev\playmode-results.xml -logFile C:\Dev\playmode.log
@@ -74,6 +76,11 @@ namespace DuelRoguelike.Tests
         bool _speedSeen;
         bool _lpSeen;
         bool _duelMusicSeen, _towerMusicSeen;
+        bool _rightClickSeen;
+        string _chainModeOriginal;
+        /// <summary>체인 확인 방식은 PlayerPrefs에 남는다. 시험이 바꾼 것을 끝나면 되돌린다.</summary>
+        const string ChainPromptPrefKey = "duel.chain-prompt";
+        int? _chainPromptPref;
         // 필드 보기는 선택 창(묘지·덱에서 고르기, 예/아니오 등)이 뜰 때만 있어서 기다리지 않는다. 뜨면 확인한다.
         bool PlaybackAllSeen => _previewSeen && _skipSeen && _chainSeen && _speedSeen && _lpSeen && _enterSeen;
         bool _enterSeen;
@@ -82,7 +89,7 @@ namespace DuelRoguelike.Tests
         bool _skipSeen;
         static readonly bool Thorough = Environment.GetEnvironmentVariable("DUELROGUELIKE_SCREEN_THOROUGH") == "1";
         static readonly int MaxPlaybackTries = Thorough ? 8 : 3;
-        bool RareSeen => _chain2Seen && _chainOpponentSeen && _fieldViewSeen;
+        bool RareSeen => _chain2Seen && _chainOpponentSeen && _fieldViewSeen && _rightClickSeen;
 
         string SaveFile => Path.Combine(_saveDir, "save.txt");
 
@@ -91,11 +98,22 @@ namespace DuelRoguelike.Tests
         {
             _saveDir = Path.Combine(Path.GetTempPath(), "DuelRoguelike-playtest-" + Guid.NewGuid().ToString("N"));
             Environment.SetEnvironmentVariable(SaveDirVariable, _saveDir);
+            _chainPromptPref = PlayerPrefs.HasKey(ChainPromptPrefKey) ? PlayerPrefs.GetInt(ChainPromptPrefKey) : (int?)null;
+            // 시험 중에는 소리를 내지 않는다 (재생 횟수는 그대로 센다).
+            _listenerVolume = AudioListener.volume;
+            AudioListener.volume = 0f;
         }
+
+        float _listenerVolume = 1f;
 
         [TearDown]
         public void TearDown()
         {
+            AudioListener.volume = _listenerVolume;
+            if (_chainPromptPref.HasValue)
+                PlayerPrefs.SetInt(ChainPromptPrefKey, _chainPromptPref.Value);
+            else
+                PlayerPrefs.DeleteKey(ChainPromptPrefKey);
             Environment.SetEnvironmentVariable(SaveDirVariable, null);
             if (Directory.Exists(_saveDir))
                 Directory.Delete(_saveDir, true);
@@ -359,6 +377,7 @@ namespace DuelRoguelike.Tests
             // ---- 듀얼 도중에 끄기 → 그 듀얼은 패배 ----
             yield return ToBattleFloor(1);
             int played = DuelsPlayed();
+            int sealedBefore = SavedCards("sealed-main").Count, mainCards = SavedCards("main").Count, lossFloor = SavedNumber("floor");
             yield return BeginDuelWithCoinToss();
             yield return WaitFor(() => Find<Button>(DuelUi, "auto-to-end") != null || Find<Button>(DuelUi, "leave-duel") != null, LoadTimeout, "듀얼 화면");
             StringAssert.Contains("\nphase InDuel\n", File.ReadAllText(SaveFile), "듀얼을 시작했는데 듀얼 중 상태로 저장되지 않았다");
@@ -372,6 +391,12 @@ namespace DuelRoguelike.Tests
             string forfeited = File.ReadAllText(SaveFile);
             StringAssert.Contains("event DuelForfeited ", forfeited, "듀얼 도중에 끈 듀얼이 패배로 저장되지 않았다");
             Assert.IsFalse(forfeited.Contains("\nphase InDuel\n"), "패배로 처리했는데 저장 파일이 아직 듀얼 중이다");
+            // 패배 패널티: 메인 덱에서 1 + 연패 + 층÷10장을 봉인한다 (RunRules.MainSealCount, 2026-11-13에 앞의 1을 더함).
+            int lossStreak = SavedNumber("streak");
+            int expectedSeals = Math.Min(1 + lossStreak + lossFloor / 10, mainCards);
+            Assert.AreEqual(sealedBefore + expectedSeals, SavedCards("sealed-main").Count,
+                $"{lossFloor}층 {lossStreak}연패의 봉인 장수 (메인 덱 {mainCards}장에서 {expectedSeals}장이어야 함)");
+            Debug.Log($"[런 화면 시험] 패배 패널티: {lossFloor}층 {lossStreak}연패, 메인 덱 봉인 {expectedSeals}장");
             yield return Shot(RunUi, "7b-forfeit");
             Click(Find<Button>(RunUi, "continue-run"));
             yield return null;
@@ -649,6 +674,66 @@ namespace DuelRoguelike.Tests
             yield return null;
             Assert.IsNull(Find<VisualElement>(RunUi, "event-codex"), "이벤트 도감 창이 닫히지 않았다");
             Debug.Log("[런 화면 시험] 탑·칩교환소: 교체 2가지와 봉인 해제 구매, 이벤트 창·결과, 휴식 → 보스, 보스 보상 봉인 해제, 이벤트 도감");
+
+            // 런 포기 (탑 메뉴): 이 런(46층)을 이어 해서 포기한다.
+            Click(Find<Button>(RunUi, "continue-run"));
+            yield return null;
+            yield return AbandonFromHub();
+        }
+
+        /// <summary>
+        /// 탑 메뉴의 "런 포기": 확인 창이 뜨고, "계속한다"·취소 키·결정 키로는 끝나지 않는다 (처음에는 "계속한다"가 골라져 있다).
+        /// "포기한다"를 누르면 런 종료 화면("런을 포기했다.")으로 가고, 저장 파일에서 진행 중인 런이 빠지며 확인 창에 보인 골드가 누적에 더해진다.
+        /// </summary>
+        IEnumerator AbandonFromHub()
+        {
+            Assert.IsTrue(IsHub(), "런 포기: 층 사이 화면이 아니다");
+            int goldBefore = SavedNumber("gold"); // 맨 위 줄이 골드 누적
+            int runFloor = SavedNumber("floor");
+            var abandon = Find<Button>(RunUi, "hub-abandon");
+            Assert.IsNotNull(abandon, "허브 메뉴에 런 포기가 없다");
+            Assert.IsTrue(abandon.enabledSelf, "허브 메뉴의 런 포기가 꺼져 있다");
+            bool WindowOpen() => Find<VisualElement>(RunUi, "abandon-window") != null;
+            bool RunSaved() => File.ReadAllText(SaveFile).Replace("\r\n", "\n").Contains("\nrun\n");
+
+            Click(abandon);
+            yield return null;
+            Assert.IsTrue(WindowOpen(), "런 포기를 눌렀는데 확인 창이 뜨지 않았다");
+            StringAssert.Contains($"{runFloor}층", Find<Label>(RunUi, "abandon-text")?.text ?? "", "확인 창에 지금 층이 없다");
+            var goldMatch = Regex.Match(Find<Label>(RunUi, "abandon-gold")?.text ?? "", @"\+(\d+)");
+            Assert.IsTrue(goldMatch.Success, "확인 창에 받을 골드가 없다");
+            yield return Shot(RunUi, "18-abandon-confirm");
+            Click(Find<Button>(RunUi, "abandon-cancel"));
+            yield return null;
+            Assert.IsFalse(WindowOpen(), "계속한다를 눌렀는데 확인 창이 닫히지 않았다");
+            Assert.IsTrue(IsHub() && RunSaved(), "계속한다를 눌렀는데 런이 끝났다");
+
+            Click(abandon);
+            yield return null;
+            yield return Tap(UnityEngine.InputSystem.Key.K);
+            Assert.IsFalse(WindowOpen(), "취소 키(K)를 눌렀는데 확인 창이 닫히지 않았다");
+            Click(abandon);
+            yield return null;
+            yield return Tap(UnityEngine.InputSystem.Key.J);
+            Assert.IsFalse(WindowOpen(), "결정 키(J)를 눌렀는데 확인 창이 닫히지 않았다");
+            Assert.IsTrue(IsHub() && RunSaved(), "확인 창을 열고 결정 키를 바로 눌렀는데 런이 끝났다 (처음에는 계속한다가 골라져 있어야 한다)");
+
+            int loseSounds = SoundCount("Lose");
+            Click(abandon);
+            yield return null;
+            Click(Find<Button>(RunUi, "abandon-confirm"));
+            yield return null;
+            Assert.IsNotNull(Find<Button>(RunUi, "new-run"), "포기했는데 런 종료 화면이 아니다");
+            StringAssert.Contains("런을 포기했다", Find<Label>(RunUi, "run-end-reason")?.text ?? "", "런 종료 화면에 포기한 까닭이 없다");
+            Assert.Greater(SoundCount("Lose"), loseSounds, "포기할 때 패배 소리가 나지 않았다");
+            Assert.IsFalse(RunSaved(), "포기했는데 저장 파일에 진행 중인 런이 남아 있다");
+            int gained = int.Parse(goldMatch.Groups[1].Value);
+            Assert.AreEqual(goldBefore + gained, SavedNumber("gold"), "포기한 런의 골드(확인 창에 보인 값)가 누적에 더해지지 않았다");
+            yield return Shot(RunUi, "18b-abandon-end");
+            Click(Find<Button>(RunUi, "end-title"));
+            yield return null;
+            Assert.IsNull(Find<Button>(RunUi, "continue-run"), "포기한 런이 처음 화면에 이어하기로 남아 있다");
+            Debug.Log($"[런 화면 시험] 런 포기: {runFloor}층, 확인 창(계속한다·K·J로는 끝나지 않음) → 포기 → 런 종료 화면, 골드 +{gained}, 저장 파일에서 런 빠짐");
         }
 
         /// <summary>칩교환소에서 상품 하나를 산다: 사기 → 풀 카드 → (직접 고르는 교체면 대신 봉인할 카드) → 사기. 산 뒤 칩교환소 창으로 돌아온다.</summary>
@@ -828,6 +913,14 @@ namespace DuelRoguelike.Tests
             return match.Success ? match.Groups[1].Value.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries).ToList() : new List<string>();
         }
 
+        /// <summary>저장 파일의 "key 숫자" 줄의 숫자 (floor, streak, lp …). 그 줄이 없으면 실패.</summary>
+        int SavedNumber(string key)
+        {
+            var match = Regex.Match(File.ReadAllText(SaveFile).Replace("\r\n", "\n"), $@"\n{Regex.Escape(key)} (-?\d+)\n");
+            Assert.IsTrue(match.Success, $"저장 파일에 {key} 줄이 없다");
+            return int.Parse(match.Groups[1].Value);
+        }
+
         /// <summary>저장 파일의 "key 값…" 줄을 바꾼다 (값이 없는 줄도). 그 줄이 없으면 실패.</summary>
         static string SetLine(string text, string key, string value)
         {
@@ -959,7 +1052,7 @@ namespace DuelRoguelike.Tests
         static readonly string[] DuelSounds =
         {
             "Draw", "Set", "Flip", "Shuffle", "Summon", "SpecialSummon", "Activate", "Target", "ToGrave", "ToHand", "Destroy", "Banish", "Equip",
-            "Attack", "Damage", "Recover", "NewTurn", "Phase", "Coin", "Dice",
+            "Attack", "DirectHit", "Damage", "Recover", "NewTurn", "Phase", "Coin", "Dice",
         };
 
         /// <summary>
@@ -1812,6 +1905,10 @@ namespace DuelRoguelike.Tests
             int steps = 0;
             bool attack = false, battle = false;
             string last = null;
+            // 내 체인 확인이 자주 뜨게 체인 확인을 "항상"으로 둔다 (우클릭으로 넘기기를 보려고). 우클릭을 보면 되돌린다.
+            _chainModeOriginal = _chainModeOriginal ?? ChainPromptMode();
+            if (!_rightClickSeen)
+                SetChainPrompt("항상");
             while (!(battle && PlaybackAllSeen && (!Thorough || RareSeen)) && Time.realtimeSinceStartup < until && Find<Button>(DuelUi, "leave-duel") == null)
             {
                 yield return DismissReveal();
@@ -1903,13 +2000,19 @@ namespace DuelRoguelike.Tests
                     _fieldViewSeen = true;
                     Debug.Log("[런 화면 시험] 선택 창: Esc → 필드 확인 중, Esc → 창 다시 열림, 필드 보기 → 필드 확인 중");
                 }
-                // 상대 공격을 본 뒤: 건너뛰기 → 모서리에 "건너뛰는 중"
+                // 상대 공격을 본 뒤: 빨리 넘기기 → 모서리에 "빨리 넘김", 한 번 더 → "건너뜀"
                 var skip = Find<Button>(DuelUi, "skip-playback");
                 if (battle && !_skipSeen && skip != null)
                 {
                     Click(skip);
                     var badge = Find<Label>(DuelUi, "status-badge");
-                    StringAssert.StartsWith("건너뜀", badge?.text ?? "", "건너뛰기를 눌렀는데 모서리 표시가 다르다");
+                    StringAssert.StartsWith("빨리 넘김", badge?.text ?? "", "빨리 넘기기를 눌렀는데 모서리 표시가 다르다");
+                    yield return Shot(DuelUi, "2i0-fast-forward");
+                    skip = Find<Button>(DuelUi, "skip-playback");
+                    if (skip == null) // 그 사이 다음 입력까지 왔다: 다음에 다시 본다
+                        continue;
+                    Click(skip);
+                    StringAssert.StartsWith("건너뜀", badge.text, "빨리 넘기는 중에 한 번 더 눌렀는데 모서리 표시가 다르다");
                     _skipSeen = true;
                     yield return Shot(DuelUi, "2i-skip");
                     // 건너뛰기가 끝나면 표시가 흐려지며 사라진다 (바로 사라지지 않는다).
@@ -1931,17 +2034,33 @@ namespace DuelRoguelike.Tests
                 // 건너뛰기를 본 뒤: 보여 주는 중 스페이스를 누르고 있으면 모서리에 "가속 중"
                 if (_skipSeen && !_speedSeen && Find<Button>(DuelUi, "skip-playback") != null)
                     yield return CheckSpeedUp();
-                // 가속 중을 본 뒤: 보여 주는 중 엔터 → 모서리에 "건너뜀"
+                // 가속 중을 본 뒤: 보여 주는 중 엔터 → 모서리에 "빨리 넘김" (연출과 효과음은 짧게 계속 나온다)
                 if (_speedSeen && !_enterSeen && Find<Button>(DuelUi, "skip-playback") != null)
                 {
                     yield return Tap(UnityEngine.InputSystem.Key.Enter);
-                    if (BadgeText().StartsWith("건너뜀"))
+                    if (BadgeText().StartsWith("빨리 넘김"))
                     {
                         _enterSeen = true;
-                        Debug.Log("[런 화면 시험] 보여 주는 중 엔터 → 건너뜀");
+                        Debug.Log("[런 화면 시험] 보여 주는 중 엔터 → 빨리 넘김");
                     }
                     else // 그 사이 보여 주기가 끝났으면 다음에 다시 본다
-                        Assert.IsNull(Find<Button>(DuelUi, "skip-playback"), "보여 주는 중 엔터를 눌렀는데 모서리에 건너뜀이 안 뜬다");
+                        Assert.IsNull(Find<Button>(DuelUi, "skip-playback"), "보여 주는 중 엔터를 눌렀는데 모서리에 빨리 넘김이 안 뜬다");
+                }
+                // 체인 확인이 뜨면 (뜰 때만): 우클릭 한 번 → "발동하지 않음"으로 답한다
+                if (!_rightClickSeen && Find<Button>(DuelUi, "skip-playback") == null && (Find<Label>(DuelUi, "prompt-detail")?.text ?? "").Contains("우클릭"))
+                {
+                    string prompt = Find<Label>(DuelUi, "prompt-label").text;
+                    int cancels = SoundCount("Cancel");
+                    SendPointer(Find<Label>(DuelUi, "prompt-label"), EventType.MouseDown, new Vector2(960, 540), 1, button: 1);
+                    yield return null;
+                    // 우클릭이 "발동하지 않음"으로 답했으면 취소 소리가 난다. 다음 시점의 체인 확인이 같은 문구로 바로 다시 뜰 수 있어 문구로는 가리지 않는다.
+                    string after = Find<Label>(DuelUi, "prompt-label")?.text ?? "";
+                    Assert.Greater(SoundCount("Cancel"), cancels,
+                        $"체인 확인({prompt})에서 우클릭했는데 발동하지 않음으로 답하지 않았다 (지금 문구: {after} / {Find<Label>(DuelUi, "prompt-detail")?.text})");
+                    _rightClickSeen = true;
+                    Debug.Log($"[런 화면 시험] 체인 확인 우클릭 → 발동하지 않음 ({prompt} → {after})");
+                    if (_chainModeOriginal != null)
+                        SetChainPrompt(_chainModeOriginal);
                 }
                 var once = Find<Button>(DuelUi, "auto-once");
                 if (once != null)
@@ -1949,12 +2068,35 @@ namespace DuelRoguelike.Tests
                 yield return null;
             }
             _playbackDone = battle && PlaybackAllSeen && (!Thorough || RareSeen);
+            if (_chainModeOriginal != null)
+                SetChainPrompt(_chainModeOriginal);
+            if (steps == 0 && Find<Button>(DuelUi, "leave-duel") != null)
+            {
+                // 자동 응답이 그 사이 듀얼을 끝냈다 (보여 줄 단계 전에): 이번은 세지 않고 다음 듀얼에서 다시 본다
+                _playbackTries--;
+                Debug.Log("[런 화면 시험] 한 단계씩 보여 주기: 보기 전에 듀얼이 끝나 다음 듀얼에서 다시 본다");
+                yield break;
+            }
             Assert.Greater(steps, 0, "자동(한 번)으로 답했는데 멈춰 보여 주는 단계가 없다");
             Assert.Greater(SoundCount(DuelSounds), sounds, "한 단계씩 보여 주는 동안 듀얼 효과음이 하나도 나지 않았다");
             Debug.Log("[런 화면 시험] 지금까지의 듀얼 효과음: " + string.Join(", ", DuelSounds.Select(n => (n, c: SoundCount(n))).Where(x => x.c > 0).Select(x => $"{x.n} {x.c}")));
             Debug.Log($"[런 화면 시험] 한 단계씩 보여 주기 ({_playbackTries}번째): 멈춘 단계 {steps}개, 상대 공격 {(attack ? "봄" : "못 봄")}, 그 뒤 데미지 계산 {(battle ? "봄" : "못 봄")}"
                 + $", 필드 확인 중 {(_fieldViewSeen ? "봄" : "못 봄")}, 가속 중 {(_speedSeen ? "봄" : "못 봄")}, LP 변화 {(_lpSeen ? "봄" : "못 봄")}"
-                + $", 체인 2 이상 {(_chain2Seen ? "봄" : "못 봄")}, 상대 체인 {(_chainOpponentSeen ? "봄" : "못 봄")}");
+                + $", 체인 2 이상 {(_chain2Seen ? "봄" : "못 봄")}, 상대 체인 {(_chainOpponentSeen ? "봄" : "못 봄")}, 체인 확인 우클릭 {(_rightClickSeen ? "봄" : "못 봄")}");
+        }
+
+        /// <summary>듀얼 화면의 체인 확인 방식 ("자동"·"항상"·"끔"). 버튼이 없으면 null.</summary>
+        static string ChainPromptMode()
+        {
+            string text = Find<Button>(DuelUi, "chain-prompt")?.text;
+            return text == null ? null : text.Substring(text.LastIndexOf(' ') + 1);
+        }
+
+        /// <summary>체인 확인 방식을 바꾼다 (버튼을 누를 때마다 자동 → 항상 → 끔 → 자동). 버튼이 없으면 그대로 둔다.</summary>
+        static void SetChainPrompt(string mode)
+        {
+            for (int i = 0; i < 3 && ChainPromptMode() != null && ChainPromptMode() != mode; i++)
+                Click(Find<Button>(DuelUi, "chain-prompt"));
         }
 
         static string BadgeText()
@@ -2165,9 +2307,9 @@ namespace DuelRoguelike.Tests
                 SendPointer(root, EventType.MouseMove, new Vector2(4, 4), 0);
         }
 
-        static void SendPointer(VisualElement target, EventType type, Vector2 position, int clicks)
+        static void SendPointer(VisualElement target, EventType type, Vector2 position, int clicks, int button = 0)
         {
-            var system = new Event { type = type, mousePosition = position, clickCount = clicks, button = 0 };
+            var system = new Event { type = type, mousePosition = position, clickCount = clicks, button = button };
             EventBase e = type == EventType.MouseDown ? PointerDownEvent.GetPooled(system)
                 : type == EventType.MouseUp ? (EventBase)PointerUpEvent.GetPooled(system)
                 : PointerMoveEvent.GetPooled(system);

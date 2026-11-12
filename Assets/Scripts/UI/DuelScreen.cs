@@ -78,7 +78,8 @@ namespace DuelRoguelike.UI
         const float AutoPlaySecondsPerFrame = 0.02f;
 
         // 한 단계씩 보여 주기: 엔진 메시지를 하나씩 반영하고(DuelSession.Step), 중요한 메시지(발동·공격·데미지 계산·LP·파괴 등)에서는
-        // 잠깐 멈춰 그 단계의 필드와 가운데 줄을 보여 준다. 멈추는 시간은 이 화면이 정한다. 필드를 누르면 다음 입력까지 건너뛴다.
+        // 잠깐 멈춰 그 단계의 필드와 가운데 줄을 보여 준다. 멈추는 시간은 이 화면이 정한다.
+        // 필드를 누르면 다음 입력까지 빨리 넘긴다 (멈추는 단계마다 연출·소리를 짧게 보여 준다). 한 번 더 누르면 바로 건너뛴다.
         // "자동으로 끝까지"는 멈추지 않는다 (DuelSession.Respond로 한 번에 진행한다).
         enum PlaybackSpeed { Fast, Normal, Slow }
         const string SpeedPrefKey = "duel.playback-speed";
@@ -88,7 +89,9 @@ namespace DuelRoguelike.UI
         static readonly Color OpponentLine = UiStyle.Hex(0xf2a58e);
         PlaybackSpeed _speed = PlaybackSpeed.Normal;
         bool _pacing;              // Step으로 한 단계씩 진행하는 중 (OnMessage가 멈출 단계를 고른다)
-        bool _skipping;            // 필드를 눌러 다음 입력까지 건너뛰는 중
+        bool _fastForward;         // 필드를 눌러 다음 입력까지 빨리 넘기는 중 (연출·소리는 짧게 보여 준다)
+        bool _skipping;            // 빨리 넘기는 중에 한 번 더 눌러 다음 입력까지 건너뛰는 중 (연출·소리 없이)
+        const float FastForwardFactor = 0.35f, FastForwardMinSeconds = 0.15f; // 빨리 넘길 때 멈추는 시간 = 원래의 35% (0.15초 이상)
         bool _stalled;             // 진행 중 오류가 나서 멈췄다
         PlaybackFocus _focus;      // 지금 멈춰 보여 주는 단계 (있는 동안은 다음 입력을 묻지 않는다)
         PlaybackFocus _nextFocus;  // 방금 Step에서 OnMessage가 고른 단계
@@ -193,6 +196,7 @@ namespace DuelRoguelike.UI
         const float BadgeLingerSeconds = 0.3f; // 건너뜀·가속 표시: 끝난 뒤 그대로 두는 시간
         const float BadgeFadeSeconds = 0.6f;   // 그 뒤 흐려지며 사라지는 시간
         const string SkipText = "건너뜀 · 다음 입력까지";
+        const string FastForwardText = "빨리 넘김 · 다음 입력까지";
         const string SpeedUpText = "가속 중 · 스페이스";
         const string FieldViewText = "필드 확인 중 · Esc로 선택 창 다시 열기";
 
@@ -201,7 +205,7 @@ namespace DuelRoguelike.UI
             && (_interaction.Dialog != null || (_interaction.Selection != null && _interaction.Selection.NeedsWindow && _windowHidden));
 
         /// <summary>
-        /// 필드 오른쪽 위 모서리에 지금 상태를 띄운다: 건너뜀(엔터·필드 누르기) / 가속 중(스페이스) / 필드 확인 중(선택 창을 닫고 필드를 볼 때).
+        /// 필드 오른쪽 위 모서리에 지금 상태를 띄운다: 빨리 넘김(엔터·필드 누르기) / 건너뜀(한 번 더) / 가속 중(스페이스) / 필드 확인 중(선택 창을 닫고 필드를 볼 때).
         /// 건너뜀·가속 표시는 끝나도 잠깐 남겼다가 흐려지며 사라진다 (건너뛰기는 한두 프레임에 끝나기도 한다). 필드 확인 중은 바로 사라진다.
         /// </summary>
         void UpdateStatusBadge()
@@ -213,6 +217,8 @@ namespace DuelRoguelike.UI
             Color color = UiStyle.Accent;
             if (playing && _skipping)
                 text = SkipText;
+            else if (playing && _fastForward)
+                text = FastForwardText;
             else if (playing && _spaceHeld)
                 text = SpeedUpText;
             else if (_session != null && InFieldView)
@@ -241,9 +247,35 @@ namespace DuelRoguelike.UI
                 _statusBadge.style.opacity = Mathf.Clamp01(1f - fade);
         }
 
-        /// <summary>다음 입력까지 남은 연출을 건너뛴다 (엔터·필드 누르기·건너뛰기 버튼). 한 프레임에 끝나도 표시가 보이게 바로 띄운다.</summary>
+        /// <summary>
+        /// 엔터·필드 누르기·건너뛰기 버튼: 처음에는 다음 입력까지 빨리 넘긴다 (파괴·공격 같은 단계의 연출과 소리는 짧게 보여 준다).
+        /// 빨리 넘기는 중에 한 번 더 누르면 남은 연출을 바로 건너뛴다.
+        /// </summary>
+        void PressSkip()
+        {
+            if (_fastForward || _skipping)
+                BeginSkip();
+            else
+                BeginFastForward();
+        }
+
+        /// <summary>다음 입력까지 빨리 넘긴다. 지금 멈춰 있는 단계도 짧게 줄인다. 한 프레임에 끝나도 표시가 보이게 바로 띄운다.</summary>
+        void BeginFastForward()
+        {
+            _fastForward = true;
+            if (_focus != null)
+                _holdUntil = Mathf.Min(_holdUntil, Time.realtimeSinceStartup + FastHold(_focus.Seconds));
+            _badgeUntil = Time.realtimeSinceStartup + BadgeLingerSeconds;
+            SetBadge(FastForwardText, UiStyle.Accent);
+        }
+
+        /// <summary>빨리 넘길 때 한 단계에 멈추는 시간.</summary>
+        static float FastHold(float seconds) => Mathf.Min(seconds, Mathf.Max(FastForwardMinSeconds, seconds * FastForwardFactor));
+
+        /// <summary>다음 입력까지 남은 연출을 건너뛴다 (빨리 넘기는 중에 한 번 더 누를 때). 한 프레임에 끝나도 표시가 보이게 바로 띄운다.</summary>
         void BeginSkip()
         {
+            _fastForward = false;
             _skipping = true;
             ClearFx(); // 틀고 있던 연출은 지우고 결과만 남긴다
             Sound.Hush(); // 내던 소리도 빨리 줄인다
@@ -282,7 +314,7 @@ namespace DuelRoguelike.UI
         }
 
         /// <summary>
-        /// 키보드: 진행을 보여 주는 중에는 스페이스 = 지금 멈춘 단계를 넘긴다 (누르고 있으면 빨리 넘어간다), 엔터 = 다음 입력까지 건너뛴다.
+        /// 키보드: 진행을 보여 주는 중에는 스페이스 = 지금 멈춘 단계를 넘긴다 (누르고 있으면 빨리 넘어간다), 엔터 = 다음 입력까지 빨리 넘긴다 (한 번 더 누르면 건너뛴다).
         /// 이동·결정·취소와 Tab·F는 DuelScreen.Keys.cs (취소 = 메뉴·창을 닫는다. 선택 창은 "선택 창 열기"나 취소 키로 다시 연다).
         /// </summary>
         void HandleKeys()
@@ -298,7 +330,7 @@ namespace DuelRoguelike.UI
             // 창·메뉴가 떠 있으면 엔터는 결정 키다 (건너뛰기로 쓰지 않는다)
             if ((keyboard.enterKey.wasPressedThisFrame || keyboard.numpadEnterKey.wasPressedThisFrame) && !_autoPlay && !OverlayOpen
                 && (_focus != null || _session.CanStep))
-                BeginSkip();
+                PressSkip();
             // 이동·결정·취소·Tab·F (DuelScreen.Keys.cs). Esc도 취소 키로 거기서 받는다.
             HandleCursorKeys();
             // 보조 키 (docs/UI.md "듀얼의 보조 키"). 글자 키는 한/영 상태와 상관없이 키의 자리로 읽는다.
@@ -536,7 +568,8 @@ namespace DuelRoguelike.UI
         void ResetPlayback()
         {
             _focus = _nextFocus = null;
-            _skipping = _stalled = _pacing = false;
+            _skipping = _fastForward = _stalled = _pacing = false;
+            _directHitTo = -1;
             _lastChaining = null;
             _attacker = null;
             _solvingChain = 0;
@@ -612,7 +645,7 @@ namespace DuelRoguelike.UI
                 _focus = null;
                 if (!_session.CanStep)
                 {
-                    _skipping = false;
+                    _skipping = _fastForward = false;
                     Render(); // 멈춰 둔 입력을 이제 묻는다
                     return;
                 }
@@ -633,9 +666,9 @@ namespace DuelRoguelike.UI
                     if (_nextFocus != null && (!_skipping || _nextFocus.Reveal != null))
                     {
                         if (_nextFocus.Reveal != null)
-                            _skipping = false; // 확인 창에서 건너뛰기가 끝난다
+                            _skipping = _fastForward = false; // 확인 창에서 건너뛰기·빨리 넘기기가 끝난다
                         _focus = _nextFocus;
-                        _holdUntil = Time.realtimeSinceStartup + _focus.Seconds;
+                        _holdUntil = Time.realtimeSinceStartup + (_fastForward ? FastHold(_focus.Seconds) : _focus.Seconds);
                         break;
                     }
                     if (Time.realtimeSinceStartup > budget)
@@ -655,7 +688,7 @@ namespace DuelRoguelike.UI
                 _nextFocus = null;
             }
             if (_focus == null && !_session.CanStep)
-                _skipping = false;
+                _skipping = _fastForward = false;
             Render();
         }
 
@@ -671,13 +704,22 @@ namespace DuelRoguelike.UI
             Render();
         }
 
-        /// <summary>필드를 누르면 다음 입력까지 남은 연출을 건너뛴다 (속도 버튼은 빼고).</summary>
+        /// <summary>필드를 누르면 다음 입력까지 빨리 넘긴다. 한 번 더 누르면 건너뛴다 (속도·건너뛰기 버튼은 빼고: 버튼이 따로 처리한다).</summary>
         void OnFieldPointerDown(PointerDownEvent evt)
         {
-            if (_autoPlay || _session == null || (evt.target as VisualElement)?.name == "playback-speed")
+            if (_autoPlay || _session == null || InsideNamed(evt.target as VisualElement, "playback-speed", "skip-playback"))
                 return;
             if (_focus != null || _session.CanStep)
-                BeginSkip();
+                PressSkip();
+        }
+
+        /// <summary>요소나 그 위의 요소 중에 이 이름이 있는지 (버튼 안의 글자를 눌러도 버튼으로 본다).</summary>
+        static bool InsideNamed(VisualElement element, params string[] names)
+        {
+            for (var e = element; e != null; e = e.parent)
+                if (e.name != null && Array.IndexOf(names, e.name) >= 0)
+                    return true;
+            return false;
         }
 
         /// <summary>이 메시지에서 멈출지와 무엇을 강조할지. 멈추지 않으면 null.</summary>
@@ -900,6 +942,7 @@ namespace DuelRoguelike.UI
         void OnMessage(DuelMessage message)
         {
             TrackChain(message);
+            TrackDirectHit(message);
             string line = _logFormatter.Format(message, _session.State);
             // 소리도 연출과 같이 보여 주는 동안에만 낸다 (셔플은 로그에 줄이 없어도 소리를 낸다)
             if (_pacing && !_skipping && (line != null || message is ShuffleMessage))
@@ -1037,9 +1080,9 @@ namespace DuelRoguelike.UI
                 // 진행 중: 지금 보여 주는 단계를 가운데에 한 줄로 띄운다.
                 _promptLabel.text = _focus?.Line ?? "진행 중...";
                 _promptLabel.style.color = _focus == null ? UiStyle.Accent : _focus.Actor == Opp ? OpponentLine : UiStyle.Text;
-                _promptDetail.text = _stalled ? "" : "필드를 누르면 다음 입력까지 건너뛴다";
+                _promptDetail.text = _stalled ? "" : _fastForward ? "한 번 더 누르면 다음 입력까지 건너뛴다" : "필드를 누르면 다음 입력까지 빨리 넘긴다";
                 if (!_stalled && (_focus != null || _session.CanStep))
-                    AddStripButton("건너뛰기", BeginSkip, false).name = "skip-playback";
+                    AddStripButton(_fastForward || _skipping ? "건너뛰기" : "빨리 넘기기", PressSkip, false).name = "skip-playback";
                 AddSpeedButton();
                 return;
             }

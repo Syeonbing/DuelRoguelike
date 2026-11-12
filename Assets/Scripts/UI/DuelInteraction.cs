@@ -314,7 +314,10 @@ namespace DuelRoguelike.UI
                 : r.Forced ? "발동할 효과를 고르세요 (꼭 발동해야 함)" : "지금 발동할 수 있는 카드가 있어요. 발동할 카드를 누르세요";
             AddEffects(r.Chains, text, DuelResponses.Chain);
             if (!r.Forced)
+            {
                 Buttons.Add(new StripButton { Label = "발동하지 않음", Response = DuelResponses.NoChain() });
+                PromptDetail = (PromptDetail != null ? PromptDetail + " " : "") + "우클릭: 발동하지 않음"; // DuelScreen.OnRightClick
+            }
         }
 
         void YesNo(string title, string detail)
