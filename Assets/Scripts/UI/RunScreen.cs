@@ -205,31 +205,54 @@ namespace DuelRoguelike.UI
                 ShowHub();
                 return;
             }
-            var panel = OpenModal(720);
+            var panel = OpenModal(760);
             panel.name = "coin-toss";
-            panel.Add(UiStyle.Label($"{_run.Floor}층{(_run.FloorKind == FloorKind.Boss ? " · 보스 듀얼" : "")} · 듀얼 전", 16, UiStyle.TextDim));
-            panel.Add(UiStyle.Label("코인 토스", 30, UiStyle.Accent, bold: true));
-            var result = UiStyle.Label(toss.PlayerWon ? "앞면 — 내가 이겼습니다" : "뒷면 — 상대가 이겼습니다", 26,
-                toss.PlayerWon ? UiStyle.Mine : UiStyle.Opponent, bold: true);
+            panel.style.alignItems = Align.Center;
+            panel.style.paddingTop = panel.style.paddingBottom = 24;
+            panel.Add(UiStyle.Label($"{_run.Floor}층{(_run.FloorKind == FloorKind.Boss ? " · 보스 듀얼" : "")} · 듀얼 전", 17, UiStyle.TextDim));
+            var title = UiStyle.Label("[ 코인 토스. ]", 34, UiStyle.Gold);
+            UiStyle.Black(title);
+            panel.Add(title);
+
+            // 동전: 던져 올려 돌다가 결과 면으로 내려앉는다. 누르면 바로 결과가 나온다.
+            var coin = new CoinView(150);
+            var flip = new Button { name = "coin-flip", text = "", focusable = false };
+            flip.style.width = flip.style.height = 150;
+            flip.style.marginTop = 70;
+            flip.style.marginBottom = 14;
+            UiStyle.Padding(flip, 0);
+            flip.style.backgroundColor = Color.clear;
+            UiStyle.BorderColor(flip, Color.clear, 0);
+            flip.Add(coin);
+            panel.Add(flip);
+
+            var result = UiStyle.Label(toss.PlayerWon ? "앞면 — 내가 이겼습니다" : "뒷면 — 상대가 이겼습니다", 30,
+                toss.PlayerWon ? UiStyle.Mine : UiStyle.Opponent);
             result.name = "coin-result";
-            result.style.marginTop = 12;
+            UiStyle.Black(result);
             panel.Add(result);
+            var landed = UiStyle.Box();
+            landed.style.alignItems = Align.Center;
             if (toss.WinPercent != RunRules.CoinTossWinPercent)
-                panel.Add(Text($"이번 코인 토스에서 내가 이길 확률 {toss.WinPercent}%", 15, UiStyle.TextDim, top: 4));
+                landed.Add(Text($"이번 코인 토스에서 내가 이길 확률 {toss.WinPercent}%", 16, UiStyle.TextDim, top: 4));
             var buttons = Row();
             buttons.style.marginTop = 16;
+            var choices = new List<Button>();
             if (toss.PlayerWon)
             {
-                panel.Add(Text("선공·후공을 고르세요. 선공은 첫 턴에 드로우하지 않고, 후공은 첫 턴부터 공격할 수 있습니다.", 17, top: 10));
-                buttons.Add(CoinButton("coin-first", "선공 (먼저 시작)", true));
-                buttons.Add(CoinButton("coin-second", "후공 (나중에 시작)", false));
+                landed.Add(Text("선공·후공을 고르세요. 선공은 첫 턴에 드로우하지 않고, 후공은 첫 턴부터 공격할 수 있습니다.", 18, top: 8));
+                choices.Add(CoinButton("coin-first", "선공 (먼저 시작)", true, gold: true));
+                choices.Add(CoinButton("coin-second", "후공 (나중에 시작)", false, gold: false));
             }
             else
             {
-                panel.Add(Text(toss.OpponentChoosesFirst ? "상대가 선공을 골랐습니다. 나는 후공입니다." : "상대가 후공을 골랐습니다. 나는 선공입니다.", 17, top: 10));
-                buttons.Add(CoinButton("coin-start", "듀얼 시작", true));
+                landed.Add(Text(toss.OpponentChoosesFirst ? "상대가 선공을 골랐습니다. 나는 후공입니다." : "상대가 후공을 골랐습니다. 나는 선공입니다.", 18, top: 8));
+                choices.Add(CoinButton("coin-start", "듀얼 시작", true, gold: true));
             }
-            panel.Add(buttons);
+            foreach (var choice in choices)
+                buttons.Add(choice);
+            landed.Add(buttons);
+            panel.Add(landed);
             // 나중에: 듀얼 창으로 돌아간다 (덱을 조정하고 다시 시작할 수 있다. 코인 토스 결과는 그대로다)
             var later = UiStyle.Button("나중에", () =>
             {
@@ -240,13 +263,63 @@ namespace DuelRoguelike.UI
             later.style.marginTop = 14;
             later.style.alignSelf = Align.FlexEnd;
             panel.Add(later);
+
+            // 결과가 나온 모습으로 만든다: 동전은 결과 면, 결과 글과 고르는 버튼이 보인다
+            void Land()
+            {
+                coin.SetSpin(toss.PlayerWon ? 0f : 1f);
+                coin.style.translate = new Translate(0, 0);
+                result.style.opacity = 1f;
+                landed.style.opacity = 1f;
+                foreach (var choice in choices)
+                    choice.SetEnabled(true);
+            }
+
+            // 같은 듀얼의 코인 토스를 다시 열면 (나중에 → 듀얼 시작) 연출 없이 결과를 바로 보인다
+            int duel = _run.DuelsPlayed + 1;
+            if (_coinFlipShown == duel)
+            {
+                Land();
+                return;
+            }
+            _coinFlipShown = duel;
+            result.style.opacity = 0f;
+            landed.style.opacity = 0f;
+            foreach (var choice in choices)
+                choice.SetEnabled(false);
+            // 반 바퀴씩 돈다: 앞면에서 시작해 앞면이면 여섯 번, 뒷면이면 일곱 번 돌고 멈춘다 (1.2초, 갈수록 느려진다)
+            float turns = toss.PlayerWon ? 6f : 7f, started = Time.realtimeSinceStartup;
+            bool done = false;
+            IVisualElementScheduledItem spin = null;
+            void Finish()
+            {
+                if (done)
+                    return;
+                done = true;
+                spin?.Pause();
+                Land();
+            }
+            flip.clicked += Finish;
+            spin = panel.schedule.Execute(() =>
+            {
+                float t = Mathf.Clamp01((Time.realtimeSinceStartup - started) / 1.2f);
+                float eased = 1f - (1f - t) * (1f - t);
+                coin.SetSpin(turns * eased);
+                coin.style.translate = new Translate(0, -64f * Mathf.Sin(t * Mathf.PI));
+                if (t >= 1f)
+                    Finish();
+            }).Every(16);
         }
 
-        Button CoinButton(string name, string text, bool playerFirst)
+        /// <summary>코인 토스 연출을 보여 준 듀얼 번호 (같은 듀얼에서 창을 다시 열면 연출을 되풀이하지 않는다).</summary>
+        int _coinFlipShown;
+
+        Button CoinButton(string name, string text, bool playerFirst, bool gold)
         {
-            var b = UiStyle.Button(text, () => BeginNextDuel(playerFirst), 20);
+            var b = UiStyle.StoneButton(text, () => BeginNextDuel(playerFirst), gold: gold);
             b.name = name;
-            b.style.marginRight = 10;
+            b.style.marginLeft = b.style.marginRight = 6;
+            b.style.minWidth = 260;
             return b;
         }
 

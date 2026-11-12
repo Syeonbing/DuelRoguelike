@@ -66,7 +66,7 @@ namespace DuelRoguelike.UI
                 string condition = choice.HasCondition ? $" [조건: {RunState.ConditionText(choice, ev.Scope)}]" : "";
                 string forced = choice.IsForced ? " [다른 선택지가 모두 잠겼을 때]" : "";
                 string result = known ? choice.DescribeEffects() : "결과: ???";
-                var line = Text($"· {choice.Label}{condition}{forced} — {result}", 14, known ? UiStyle.Text : UiStyle.TextDim, top: 2);
+                var line = Text($"· {ChoiceTitle(choice.Label)}{condition}{forced} — {result}", 14, known ? UiStyle.Text : UiStyle.TextDim, top: 2);
                 line.style.whiteSpace = WhiteSpace.Normal;
                 box.Add(line);
             }

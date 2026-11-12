@@ -750,8 +750,9 @@ namespace DuelRoguelike.UI
                     f.Add(m.Card, FocusActor);
                     f.Add(m.Target, FocusTarget);
                     break;
-                case TossMessage _:
-                    seconds = 0.7f;
+                case TossMessage m:
+                    // 동전이 돌거나 주사위가 구르다 멈추는 동안
+                    seconds = 1.25f + 0.12f * Mathf.Max(0, m.Results.Count - 1);
                     break;
                 case NewTurnMessage _:
                     seconds = 0.9f; // 턴 넘김 띠 알림

@@ -71,6 +71,14 @@ namespace DuelRoguelike.UI
                 special.Add(GalleryCell(_faces.Build(code, CardFaceSize.Small)));
             }
             special.Add(GalleryCell(_faces.BuildBack(CardFaceSize.Field)));
+            // 동전(앞·뒤)과 주사위 여섯 면 (코인 토스·주사위 연출에 쓰는 그림)
+            var front = new CoinView(96);
+            special.Add(GalleryCell(front));
+            var back = new CoinView(96);
+            back.SetFace(false);
+            special.Add(GalleryCell(back));
+            for (int pips = 1; pips <= 6; pips++)
+                special.Add(GalleryCell(new DieView(60) { Value = pips }));
             root.Add(special);
 
             // 상세 카드와 지금 화면의 "크게 보기" 크기(250×365)

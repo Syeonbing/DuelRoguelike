@@ -75,6 +75,7 @@ namespace DuelRoguelike.UI
             _deckCursor = -1;
             _deckActions = false;
             _hubMenuIndex = 0;
+            _coinFlipShown = 0;
             _gaugeFloor = Mathf.Max(0, _standFloor);
             _gaugeMax = GaugeMax(_standFloor);
         }

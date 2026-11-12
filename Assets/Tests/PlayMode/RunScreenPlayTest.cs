@@ -61,6 +61,7 @@ namespace DuelRoguelike.Tests
         int _floorsPassed;
         int _unseals;
         int _coinWins, _coinLosses, _secondDuels;
+        bool _coinFlipWatched;
         bool _duelViewChecked;
         int _playbackTries;
         bool _playbackDone;
@@ -539,6 +540,10 @@ namespace DuelRoguelike.Tests
             Assert.AreEqual("용의 사당", Find<Label>(RunUi, "event-title")?.text, "이벤트 제목");
             StringAssert.Contains("드래곤족 몬스터 2장 이상", Find<Label>(RunUi, "event-choice-note-0")?.text ?? "", "조건 선택지에 조건이 보이지 않는다");
             Assert.IsTrue(Find<Button>(RunUi, "event-choice-1").enabledSelf, "칩 30 이상인데 시주 선택지가 잠겼다");
+            // 선택지 글에는 조건·비용을 괄호로 넣지 않는다: 버튼에는 할 일만, 조건은 버튼 오른쪽 끝에 따로
+            Assert.AreEqual("시주한다", Find<Button>(RunUi, "event-choice-1").text, "선택지 글에 괄호로 비용이 들어 있다");
+            Assert.AreEqual("칩 30 이상", Find<Label>(RunUi, "event-choice-note-1")?.text, "시주 선택지의 조건 표시");
+            Assert.IsNull(Find<Label>(RunUi, "event-choice-note-2"), "조건이 없는 선택지(지나간다)에 조건 표시가 있다");
             StringAssert.DoesNotContain("결과:", Find<Label>(RunUi, "event-choice-note-1")?.text ?? "", "처음 고르는 선택지의 결과가 보인다");
             Assert.IsNull(Find<Button>(RunUi, "event-pass"), "고를 수 있는 선택지가 있는데 그냥 지나가기 버튼이 있다");
             yield return Shot(RunUi, "14-event");
@@ -1026,6 +1031,29 @@ namespace DuelRoguelike.Tests
                 Click(Find<Button>(RunUi, "next-duel"));
                 yield return null;
                 Assert.AreEqual(result, Find<Label>(RunUi, "coin-result")?.text, "코인 토스를 다시 열었는데 결과가 바뀌었다");
+            }
+            // 코인 토스 연출: 동전이 도는 동안에는 결과 글이 보이지 않고 고르는 버튼이 꺼져 있다.
+            // 한 번은 끝까지 지켜보고, 그 밖에는 동전을 눌러 바로 결과를 낸다.
+            Button Choose() => Find<Button>(RunUi, "coin-first") ?? Find<Button>(RunUi, "coin-start");
+            Assert.IsNotNull(Choose(), "코인 토스 창에 선공·후공이나 듀얼 시작 버튼이 없다");
+            if (!Choose().enabledSelf)
+            {
+                Assert.Less(Find<Label>(RunUi, "coin-result").resolvedStyle.opacity, 0.5f, "동전이 도는 중인데 결과 글이 보인다");
+                if (!_coinFlipWatched)
+                {
+                    _coinFlipWatched = true;
+                    yield return WaitFor(() => Choose().enabledSelf, 6, "코인 토스 연출의 끝");
+                    yield return null;
+                    Assert.Greater(Find<Label>(RunUi, "coin-result").resolvedStyle.opacity, 0.9f, "동전이 멈췄는데 결과 글이 보이지 않는다");
+                    yield return Shot(RunUi, "2a2-coin-landed");
+                    Debug.Log("[런 화면 시험] 코인 토스 연출: 동전이 돌다 멈춘 뒤 결과와 버튼이 나옴");
+                }
+                else
+                {
+                    Click(Find<Button>(RunUi, "coin-flip"));
+                    yield return null;
+                }
+                Assert.IsTrue(Choose().enabledSelf, "동전이 멈췄는데 고르는 버튼이 꺼져 있다");
             }
             var first = Find<Button>(RunUi, "coin-first");
             if (first != null)

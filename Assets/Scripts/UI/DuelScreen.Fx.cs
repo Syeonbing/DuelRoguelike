@@ -343,6 +343,7 @@ namespace DuelRoguelike.UI
                 case AttackMessage m: FxAttack(m); break;
                 case LpChangeMessage m: FxLp(m); break;
                 case PositionChangeMessage m: FxPosition(m); break;
+                case TossMessage m: FxToss(m); break;
                 case NewTurnMessage m:
                     ShowBanner($"{_session.State.Turn}턴 · {_text.Player(m.Player)}의 턴", m.Player == Me ? UiStyle.Mine : UiStyle.Opponent, 0.45f);
                     break;
@@ -725,6 +726,56 @@ namespace DuelRoguelike.UI
             float start = isDefense ? -90f : 90f;
             Play(0f, 0.3f, t => slot.style.rotate = new StyleRotate(new Rotate(new Angle(start * (1f - t), AngleUnit.Degree))),
                 () => slot.style.rotate = StyleKeyword.Null);
+        }
+
+        /// <summary>
+        /// 코인 토스·주사위 (카드 효과): 필드 한가운데에서 동전이 던져져 돌거나 주사위가 구르다가 (0.6초) 결과에서 멈추고, 잠깐 보인 뒤 사라진다.
+        /// 여러 번 던지면 옆으로 나란히, 조금씩 늦게 던진다.
+        /// </summary>
+        void FxToss(TossMessage m)
+        {
+            int count = m.Results.Count;
+            if (count == 0)
+                return;
+            bool coin = m.Type == OcgMessageType.TossCoin;
+            const float size = 120, gap = 24;
+            float left = FieldCenterX - (count * size + (count - 1) * gap) / 2;
+            for (int i = 0; i < count; i++)
+            {
+                int result = m.Results[i];
+                float delay = i * 0.12f;
+                VisualElement piece;
+                Action<float> roll;
+                if (coin)
+                {
+                    // 앞면에서 시작해 반 바퀴씩 돈다: 앞이면 여섯 번, 뒤면 일곱 번
+                    var view = new CoinView(size);
+                    float turns = result != 0 ? 6f : 7f;
+                    piece = view;
+                    roll = t => view.SetSpin(turns * t);
+                }
+                else
+                {
+                    var view = new DieView(size);
+                    var random = new System.Random(result * 31 + i);
+                    piece = view;
+                    roll = t =>
+                    {
+                        view.Value = t >= 1f ? result : 1 + random.Next(6);
+                        view.style.rotate = new StyleRotate(new Rotate(new Angle((1f - t) * 300f, AngleUnit.Degree)));
+                    };
+                }
+                UiStyle.Place(piece, left + i * (size + gap), FieldCenterY - size / 2);
+                piece.style.display = DisplayStyle.None;
+                _fxLayer.Add(piece);
+                Play(delay, 0.6f, t =>
+                {
+                    piece.style.display = DisplayStyle.Flex;
+                    roll(t);
+                    piece.style.translate = new Translate(0, -56f * Mathf.Sin(t * Mathf.PI));
+                });
+                Play(delay + 0.6f, 0.6f, t => piece.style.opacity = t < 0.6f ? 1f : 1f - (t - 0.6f) / 0.4f, () => Remove(piece), linear: true);
+            }
         }
 
         /// <summary>체인에서 무효가 된 카드: 체인 상자 안에서 조각난다.</summary>

@@ -377,29 +377,48 @@ namespace DuelRoguelike.UI
                     continue; // 강제 선택지는 다른 선택지가 모두 잠겼을 때만 나온다
                 int index = i;
                 bool can = _run.CanChooseEventOption(index, out string reason);
-                var choice = UiStyle.Button(option.Label, () => ChooseEvent(index), 20);
+                // 선택지: 왼쪽에 할 일, 오른쪽 끝에 조건(비용). 글 안에 괄호로 조건을 넣지 않는다.
+                var choice = UiStyle.StoneButton(ChoiceTitle(option.Label), () => ChooseEvent(index), small: true);
                 choice.name = $"event-choice-{i}";
+                choice.style.height = 58;
+                choice.style.fontSize = 24;
                 choice.style.marginTop = 10;
-                choice.style.whiteSpace = WhiteSpace.Normal;
+                choice.style.paddingLeft = 18;
+                choice.style.unityTextAlign = TextAnchor.MiddleLeft;
                 choice.SetEnabled(can);
                 panel.Add(choice);
-                var notes = new List<string>();
-                if (option.HasCondition)
-                    notes.Add((can ? "조건 충족: " : "잠김 — 조건: ") + RunState.ConditionText(option, ev.Scope));
-                if (option.IsBattle || KnowsResult(ev, index))
-                    notes.Add(KnowsResult(ev, index) ? "결과: " + option.DescribeEffects()
-                        : $"이벤트 전투 (상대 {StarterDecks.Find(option.BattleDeckId)?.Name ?? option.BattleDeckId}) — 지면 일반 패배처럼 봉인");
-                if (notes.Count > 0)
+                // 조건 글의 괄호(세는 범위)도 가운뎃점으로 바꿔 쓴다: "드래곤족 몬스터 2장 이상 (덱·사이드 덱)" → "… 2장 이상 · 덱·사이드 덱"
+                string condition = option.HasCondition ? RunState.ConditionText(option, ev.Scope).Replace(" (", " · ").Replace(")", "") : ChoiceCost(option.Label);
+                if (!string.IsNullOrEmpty(condition))
                 {
-                    var note = Text(string.Join("\n", notes), 14, can ? UiStyle.TextDim : UiStyle.Opponent, top: 2);
-                    note.name = $"event-choice-note-{i}";
-                    note.style.whiteSpace = WhiteSpace.Normal;
-                    panel.Add(note);
+                    var tag = UiStyle.Label(can ? condition : $"잠김 · {condition}", 18, can ? UiStyle.Gold : UiStyle.Bad, bold: true);
+                    tag.name = $"event-choice-note-{i}";
+                    tag.pickingMode = PickingMode.Ignore;
+                    tag.style.whiteSpace = WhiteSpace.NoWrap;
+                    tag.style.position = Position.Absolute;
+                    tag.style.right = 16;
+                    tag.style.top = 14;
+                    choice.Add(tag);
+                }
+                // 그 아래 작은 줄: 전에 골라 봐서 아는 결과, 또는 이벤트 전투라는 것
+                bool known = KnowsResult(ev, index);
+                if (option.IsBattle || known)
+                {
+                    var info = Text(known ? "결과: " + option.DescribeEffects()
+                        : $"이벤트 전투 · 상대 {StarterDecks.Find(option.BattleDeckId)?.Name ?? option.BattleDeckId} · 지면 일반 패배처럼 봉인된다", 15, UiStyle.TextDim, top: 3);
+                    info.name = $"event-choice-info-{i}";
+                    info.style.paddingLeft = 18;
+                    info.style.whiteSpace = WhiteSpace.Normal;
+                    panel.Add(info);
                 }
             }
             if (_run.CanChooseEventOption(-1, out _))
             {
-                var pass = UiStyle.Button("그냥 지나간다", () => ChooseEvent(-1), 20);
+                var pass = UiStyle.StoneButton("그냥 지나간다", () => ChooseEvent(-1), small: true);
+                pass.style.height = 58;
+                pass.style.fontSize = 24;
+                pass.style.paddingLeft = 18;
+                pass.style.unityTextAlign = TextAnchor.MiddleLeft;
                 pass.name = "event-pass";
                 pass.style.marginTop = 10;
                 panel.Add(pass);
@@ -409,6 +428,27 @@ namespace DuelRoguelike.UI
             later.style.marginTop = 14;
             later.style.alignSelf = Align.FlexEnd;
             panel.Add(later);
+        }
+
+        /// <summary>
+        /// 선택지 글에서 끝의 괄호(비용·조건)를 뗀 것: "시주한다 (칩 30)" → "시주한다".
+        /// 이벤트 자료의 글에는 비용이 괄호로 붙어 있는데, 화면에서는 버튼 오른쪽 끝에 따로 보여 준다.
+        /// </summary>
+        static string ChoiceTitle(string label)
+        {
+            if (string.IsNullOrEmpty(label) || !label.EndsWith(")"))
+                return label ?? "";
+            int open = label.LastIndexOf(" (", StringComparison.Ordinal);
+            return open > 0 ? label.Substring(0, open) : label;
+        }
+
+        /// <summary>선택지 글 끝의 괄호 안 (없으면 null): "시주한다 (칩 30)" → "칩 30". 조건이 따로 없는 선택지의 비용 표시에 쓴다.</summary>
+        static string ChoiceCost(string label)
+        {
+            if (string.IsNullOrEmpty(label) || !label.EndsWith(")"))
+                return null;
+            int open = label.LastIndexOf(" (", StringComparison.Ordinal);
+            return open > 0 ? label.Substring(open + 2, label.Length - open - 3) : null;
         }
 
         /// <summary>이 선택지를 전에 골라 봐서 결과를 아는지 (이번 런 또는 도감). 처음 고르는 선택지는 결과를 숨긴다.</summary>
@@ -478,7 +518,7 @@ namespace DuelRoguelike.UI
             panel.name = "event-result";
             panel.Add(UiStyle.Label($"이벤트 결과 · {view.Floor}층", 16, UiStyle.TextDim));
             panel.Add(UiStyle.Label(view.Event.Title, 30, UiStyle.Accent, bold: true));
-            panel.Add(UiStyle.Label(view.Choice?.Label ?? "그냥 지나간다", 20, UiStyle.Text, bold: true));
+            panel.Add(UiStyle.Label(view.Choice != null ? ChoiceTitle(view.Choice.Label) : "그냥 지나간다", 20, UiStyle.Text, bold: true));
             string text = view.Won == false ? "이벤트 전투에서 졌습니다. 이벤트의 결과는 받지 못했습니다."
                 : view.Choice?.ResultText ?? "아무 일 없이 지나갔습니다.";
             AddWrapped(panel, text, 18, UiStyle.Text, 10);
