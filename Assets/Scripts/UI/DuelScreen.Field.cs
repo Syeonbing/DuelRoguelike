@@ -166,9 +166,16 @@ namespace DuelRoguelike.UI
         }
 
         /// <summary>창(카드 목록·고르기) 안의 카드 한 장.</summary>
-        CardCell WindowCell(string name, Action refresh = null)
+        CardCell WindowCell(string name, Action refresh = null, float faceWidth = 0)
         {
-            var cell = new CardCell(this, CardFaceSize.Medium, refresh: refresh, name: name);
+            var cell = new CardCell(this, CardFaceSize.Medium, refresh: refresh, name: name, faceWidth: faceWidth);
+            if (faceWidth > 0)
+            {
+                // 칸을 카드 크기에 맞춘다 (기본 칸은 중간 크기 카드에 맞춰져 있다)
+                var holder = cell.Root.ElementAt(0);
+                holder.style.width = faceWidth + 10;
+                holder.style.height = faceWidth * 158f / 108f + 10;
+            }
             cell.Root.style.marginRight = 8;
             cell.Root.style.marginBottom = 10;
             return cell;
@@ -329,6 +336,7 @@ namespace DuelRoguelike.UI
         /// <summary>1920×1080 판을 화면 안에 꽉 차게 맞춰 가운데에 놓는다 (16:9가 아니면 남는 쪽에 여백).</summary>
         void FitStage()
         {
+            FitModal(); // 열려 있는 창도 같은 배율로
             if (_stage == null || _stage.parent != _root)
                 return;
             float w = _root.layout.width, h = _root.layout.height;

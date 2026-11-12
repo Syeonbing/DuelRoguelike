@@ -83,6 +83,9 @@ namespace DuelRoguelike.UI
 
         static string ClipName(string name) => name.Length <= PlayerRecipe.MaxNameLength ? name : name.Substring(0, PlayerRecipe.MaxNameLength);
 
+        /// <summary>덱 편집 화면의 카드 폭. 덱이 한 줄 10장, 컬렉션이 한 줄 5장으로 떨어지게 잡았다.</summary>
+        const float EditorCardWidth = 82;
+
         void ShowEditor()
         {
             if (_pickScroll != null)
@@ -98,22 +101,25 @@ namespace DuelRoguelike.UI
                 _selectedCode = 0;
             }
 
-            _root.Add(EditorBar());
-            var body = Row();
-            body.style.flexGrow = 1;
-            body.style.marginTop = 12;
-            var detail = UiStyle.PanelBox("editor-card-detail");
-            detail.style.width = 380;
-            detail.style.marginRight = 12;
-            body.Add(detail);
-            body.Add(EditorCollectionPanel());
-            body.Add(EditorDeckPanel());
-            _root.Add(body);
+            // 화면 전체를 쓰는 무대: 위 막대, 왼쪽 컬렉션(한 줄 5장), 가운데 덱(한 줄 10장), 오른쪽 상세 카드
+            var stage = NewStage("editor-stage");
+            stage.style.backgroundColor = UiStyle.Hex(0x3b342c);
+            stage.Add(EditorBar());
+            var collection = EditorCollectionPanel();
+            UiStyle.Place(collection, 24, 96, 520, 960);
+            stage.Add(collection);
+            var deck = EditorDeckPanel();
+            UiStyle.Place(deck, 564, 96, 976, 960);
+            stage.Add(deck);
+            var detail = UiStyle.Box("editor-card-detail");
+            UiStyle.Place(detail, 1572, 96, 324, 960);
+            stage.Add(detail);
 
             _detail = detail;
             _renderDetail = RenderEditorDetail;
             ShowDetail(_selectedPile, _selectedCode, pinned: true);
             RefreshEditorStatus();
+            ApplyKeyCaps();
         }
 
         List<uint> EditorCards(Pile pile)
@@ -130,36 +136,55 @@ namespace DuelRoguelike.UI
 
         // ---- 위: 이름, 저장·지우기·돌아가기, 규칙 확인 ----
 
+        /// <summary>위 막대: "덱 편집", 이름 입력 칸, 규칙 확인 한 줄, 저장하지 않은 변경 표시, 저장·지우기·나가기.</summary>
         VisualElement EditorBar()
         {
-            var bar = UiStyle.PanelBox("editor-bar");
-            UiStyle.Padding(bar, 14);
-            var row = Row();
-            row.style.alignItems = Align.Center;
-            row.Add(UiStyle.Label("덱 편집", 30, UiStyle.Accent, bold: true));
-            var name = DarkTextField("editor-name", _editor.Name, 20);
+            var bar = UiStyle.Box("editor-bar", FlexDirection.Row);
+            UiStyle.Place(bar, 0, 0, StageWidth, TopBarHeight);
+            bar.style.alignItems = Align.Center;
+            bar.style.paddingLeft = bar.style.paddingRight = 28;
+            bar.style.backgroundColor = UiStyle.Stone8;
+            UiStyle.GrainOn(bar);
+            bar.style.borderBottomWidth = 3;
+            bar.style.borderBottomColor = UiStyle.Stone9;
+            var title = UiStyle.Label("덱 편집", 36, UiStyle.Gold);
+            UiStyle.Black(title);
+            title.style.whiteSpace = WhiteSpace.NoWrap;
+            title.style.flexShrink = 0;
+            bar.Add(title);
+            var name = DarkTextField("editor-name", _editor.Name, 21);
             name.maxLength = PlayerRecipe.MaxNameLength;
             name.style.width = 380;
-            name.style.marginLeft = 16;
+            name.style.marginLeft = 18;
+            name.style.flexShrink = 0;
             name.RegisterValueChangedCallback(e =>
             {
                 _editor.Name = e.newValue;
                 RefreshEditorStatus();
             });
-            row.Add(name);
-            var dirty = Text("저장하지 않은 변경 있음", 15, Warning);
+            bar.Add(name);
+            // 규칙 확인 (RefreshEditorStatus가 글과 색을 바꾼다)
+            var status = Text("", 17);
+            status.name = "editor-status";
+            status.style.whiteSpace = WhiteSpace.Normal;
+            status.style.marginLeft = 18;
+            status.style.flexGrow = 1;
+            status.style.flexShrink = 1;
+            status.style.maxHeight = 66;
+            status.style.overflow = Overflow.Hidden;
+            bar.Add(status);
+            var dirty = Text("저장하지 않은 변경", 17, Warning, bold: true);
             dirty.name = "editor-dirty";
+            dirty.style.whiteSpace = WhiteSpace.NoWrap;
             dirty.style.marginLeft = 12;
-            row.Add(dirty);
-            var spacer = UiStyle.Box();
-            spacer.style.flexGrow = 1;
-            row.Add(spacer);
+            dirty.style.flexShrink = 0;
+            bar.Add(dirty);
 
             if (_confirmDelete)
             {
-                row.Add(Text($"「{_editor.Name}」 레시피를 지웁니다 (되돌릴 수 없음).", 15, UiStyle.Opponent));
-                row.Add(BarButton("지우기", "editor-delete-confirm", DeleteEditorRecipe));
-                row.Add(BarButton("취소", "editor-delete-cancel", () =>
+                bar.Add(BarNote($"「{_editor.Name}」 레시피를 지운다. 되돌릴 수 없다."));
+                bar.Add(BarButton("지우기", "editor-delete-confirm", DeleteEditorRecipe, gold: true));
+                bar.Add(BarButton("취소", "editor-delete-cancel", () =>
                 {
                     _confirmDelete = false;
                     ShowEditor();
@@ -167,47 +192,55 @@ namespace DuelRoguelike.UI
             }
             else if (_confirmLeave)
             {
-                row.Add(Text("저장하지 않은 변경이 사라집니다.", 15, UiStyle.Opponent));
-                row.Add(BarButton("저장하지 않고 나가기", "editor-leave", ShowStart));
-                row.Add(BarButton("계속 고치기", "editor-leave-cancel", () =>
+                bar.Add(BarNote("저장하지 않은 변경이 사라진다."));
+                bar.Add(BarButton("저장하지 않고 나가기", "editor-leave", ShowStart));
+                bar.Add(BarButton("계속 고치기", "editor-leave-cancel", () =>
                 {
                     _confirmLeave = false;
                     ShowEditor();
-                }));
+                }, gold: true));
             }
             else
             {
-                var save = BarButton("저장", "editor-save", SaveEditor, 20);
-                save.style.paddingLeft = save.style.paddingRight = 24;
-                row.Add(save);
+                bar.Add(BarButton("저장", "editor-save", SaveEditor, gold: true));
                 if (_editor.Id != null)
-                    row.Add(BarButton("레시피 지우기", "editor-delete", () =>
+                    bar.Add(BarButton("레시피 지우기", "editor-delete", () =>
                     {
                         _confirmDelete = true;
                         ShowEditor();
                     }));
-                row.Add(BarButton("런 시작 화면으로", "editor-back", LeaveEditor));
+                var back = BarButton("나가기", "editor-back", LeaveEditor);
+                back.style.width = 132;
+                back.style.paddingLeft = 14;
+                back.style.paddingRight = 44;
+                back.style.unityTextAlign = TextAnchor.MiddleLeft;
+                var key = KeyCap("X", "K");
+                key.pickingMode = PickingMode.Ignore;
+                key.style.position = Position.Absolute;
+                key.style.right = 9;
+                key.style.top = 8;
+                back.Add(key);
+                bar.Add(back);
             }
-            bar.Add(row);
-
-            var status = Text("", 16, top: 8);
-            status.name = "editor-status";
-            status.style.whiteSpace = WhiteSpace.Normal;
-            bar.Add(status);
-            var notice = Text(_editorNotice ?? "", 15, _editorNoticeIsError ? UiStyle.Opponent : Positive, top: 4);
-            notice.name = "editor-notice";
-            notice.style.whiteSpace = WhiteSpace.Normal;
-            notice.style.display = _editorNotice == null ? DisplayStyle.None : DisplayStyle.Flex;
-            bar.Add(notice);
             return bar;
         }
 
-        static Button BarButton(string text, string name, Action onClick, int size = 16)
+        static Label BarNote(string text)
         {
-            var b = UiStyle.Button(text, onClick, size);
+            var note = Text(text, 17, UiStyle.Bad, bold: true);
+            note.style.whiteSpace = WhiteSpace.NoWrap;
+            note.style.marginLeft = 12;
+            note.style.flexShrink = 0;
+            return note;
+        }
+
+        static Button BarButton(string text, string name, Action onClick, bool gold = false)
+        {
+            var b = UiStyle.StoneButton(text, onClick, gold, small: true);
             b.name = name;
             b.style.marginLeft = 8;
-            b.style.unityTextAlign = TextAnchor.MiddleCenter;
+            b.style.paddingLeft = b.style.paddingRight = 16;
+            b.style.flexShrink = 0;
             return b;
         }
 
@@ -300,42 +333,30 @@ namespace DuelRoguelike.UI
 
         // ---- 가운데: 컬렉션 ----
 
+        /// <summary>왼쪽 돌판: 컬렉션. 찾기, 종류 거르기, 정렬, 한 줄 5장의 격자.</summary>
         VisualElement EditorCollectionPanel()
         {
             var panel = UiStyle.PanelBox("editor-collection");
-            panel.style.flexGrow = 1;
-            panel.style.flexShrink = 1;
-            panel.style.marginRight = 12;
+            panel.style.paddingLeft = panel.style.paddingRight = 16;
+            panel.style.paddingTop = 16;
+            panel.style.paddingBottom = 14;
 
             var head = Row();
-            head.style.justifyContent = Justify.SpaceBetween;
-            head.style.alignItems = Align.Center;
-            head.Add(UiStyle.Label($"컬렉션 {_collection.Cards.Count}종 {_collection.TotalCount}장", 18, UiStyle.TextDim, bold: true));
-            var filters = Row();
-            _filterButtons.Clear();
-            foreach (CollectionFilter filter in Enum.GetValues(typeof(CollectionFilter)))
-            {
-                var f = filter;
-                var b = UiStyle.Button(FilterName(f), () =>
-                {
-                    _filter = f;
-                    RefreshCollection(resetScroll: true);
-                }, 14);
-                b.name = "filter-" + f.ToString().ToLowerInvariant();
-                b.style.marginLeft = 4;
-                filters.Add(b);
-                _filterButtons.Add((f, b));
-            }
-            head.Add(filters);
+            head.style.alignItems = Align.FlexEnd;
+            head.Add(UiStyle.Label("컬렉션", 24, UiStyle.Text, bold: true));
+            var total = Text($"{_collection.Cards.Count}종 {_collection.TotalCount}장", 19, UiStyle.TextDim);
+            total.style.marginLeft = 12;
+            total.style.marginBottom = 2;
+            head.Add(total);
             panel.Add(head);
 
-            // 검색 (카드명, 또는 효과문까지)과 정렬
+            // 찾기 (카드명, 또는 효과문까지)
             var tools = Row();
             tools.style.alignItems = Align.Center;
-            tools.style.marginTop = 6;
-            tools.style.flexWrap = Wrap.Wrap;
-            var search = DarkTextField("collection-search", _search, 16);
-            search.style.width = 240;
+            tools.style.marginTop = 8;
+            var search = DarkTextField("collection-search", _search, 19);
+            search.style.flexGrow = 1;
+            search.style.flexShrink = 1;
             search.RegisterValueChangedCallback(e =>
             {
                 _search = e.newValue ?? "";
@@ -346,14 +367,43 @@ namespace DuelRoguelike.UI
             {
                 _searchText = !_searchText;
                 RefreshCollection(resetScroll: true);
-            }, 14);
+            }, 16);
             _searchScopeButton.name = "search-scope";
-            _searchScopeButton.style.marginLeft = 4;
+            _searchScopeButton.style.marginLeft = 6;
+            _searchScopeButton.style.flexShrink = 0;
             tools.Add(_searchScopeButton);
-            var sortLabel = Text("정렬", 14, UiStyle.TextDim);
-            sortLabel.style.marginLeft = 14;
-            sortLabel.style.marginRight = 2;
-            tools.Add(sortLabel);
+            panel.Add(tools);
+
+            // 종류 거르기
+            var filters = Row();
+            filters.style.flexWrap = Wrap.Wrap;
+            filters.style.marginTop = 6;
+            _filterButtons.Clear();
+            foreach (CollectionFilter filter in Enum.GetValues(typeof(CollectionFilter)))
+            {
+                var f = filter;
+                var b = UiStyle.Button(FilterName(f), () =>
+                {
+                    _filter = f;
+                    RefreshCollection(resetScroll: true);
+                }, 16);
+                b.name = "filter-" + f.ToString().ToLowerInvariant();
+                b.style.marginRight = 4;
+                b.style.marginTop = 4;
+                filters.Add(b);
+                _filterButtons.Add((f, b));
+            }
+            panel.Add(filters);
+
+            // 정렬
+            var sorts = Row();
+            sorts.style.flexWrap = Wrap.Wrap;
+            sorts.style.alignItems = Align.Center;
+            sorts.style.marginTop = 2;
+            var sortLabel = Text("정렬", 16, UiStyle.TextDim);
+            sortLabel.style.marginRight = 6;
+            sortLabel.style.marginTop = 4;
+            sorts.Add(sortLabel);
             _sortButtons.Clear();
             foreach (CollectionSort sort in Enum.GetValues(typeof(CollectionSort)))
             {
@@ -362,25 +412,27 @@ namespace DuelRoguelike.UI
                 {
                     _sort = s;
                     RefreshCollection(resetScroll: true);
-                }, 14);
+                }, 16);
                 b.name = "sort-" + s.ToString().ToLowerInvariant();
-                b.style.marginLeft = 4;
-                tools.Add(b);
+                b.style.marginRight = 4;
+                b.style.marginTop = 4;
+                sorts.Add(b);
                 _sortButtons.Add((s, b));
             }
-            panel.Add(tools);
-            _pickCount = Text("", 13, UiStyle.TextDim, top: 4);
+            panel.Add(sorts);
+            _pickCount = Text("", 15, UiStyle.TextDim, top: 6);
             _pickCount.name = "collection-count";
+            _pickCount.style.whiteSpace = WhiteSpace.Normal;
             panel.Add(_pickCount);
-            var note = Text("×n은 아직 넣지 않은 장수입니다. 두 번 누르면 덱에 넣고, 오른쪽 칸으로 끌어다 놓으면 그 칸에 넣습니다. " +
-                            "흐린 카드는 컬렉션의 장수를 다 넣은 카드입니다. 더 넣을 수는 있지만(\"부족\" 표시) 그 레시피로는 런을 시작할 수 없습니다.",
-                13, UiStyle.TextDim, top: 2);
+            var note = Text("×n은 아직 넣지 않은 장수다. 두 번 누르면 덱에 넣는다. 흐린 카드는 컬렉션의 장수를 다 넣은 카드다.", 15, UiStyle.TextDim, top: 2);
             note.style.whiteSpace = WhiteSpace.Normal;
             panel.Add(note);
 
             _pickScroll = new ScrollView(ScrollViewMode.Vertical);
+            _pickScroll.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
             _pickScroll.style.flexGrow = 1;
-            _pickScroll.style.marginTop = 6;
+            _pickScroll.style.flexShrink = 1;
+            _pickScroll.style.marginTop = 8;
             _pickGrid = Grid(_pickScroll.contentContainer);
             RefreshCollection(resetScroll: false);
             panel.Add(_pickScroll);
@@ -451,13 +503,15 @@ namespace DuelRoguelike.UI
             if (_pickCount != null)
                 _pickCount.text = (term.Length == 0 ? $"{shown.Count}종" : $"「{_search.Trim()}」 찾은 카드 {shown.Count}종") + " · " + SortNote(_sort);
             if (shown.Count == 0)
-                _pickGrid.Add(Text(term.Length == 0 ? "없음" : "찾는 카드가 없습니다.", 15, UiStyle.TextDim));
+                _pickGrid.Add(Text(term.Length == 0 ? "없음" : "찾는 카드가 없다.", 17, UiStyle.TextDim));
             foreach (uint code in SortedCollection(shown))
             {
                 uint c = code;
                 int left = _editor.Left(c);
-                _pickGrid.Add(CardSlot(Pile.Collection, c, CardFaceSize.Medium, count: Math.Max(left, 0), tag: left < 0 ? "부족" : null, dim: left <= 0,
-                    onDoubleClick: () => EditorAdd(c, toSide: false)));
+                var slot = CardSlot(Pile.Collection, c, CardFaceSize.Small, count: Math.Max(left, 0), tag: left < 0 ? "부족" : null, dim: left <= 0,
+                    onDoubleClick: () => EditorAdd(c, toSide: false), width: EditorCardWidth);
+                UiStyle.Margin(slot, 0);
+                _pickGrid.Add(slot);
             }
             if (resetScroll && _pickScroll != null)
             {
@@ -538,12 +592,18 @@ namespace DuelRoguelike.UI
 
         // ---- 오른쪽: 레시피 (메인·엑스트라·시작 사이드 덱) ----
 
+        /// <summary>
+        /// 가운데 돌판: 덱. 메인·엑스트라 덱은 스크롤 안에 이어 놓고, 시작 사이드 덱은 그 아래에 고정한다. 한 줄 10장.
+        /// 맨 아래 줄에 방금 한 일의 알림(editor-notice).
+        /// </summary>
         VisualElement EditorDeckPanel()
         {
             var panel = UiStyle.PanelBox("editor-deck");
-            panel.style.width = 640;
-            panel.style.flexShrink = 0;
+            panel.style.paddingLeft = panel.style.paddingRight = 12;
+            panel.style.paddingTop = 14;
+            panel.style.paddingBottom = 12;
             _editorDeckScroll = new ScrollView(ScrollViewMode.Vertical);
+            _editorDeckScroll.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
             _editorDeckScroll.style.flexGrow = 1;
             _editorDeckScroll.style.flexShrink = 1;
             panel.Add(_editorDeckScroll);
@@ -573,10 +633,17 @@ namespace DuelRoguelike.UI
                     EditorMove(code, toSide: true);
             });
 
-            var hint = Text("덱·사이드 덱의 카드를 두 번 누르거나 컬렉션으로 끌어다 놓으면 뺍니다. 덱과 사이드 덱 사이로 끌어다 놓으면 옮깁니다. " +
-                            $"같은 카드명은 덱과 시작 사이드 덱을 합쳐 {RunRules.MaxCopies}장까지입니다.", 13, UiStyle.TextDim, top: 10);
+            var hint = Text("덱의 카드를 두 번 누르거나 컬렉션으로 끌어다 놓으면 뺀다. 덱과 시작 사이드 덱 사이로 끌어다 놓으면 옮긴다. " +
+                            $"같은 카드명은 덱과 시작 사이드 덱을 합쳐 {RunRules.MaxCopies}장까지", 15, UiStyle.TextDim, top: 8);
             hint.style.whiteSpace = WhiteSpace.Normal;
-            _editorDeckScroll.Add(hint);
+            hint.style.flexShrink = 0;
+            panel.Add(hint);
+            var notice = Text(_editorNotice ?? "", 17, _editorNoticeIsError ? UiStyle.Bad : UiStyle.Good, top: 4);
+            notice.name = "editor-notice";
+            notice.style.whiteSpace = WhiteSpace.Normal;
+            notice.style.flexShrink = 0;
+            notice.style.display = _editorNotice == null ? DisplayStyle.None : DisplayStyle.Flex;
+            panel.Add(notice);
 
             var scroll = _editorDeckScroll;
             var offset = _editorDeckScrollOffset;
@@ -589,14 +656,14 @@ namespace DuelRoguelike.UI
             var zone = UiStyle.Box(name);
             zone.style.marginTop = pile == Pile.DeckMain ? 0 : 10;
             UiStyle.Radius(zone, 6);
-            UiStyle.Padding(zone, 6);
-            UiStyle.BorderColor(zone, problem ? UiStyle.Opponent : UiStyle.Border, 1);
+            UiStyle.Padding(zone, 4);
+            UiStyle.BorderColor(zone, problem ? UiStyle.Bad : UiStyle.Border, 1);
             var header = Row();
             header.style.alignItems = Align.FlexEnd;
-            var titleLabel = UiStyle.Label(title, 18, problem ? UiStyle.Opponent : UiStyle.TextDim, bold: true);
+            var titleLabel = UiStyle.Label(title, 21, problem ? UiStyle.Bad : UiStyle.Text, bold: true);
             titleLabel.name = name + "-count";
             header.Add(titleLabel);
-            var noteLabel = Text(note, 13, UiStyle.TextDim);
+            var noteLabel = Text(note, 15, UiStyle.TextDim);
             noteLabel.style.marginLeft = 10;
             noteLabel.style.marginBottom = 2;
             header.Add(noteLabel);
@@ -604,15 +671,17 @@ namespace DuelRoguelike.UI
 
             var grid = Grid();
             grid.style.marginTop = 4;
-            grid.style.minHeight = CardFaces.SizeOf(CardFaceSize.Small).y + 14;
+            grid.style.minHeight = EditorCardWidth * 158f / 108f + 10;
             var cards = EditorCards(pile);
             if (cards.Count == 0)
-                grid.Add(Text("비어 있음 — 컬렉션의 카드를 여기로 끌어다 놓으면 넣습니다.", 15, UiStyle.TextDim, top: 4));
+                grid.Add(Text("비어 있음. 컬렉션의 카드를 여기로 끌어다 놓으면 넣는다.", 17, UiStyle.TextDim, top: 4));
             foreach (uint code in Sorted(cards))
             {
                 uint c = code;
-                grid.Add(CardSlot(pile, c, CardFaceSize.Small, tag: _editor.Left(c) < 0 ? "부족" : null,
-                    onDoubleClick: () => EditorRemove(c, fromSide: pile == Pile.DeckSide)));
+                var slot = CardSlot(pile, c, CardFaceSize.Small, tag: _editor.Left(c) < 0 ? "부족" : null,
+                    onDoubleClick: () => EditorRemove(c, fromSide: pile == Pile.DeckSide), width: EditorCardWidth);
+                UiStyle.Margin(slot, 0);
+                grid.Add(slot);
             }
             zone.Add(grid);
             parent.Add(zone);
@@ -666,29 +735,45 @@ namespace DuelRoguelike.UI
         {
             if (code == 0)
             {
-                panel.Add(Text("카드에 마우스를 올리면 여기에 크게 보이고, 누르면 정보와 넣기·빼기 버튼이 여기에 나옵니다.", 16, UiStyle.TextDim));
-                panel.Add(Text($"메인 덱 {RunRules.MinMainDeck}~{RunRules.MaxMainDeck}장, 엑스트라 덱 {RunRules.MaxExtraDeck}장 이하, " +
-                               $"시작 사이드 덱 {RunRules.StartingSideDeckMax}장 이하. 같은 카드명(에라타 전·후 버전 포함)은 덱과 시작 사이드 덱을 합쳐 {RunRules.MaxCopies}장까지입니다. " +
-                               "메인 덱이 40장보다 적으면 저장할 수 없습니다.", 15, UiStyle.TextDim, top: 10));
+                var hint = Text("카드에 마우스를 올리면 여기에 크게 보이고, 누르면 넣기·빼기 버튼이 나온다.", 19, UiStyle.TextDim);
+                hint.style.whiteSpace = WhiteSpace.Normal;
+                panel.Add(hint);
+                var rule = Text($"메인 덱 {RunRules.MinMainDeck}~{RunRules.MaxMainDeck}장, 엑스트라 덱 {RunRules.MaxExtraDeck}장 이하, " +
+                                $"시작 사이드 덱 {RunRules.StartingSideDeckMax}장 이하. 같은 카드명은 에라타 전·후 버전을 합쳐 덱과 시작 사이드 덱에 {RunRules.MaxCopies}장까지. " +
+                                $"메인 덱이 {RunRules.MinMainDeck}장보다 적으면 저장할 수 없다.", 17, UiStyle.TextDim, top: 10);
+                rule.style.whiteSpace = WhiteSpace.Normal;
+                panel.Add(rule);
                 return;
             }
-            AddCardDetail(panel, code, pinned);
+            panel.Add(_faces.BuildDetail(code, 324, 600));
             int left = _editor.Left(code);
-            panel.Add(Text($"컬렉션 {_editor.Owned(code)}장 · 덱 {_editor.Deck.Count(c => c == code)}장 · 사이드 덱 {_editor.Side.Count(c => c == code)}장 · " +
-                           $"같은 카드명 {_editor.NameCopies(code)}/{RunRules.MaxCopies}장", 14, left < 0 ? UiStyle.Opponent : UiStyle.TextDim, top: 6));
+            var counts = Text($"컬렉션 {_editor.Owned(code)}장 · 덱 {_editor.Deck.Count(c => c == code)}장 · 사이드 덱 {_editor.Side.Count(c => c == code)}장 · " +
+                              $"같은 카드명 {_editor.NameCopies(code)}/{RunRules.MaxCopies}장", 17, left < 0 ? UiStyle.Bad : UiStyle.TextDim, top: 8);
+            counts.style.whiteSpace = WhiteSpace.Normal;
+            panel.Add(counts);
             if (!pinned)
                 return;
             var actions = UiStyle.Box();
-            actions.style.marginTop = 8;
+            actions.style.marginTop = 4;
+            bool first = true;
             void AddAction(string text, string name, string reason, Action onClick)
             {
-                var b = UiStyle.Button(text, onClick, 18);
+                // 첫 버튼(가장 흔한 일)이 금색이다
+                var b = UiStyle.StoneButton(text, onClick, gold: first, small: !first);
+                if (first)
+                    b.style.fontSize = 23;
+                first = false;
                 b.name = name;
-                b.style.marginTop = 4;
+                b.style.marginTop = 8;
+                b.style.paddingLeft = b.style.paddingRight = 8;
                 b.SetEnabled(reason == null);
                 actions.Add(b);
                 if (reason != null)
-                    actions.Add(Text(reason, 14, UiStyle.TextDim, top: 2));
+                {
+                    var why = Text(reason, 15, UiStyle.TextDim, top: 2);
+                    why.style.whiteSpace = WhiteSpace.Normal;
+                    actions.Add(why);
+                }
             }
             if (pile == Pile.Collection)
             {
@@ -696,12 +781,16 @@ namespace DuelRoguelike.UI
                 AddAction(target, "editor-add", _editor.AddReason(code, false), () => EditorAdd(code, toSide: false));
                 AddAction("시작 사이드 덱에 넣기", "editor-add-side", _editor.AddReason(code, true), () => EditorAdd(code, toSide: true));
                 if (left <= 0)
-                    actions.Add(Text("컬렉션의 장수를 모두 넣었습니다. 더 넣으면 저장은 되지만 그 레시피로는 런을 시작할 수 없습니다.", 14, Warning, top: 6));
+                {
+                    var over = Text("컬렉션의 장수를 모두 넣었다. 더 넣으면 저장은 되지만 그 레시피로는 런을 시작할 수 없다.", 15, Warning, top: 6);
+                    over.style.whiteSpace = WhiteSpace.Normal;
+                    actions.Add(over);
+                }
             }
             else
             {
                 bool side = pile == Pile.DeckSide;
-                AddAction("빼기 (컬렉션으로)", "editor-remove", null, () => EditorRemove(code, fromSide: side));
+                AddAction("빼기", "editor-remove", null, () => EditorRemove(code, fromSide: side));
                 if (side)
                     AddAction(_editor.IsExtraDeckCard(code) ? "엑스트라 덱으로" : "메인 덱으로", "editor-to-deck", _editor.MoveReason(code, false),
                         () => EditorMove(code, toSide: false));

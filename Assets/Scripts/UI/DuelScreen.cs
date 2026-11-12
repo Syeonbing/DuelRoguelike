@@ -1416,36 +1416,87 @@ namespace DuelRoguelike.UI
 
         // ================= 창 =================
 
+        /// <summary>
+        /// 듀얼의 창: 필드를 어둡게 덮고 가운데에 돌판을 띄운다. 제목은 가운데 띠와 같은 글씨(금색 Black)다.
+        /// 닫을 수 있는 창(카드 목록)은 제목이 왼쪽, 닫기 버튼이 오른쪽에 온다. 크기는 1920×1080 기준이고 필드와 같은 배율로 줄인다.
+        /// </summary>
         VisualElement OpenModal(string title, string detail, bool closable)
         {
             CloseModal();
             _modalLayer.style.display = DisplayStyle.Flex;
+            // 선형 색 공간에서는 어두운 덮개가 옅게 보여서 시안(50%)보다 진하게 덮는다
+            _modalLayer.style.backgroundColor = new Color(0, 0, 0, 0.74f);
             _modalOpen = true;
-            var panel = UiStyle.PanelBox();
-            panel.style.maxWidth = 980;
-            panel.style.maxHeight = Length.Percent(80);
-            panel.style.minWidth = 420;
-            UiStyle.BorderColor(panel, UiStyle.Accent, 2);
+            var panel = new VisualElement { name = "duel-modal" };
+            UiStyle.Slab(panel);
+            panel.style.maxWidth = 1500;
+            panel.style.maxHeight = 900;
+            panel.style.minWidth = 620;
+            panel.style.flexShrink = 0;
+            panel.style.paddingLeft = panel.style.paddingRight = 30;
+            panel.style.paddingTop = 24;
+            panel.style.paddingBottom = 22;
             var head = UiStyle.Box(null, FlexDirection.Row);
-            head.style.justifyContent = Justify.SpaceBetween;
+            head.style.justifyContent = closable ? Justify.SpaceBetween : Justify.Center;
             head.style.alignItems = Align.Center;
-            head.Add(UiStyle.Label(title, 20, UiStyle.Accent, bold: true));
+            head.style.flexShrink = 0;
+            var titleLabel = UiStyle.Label(title, 30, UiStyle.Gold);
+            UiStyle.Black(titleLabel);
+            titleLabel.style.whiteSpace = WhiteSpace.Normal;
+            titleLabel.style.flexShrink = 1;
+            titleLabel.style.unityTextAlign = closable ? TextAnchor.MiddleLeft : TextAnchor.MiddleCenter;
+            head.Add(titleLabel);
             if (closable)
             {
-                var close = UiStyle.Button("닫기", CloseModal, 15);
-                close.name = "modal-close";
-                close.style.marginLeft = 16;
+                var close = ModalKeyButton("modal-close", "닫기", CloseModal, 112);
+                close.style.marginLeft = 24;
                 head.Add(close);
             }
             panel.Add(head);
             if (!string.IsNullOrEmpty(detail))
             {
-                var d = UiStyle.Label(detail, 15, UiStyle.TextDim);
-                d.style.marginTop = 6;
+                var d = UiStyle.Label(detail, 19, UiStyle.TextDim);
+                d.style.marginTop = 4;
+                d.style.whiteSpace = WhiteSpace.Normal;
+                d.style.unityTextAlign = closable ? TextAnchor.MiddleLeft : TextAnchor.MiddleCenter;
                 panel.Add(d);
             }
             _modalLayer.Add(panel);
+            FitModal();
+            ApplyKeyCaps();
             return panel;
+        }
+
+        /// <summary>작은 돌 버튼 오른쪽에 취소 키 표시를 단 것 (닫기, 필드 보기).</summary>
+        Button ModalKeyButton(string name, string text, Action run, float width)
+        {
+            var button = UiStyle.StoneButton(text, run, small: true);
+            button.name = name;
+            button.style.width = width;
+            button.style.paddingLeft = 14;
+            button.style.paddingRight = 44;
+            button.style.unityTextAlign = TextAnchor.MiddleLeft;
+            button.style.flexShrink = 0;
+            var key = KeyCap("X", "K");
+            key.pickingMode = PickingMode.Ignore;
+            key.style.position = Position.Absolute;
+            key.style.right = 9;
+            key.style.top = 8;
+            button.Add(key);
+            return button;
+        }
+
+        /// <summary>열려 있는 창을 필드의 무대와 같은 배율로 맞춘다 (FitStage가 부른다).</summary>
+        void FitModal()
+        {
+            if (_modalLayer == null || _root == null)
+                return;
+            float w = _root.layout.width, h = _root.layout.height;
+            if (float.IsNaN(w) || float.IsNaN(h) || w <= 0 || h <= 0)
+                return;
+            float scale = Mathf.Min(w / StageWidth, h / StageHeight);
+            foreach (var child in _modalLayer.Children())
+                child.style.scale = new Scale(new Vector3(scale, scale, 1f));
         }
 
         void CloseModal()
@@ -1462,16 +1513,36 @@ namespace DuelRoguelike.UI
             panel.style.maxWidth = 700;
         }
 
+        /// <summary>
+        /// 대화창 (예·아니오, 효과 고르기, 선언). 고를 것이 둘이면 듀얼 창처럼 돌 버튼을 나란히 놓고 첫 버튼이 금색이다.
+        /// 더 많으면 세로로 늘어놓는다. 아래 줄의 "필드 보기"로 창을 잠깐 치울 수 있다.
+        /// </summary>
         void OpenDialog(DialogSpec spec)
         {
             var panel = OpenModal(spec.Title, spec.Detail, closable: false);
-            var list = UiStyle.Box();
-            list.style.marginTop = 10;
+            bool pair = spec.Buttons.Count == 2 && spec.Toggles == null && !spec.AskCardCode;
+            var list = UiStyle.Box(null, pair ? FlexDirection.Row : FlexDirection.Column);
+            list.style.marginTop = 22;
+            list.style.justifyContent = Justify.Center;
             panel.Add(list);
+            int n = 0;
             foreach (var b in spec.Buttons)
             {
                 var response = b.Response;
-                list.Add(UiStyle.Button(b.Label, () => Respond(response)));
+                var button = UiStyle.StoneButton(b.Label, () => Respond(response), gold: pair && n == 0, small: !pair);
+                if (pair)
+                {
+                    button.style.minWidth = 250;
+                    button.style.marginLeft = n == 0 ? 0 : 16;
+                }
+                else
+                {
+                    button.style.height = 54;
+                    button.style.fontSize = 23;
+                    button.style.marginTop = n == 0 ? 0 : 6;
+                }
+                list.Add(button);
+                n++;
             }
             if (spec.Toggles != null)
             {
@@ -1480,40 +1551,46 @@ namespace DuelRoguelike.UI
                 foreach (var (label, bit) in spec.Toggles)
                 {
                     Button t = null;
-                    t = UiStyle.Button(label, () =>
+                    t = UiStyle.StoneButton(label, () =>
                     {
                         chosen ^= bit;
                         UiStyle.SetSelected(t, (chosen & bit) != 0);
                         confirm.SetEnabled(PopCount(chosen) == spec.ToggleCount);
-                    });
+                    }, small: true);
+                    t.style.marginTop = 6;
                     list.Add(t);
                 }
-                confirm = UiStyle.Button("확인", () => Respond(spec.BuildToggles(chosen)));
+                confirm = UiStyle.StoneButton("확인", () => Respond(spec.BuildToggles(chosen)), gold: true, small: true);
+                confirm.style.marginTop = 10;
                 confirm.SetEnabled(false);
                 list.Add(confirm);
             }
             if (spec.AskCardCode)
             {
                 var field = new TextField();
-                field.style.fontSize = 17;
+                field.style.fontSize = 21;
+                field.style.marginTop = 6;
                 list.Add(field);
-                list.Add(UiStyle.Button("확인", () =>
+                var ok = UiStyle.StoneButton("확인", () =>
                 {
                     if (uint.TryParse(field.value.Trim(), out uint code))
                         Respond(DuelResponses.AnnounceCard(code));
-                }));
+                }, gold: true, small: true);
+                ok.style.marginTop = 10;
+                list.Add(ok);
             }
             var row = UiStyle.Box(null, FlexDirection.Row);
             row.style.justifyContent = Justify.FlexEnd;
-            row.style.marginTop = 10;
-            var view = UiStyle.Button("필드 보기", () => { CloseModal(); Render(); }, 14);
-            view.name = "field-view";
-            view.style.color = UiStyle.TextDim;
-            row.Add(view);
+            row.style.marginTop = 18;
+            row.style.flexShrink = 0;
+            row.Add(ModalKeyButton("field-view", "필드 보기", () => { CloseModal(); Render(); }, 150));
             panel.Add(row);
         }
 
-        /// <summary>필드·패 밖의 카드를 고르는 창. 후보를 카드로 늘어놓고 눌러서 고른다.</summary>
+        /// <summary>
+        /// 선택 창: 필드·패 밖의 카드를 고른다 (묘지, 덱, 엑스트라 덱). 후보를 패의 카드 크기로 가운데에 늘어놓고 눌러서 고른다.
+        /// 카드 아래에 누구의 어디에 있는 카드인지 쓴다. 아래 줄에 진행 상황, 금색 확정 버튼, 그 밖의 버튼, "필드 보기".
+        /// </summary>
         void OpenSelectionWindow()
         {
             var sel = _interaction?.Selection;
@@ -1521,13 +1598,15 @@ namespace DuelRoguelike.UI
                 return;
             var panel = OpenModal(_interaction.Prompt, _interaction.PromptDetail, closable: false);
             var grid = CardGrid(panel);
+            grid.style.justifyContent = Justify.Center;
             int index = 0;
             foreach (var candidate in sel.Candidates)
             {
                 var info = MakeInfo(candidate.Card);
                 // 순서를 정할 카드는 엔진이 정하는 사람에게 보여 준 카드다 (상대 덱 위의 카드라도).
                 bool visible = sel.Ordered ? candidate.Card.Code != 0 : IsVisibleRequestCard(candidate.Card, info);
-                var cell = WindowCell($"candidate-{index++}");
+                var cell = WindowCell($"candidate-{index++}", faceWidth: SelectionCardWidth);
+                cell.Root.style.marginLeft = cell.Root.style.marginRight = 9;
                 cell.ClickOverride = () => OnCandidateClicked(candidate, info, visible);
                 cell.Set(info, visible);
                 cell.SetHighlight(sel.IsChosen(candidate) ? Chosen : Selectable);
@@ -1539,28 +1618,34 @@ namespace DuelRoguelike.UI
             }
             var row = UiStyle.Box(null, FlexDirection.Row);
             row.style.justifyContent = Justify.FlexEnd;
-            row.style.marginTop = 10;
+            row.style.alignItems = Align.Center;
+            row.style.marginTop = 14;
+            row.style.flexShrink = 0;
             if (sel.NeedsConfirm)
             {
-                row.Add(UiStyle.Label(sel.Progress + "  ", 15, UiStyle.TextDim));
-                var confirm = UiStyle.Button(sel.ConfirmLabel, () => Respond(sel.Confirm()));
+                var progress = UiStyle.Label(sel.Progress, 19, UiStyle.TextDim);
+                progress.style.marginRight = 14;
+                row.Add(progress);
+                var confirm = UiStyle.StoneButton(sel.ConfirmLabel, () => Respond(sel.Confirm()), gold: true, small: true);
+                confirm.style.minWidth = 200;
                 confirm.SetEnabled(sel.CanConfirm);
                 row.Add(confirm);
             }
             foreach (var b in _interaction.Buttons)
             {
                 var response = b.Response;
-                var button = UiStyle.Button(b.Label, () => Respond(response));
-                button.style.marginLeft = 6;
+                var button = UiStyle.StoneButton(b.Label, () => Respond(response), small: true);
+                button.style.marginLeft = 8;
                 row.Add(button);
             }
-            var view = UiStyle.Button("필드 보기", () => { _windowHidden = true; CloseModal(); Render(); }, 14);
-            view.name = "field-view";
-            view.style.marginLeft = 6;
-            view.style.color = UiStyle.TextDim;
+            var view = ModalKeyButton("field-view", "필드 보기", () => { _windowHidden = true; CloseModal(); Render(); }, 150);
+            view.style.marginLeft = 8;
             row.Add(view);
             panel.Add(row);
         }
+
+        /// <summary>선택 창의 카드 폭: 패의 카드와 같은 1.39배.</summary>
+        const float SelectionCardWidth = 150;
 
         /// <summary>묘지·제외·엑스트라 덱(·덱) 안의 카드를 보여 주는 창. 행동할 수 있는 카드는 눌러서 메뉴를 연다.</summary>
         void OpenPileWindow(byte p, OcgLocation location)
@@ -1581,7 +1666,8 @@ namespace DuelRoguelike.UI
                 cards = _interaction.Actions.Keys.Where(k => k.Controller == p && k.Location == location)
                     .Select(k => MakeInfo(RequestCard(k))).ToList();
 
-            var panel = OpenModal($"{_text.Player(p)}의 {name} ({cards.Count}장)", null, closable: true);
+            var panel = OpenModal($"{_text.Player(p)}의 {name} · {cards.Count}장", null, closable: true);
+            panel.style.minWidth = 900;
             var grid = CardGrid(panel);
             if (cards.Count == 0)
                 grid.Add(UiStyle.Label("비어 있음", 16, UiStyle.TextDim));

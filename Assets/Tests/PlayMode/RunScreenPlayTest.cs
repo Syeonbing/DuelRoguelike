@@ -1372,7 +1372,7 @@ namespace DuelRoguelike.Tests
             search.value = "없는카드이름zz";
             yield return null;
             Assert.AreEqual(0, Shown().Count, "없는 카드를 검색했는데 카드가 보인다");
-            Assert.IsTrue(Find<VisualElement>(RunUi, "editor-collection").Query<Label>().ToList().Any(l => l.text == "찾는 카드가 없습니다."), "검색 결과가 없다는 표시가 없다");
+            Assert.IsTrue(Find<VisualElement>(RunUi, "editor-collection").Query<Label>().ToList().Any(l => l.text == "찾는 카드가 없다."), "검색 결과가 없다는 표시가 없다");
 
             search.value = "";
             yield return null;
