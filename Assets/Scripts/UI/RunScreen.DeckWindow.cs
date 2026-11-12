@@ -194,7 +194,7 @@ namespace DuelRoguelike.UI
         Button DeckTab(Pile pile)
         {
             bool on = pile == _deckTab;
-            var tab = new Button(() => SetDeckTab(pile)) { name = $"zone-{pile.ToString().ToLowerInvariant()}", text = "", focusable = false };
+            var tab = new Button(UiStyle.Clicked(() => SetDeckTab(pile))) { name = $"zone-{pile.ToString().ToLowerInvariant()}", text = "", focusable = false };
             tab.style.height = 52;
             tab.style.flexShrink = 0;
             tab.style.flexDirection = FlexDirection.Row;

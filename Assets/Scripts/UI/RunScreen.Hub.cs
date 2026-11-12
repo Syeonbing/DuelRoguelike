@@ -22,6 +22,8 @@ namespace DuelRoguelike.UI
 
         const float StageWidth = TowerScene.Width, StageHeight = TowerScene.Height, TopBarHeight = 72;
         const float ClimbSeconds = 1.9f, EncounterSeconds = 0.45f;
+        /// <summary>올라가는 연출의 발소리 사이 (초).</summary>
+        const float StepSeconds = 0.32f;
         static readonly Color GoldInk = UiStyle.Hex(0x22180a);
         static readonly Color UnknownFloorColor = UiStyle.Hex(0x8d8170);
         static readonly Color PlaqueInk = UiStyle.Hex(0x1b140b);
@@ -618,6 +620,7 @@ namespace DuelRoguelike.UI
             public Button AddRow(string name, Action run, bool enabled = true, int height = 60)
             {
                 int index = _items.Count;
+                run = UiStyle.Clicked(run); // 마우스·결정 키(Activate) 모두 결정 소리를 낸다
                 var button = new Button(run) { name = name, text = "", focusable = false };
                 button.style.flexDirection = FlexDirection.Row;
                 button.style.alignItems = Align.Center;
@@ -776,6 +779,7 @@ namespace DuelRoguelike.UI
                 $"메인 {_run.MainDeck.Count} · 사이드 {_run.SideDeck.Count}", "deck-counts");
             menu.Add("open-sealed", "봉인", () => OpenDeck(Pile.Sealed), $"{_run.SealedMain.Count + _run.SealedExtra.Count}장");
             menu.Add("open-log", "런 기록", OpenLog);
+            menu.Add("hub-settings", "설정", OpenSettings);
             menu.Add("to-title", "처음 화면으로", GoToStart);
             menu.SelectEnabled(_hubMenuIndex);
             _hubMenu = menu;
@@ -881,17 +885,26 @@ namespace DuelRoguelike.UI
         {
             int to = _run.Floor;
             float from = _scenePosition;
+            int steps = 0;
             yield return Tween(ClimbSeconds, t =>
             {
                 float eased = t < 0.5f ? 2f * t * t : 1f - (2f - 2f * t) * (2f - 2f * t) / 2f;
                 SetScene(Mathf.Lerp(from, to, eased), 0f);
+                // 돌계단을 오르는 발소리 (끝나기 조금 전까지)
+                for (int due = Mathf.FloorToInt(t * ClimbSeconds / StepSeconds) + 1; steps < due && t < 0.92f; steps++)
+                    Sound.Play(Sfx.Step, volume: steps % 2 == 0 ? 1f : 0.8f);
             });
             _standFloor = to;
             _scenePosition = to;
             ShowHub(); // 위 막대·팻말·높이 자를 새 층에 맞춘다. 연출 중이라 창은 아직 뜨지 않는다.
+            Sound.Play(Sfx.Arrive);
             yield return Banner($"{to}층에 도착했다.", UiStyle.Text);
             if (BattleNow)
             {
+                // 심장이 두 번 뛴다 (보스는 더 낮게)
+                var beat = _run.FloorKind == FloorKind.Boss ? Sfx.BossEncounter : Sfx.Encounter;
+                Sound.Play(beat);
+                Sound.Play(beat, 0.32f, volume: 0.8f);
                 yield return Tween(EncounterSeconds, t => SetScene(to, t));
                 yield return Banner(_run.FloorKind == FloorKind.Boss ? "층의 주인이 기다리고 있다." : "누군가 듀얼을 걸어왔다!", UiStyle.Text);
             }

@@ -23,6 +23,64 @@
 - Pretendard 글꼴 파일은 고치지 않고 그대로 넣었다. Pretendard에 없는 기호는 실행 중에 Windows 기본 글꼴(맑은 고딕)에서 찾는다 (글꼴 파일은 넣지 않는다).
 - 카드 그림 칸의 픽토그램(`Assets/UI/Resources/Pictograms.txt`)과 카드 틀·뒷면은 이 프로젝트에서 직접 그린 것이다 (저장소 라이선스를 따른다).
 
+## 소리
+
+효과음은 `Assets/UI/Resources/Audio/Sfx`에, 배경음은 `Assets/UI/Resources/Audio/Music`에 있다. 파일은 고치지 않고 이름만 바꿔 넣었다. 효과음의 길이와 크기는 실행 중에 `Assets/Scripts/UI/Sound.cs`가 줄인다.
+
+### 배경음
+
+두 곡 모두 OpenGameArt에서 받았다. 지금 곡은 임시로 고른 것이다.
+
+| 파일 | 쓰는 곳 | 원래 제목 (원래 파일) | 만든 사람 | 출처 | 라이선스 |
+| --- | --- | --- | --- | --- | --- |
+| `tower.ogg` | 처음 화면, 탑 | Magic Puzzle Title (`magic_puzzle_title_bpm100_0.ogg`) | MintoDog | https://opengameart.org/content/magic-puzzle-title | CC0 1.0 |
+| `duel.mp3` | 듀얼 | Get Ready (`Komiku - Tale on the Late - 06 Get Ready_0.mp3`) | Komiku (Loyalty Freak Music) | https://opengameart.org/content/get-ready | CC0 1.0 |
+
+### Freesound
+
+Freesound 파일은 원본 대신 Freesound가 만든 고음질 미리듣기(.ogg)를 받았다. 위의 12개(`draw`~`dice`)는 EDOPro 기본 효과음과 같은 소리다. EDOPro 효과음 팩의 출처 목록(https://github.com/Lahrenheit/EDOPRO-Soundpack 의 CREDITS)에서 찾았다.
+
+| 파일 | 원래 제목 | 만든 사람 | 출처 | 라이선스 |
+| --- | --- | --- | --- | --- |
+| `draw.ogg` | Sliding Envelope.wav | MTJohnson | https://freesound.org/people/MTJohnson/sounds/444431/ | CC0 1.0 |
+| `set.ogg` | Paper slide | Kingofgamers_cz | https://freesound.org/people/Kingofgamers_cz/sounds/352914/ | CC0 1.0 |
+| `flip.ogg` | flipCard.wav | Splashdust | https://freesound.org/people/Splashdust/sounds/84322/ | CC0 1.0 |
+| `shuffle.ogg` | Riffle Card Shuffle | Kodack | https://freesound.org/people/Kodack/sounds/256508/ | CC0 1.0 |
+| `summon.ogg` | Vocal_chord.wav | cellokratzer | https://freesound.org/people/cellokratzer/sounds/502947/ | CC0 1.0 |
+| `attack.ogg` | Draw sword#1.wav | fielastro | https://freesound.org/people/fielastro/sounds/423935/ | CC0 1.0 |
+| `damage.ogg` | Nasty Knife Stab 2.wav | Aris621 | https://freesound.org/people/Aris621/sounds/478145/ | **CC BY 4.0** |
+| `recover.ogg` | jingle2 | soneproject | https://freesound.org/people/soneproject/sounds/255101/ | CC0 1.0 |
+| `turn.ogg` | Sound5.mp3 | Kastenfrosch | https://freesound.org/people/Kastenfrosch/sounds/162471/ | CC0 1.0 |
+| `phase.ogg` | Fast swipe.wav | ParadoxTheSock | https://freesound.org/people/ParadoxTheSock/sounds/412595/ | CC0 1.0 |
+| `coin.ogg` | Coin Flip | bone666138 | https://freesound.org/people/bone666138/sounds/198877/ | **CC BY 4.0** |
+| `dice.ogg` | Dices 3 | Aiwha | https://freesound.org/people/Aiwha/sounds/250714/ | **CC BY 4.0** |
+| `destroy.ogg` | Glass Break | unfa | https://freesound.org/people/unfa/sounds/221528/ | CC0 1.0 |
+| `banish.ogg` | Backwards Whoosh | SlavicMagic | https://freesound.org/people/SlavicMagic/sounds/446010/ | CC0 1.0 |
+| `special-summon.ogg` | GLEAM-GLOW-SFX-CHIME.wav | newagesoup | https://freesound.org/people/newagesoup/sounds/351408/ | CC0 1.0 |
+| `win.ogg` | Angelic Fanfare 2 | qubodup | https://freesound.org/people/qubodup/sounds/812468/ | CC0 1.0 |
+| `gong.ogg` | Deep Gong Tolling.mp3 | Yin_Yang_Jake007 | https://freesound.org/people/Yin_Yang_Jake007/sounds/415200/ | CC0 1.0 |
+| `arrive.ogg` | Pressure Plate | proolsen | https://freesound.org/people/proolsen/sounds/466272/ | CC0 1.0 |
+| `heartbeat.ogg` | Single Hearbeat (Deep Bass Kick) | unfa | https://freesound.org/people/unfa/sounds/217456/ | CC0 1.0 |
+
+- CC BY 4.0 파일 3개는 위 표의 만든 사람·출처·라이선스 표기가 저작자 표시다 (https://creativecommons.org/licenses/by/4.0/). 게임 안에 크레딧 화면을 만들면 거기에도 같은 내용을 넣는다.
+
+### Kenney
+
+모두 Kenney(Kenney Vleugels, https://kenney.nl)가 만든 CC0 1.0 효과음 팩이다. OpenGameArt에 올라온 같은 팩을 받았다.
+
+| 파일 | 팩의 원래 파일 | 팩 | 출처 |
+| --- | --- | --- | --- |
+| `activate.ogg` | `card-shove-2.ogg` | Casino Audio | https://kenney.nl/assets/casino-audio , https://opengameart.org/content/54-casino-sound-effects-cards-dice-chips |
+| `grave-1.ogg`, `grave-2.ogg` | `card-slide-3.ogg`, `card-slide-4.ogg` | Casino Audio | 위와 같음 |
+| `slide-1.ogg`, `slide-2.ogg` | `card-slide-6.ogg`, `card-slide-7.ogg` | Casino Audio | 위와 같음 |
+| `ui-confirm.ogg` | `chip-lay-1.ogg` | Casino Audio | 위와 같음 |
+| `target.ogg` | `metalClick.ogg` | RPG Audio | https://kenney.nl/assets/rpg-audio , https://opengameart.org/content/50-rpg-sound-effects |
+| `equip.ogg` | `metalLatch.ogg` | RPG Audio | 위와 같음 |
+| `step-1.ogg`~`step-4.ogg` | `footstep00.ogg`, `footstep02.ogg`, `footstep04.ogg`, `footstep06.ogg` | RPG Audio | 위와 같음 |
+| `ui-open.ogg` | `bookFlip2.ogg` | RPG Audio | 위와 같음 |
+| `ui-move.ogg` | `tick_002.ogg` | Interface Sounds | https://kenney.nl/assets/interface-sounds , https://opengameart.org/content/interface-sounds |
+| `ui-cancel.ogg` | `back_001.ogg` | Interface Sounds | 위와 같음 |
+
 ## 빌드할 때만 쓰는 것
 
 | 이름 | 위치 | 출처 | 버전 | 라이선스 |

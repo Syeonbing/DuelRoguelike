@@ -79,7 +79,7 @@ namespace DuelRoguelike.UI
         /// <summary>도감의 칸 하나: 아이콘, 이름, 골라 본 선택지 수. 만나지 않은 이벤트는 "???".</summary>
         Button CodexTile(TowerEvent ev, EventCodex codex, int index)
         {
-            var tile = new Button(() => SelectCodex(index)) { name = $"codex-{ev.Id}", text = "", focusable = false };
+            var tile = new Button(UiStyle.Clicked(() => SelectCodex(index))) { name = $"codex-{ev.Id}", text = "", focusable = false };
             tile.style.width = 256;
             tile.style.height = 150;
             UiStyle.Margin(tile, 7);

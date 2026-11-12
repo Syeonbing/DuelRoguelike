@@ -283,6 +283,7 @@ namespace DuelRoguelike.UI
                 return;
             }
             _coinFlipShown = duel;
+            Sound.Play(Sfx.Coin);
             result.style.opacity = 0f;
             landed.style.opacity = 0f;
             foreach (var choice in choices)
@@ -805,8 +806,16 @@ namespace DuelRoguelike.UI
             return panel;
         }
 
+        /// <summary>창이 새로 뜰 때 소리를 낸다 (떠 있던 창을 다른 창으로 바꾸거나 새로 그릴 때는 내지 않는다).</summary>
+        void PlayWindowSound()
+        {
+            if (_modalLayer.style.display == DisplayStyle.None || _modalLayer.childCount == 0)
+                Sound.Play(Sfx.WindowOpen);
+        }
+
         VisualElement OpenModal(float width)
         {
+            PlayWindowSound();
             _windowMenu = null;
             _windowRow = null;
             _windowCancel = null;
@@ -840,6 +849,7 @@ namespace DuelRoguelike.UI
         /// </summary>
         VisualElement OpenPlain(string name, float dim)
         {
+            PlayWindowSound();
             _windowMenu = null;
             _windowRow = null;
             _windowCancel = null;

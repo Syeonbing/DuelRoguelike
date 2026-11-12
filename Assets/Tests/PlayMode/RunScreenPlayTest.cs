@@ -16,6 +16,8 @@
 // 보충 고르기를 한 번 이상 거칠 때까지 런을 더 한다. 비전투 층(칩교환소·휴식·이벤트)은 다음 층으로 지나가고, 보스 보상 창은 첫 카드를 고른다.
 // 탑·칩교환소 시험(TowerAndChipExchange): 저장 파일을 고쳐 5층 칩교환소로 가서 교체·봉인 해제를 사고, 이벤트 창, 휴식 창(LP 3000 → 8000) → 보스, 보스 보상 창을 본다.
 // 듀얼 화면은 한 번, 6턴쯤에 자동 진행을 멈추고 카드에 마우스 올리기(왼쪽 카드 정보)와 묘지 누르기(카드 목록 창)를 해 본다.
+// 소리: 효과음 파일이 다 있는지, 처음 화면·탑은 탑 곡·듀얼은 듀얼 곡인지, 버튼·키·올라가기·한 단계씩 보여 주기에 소리가 나는지 (낸 횟수로 본다).
+// 설정 창: 처음 화면의 "설정"에서 효과음·배경음 음량을 버튼과 키로 바꿔 보고 처음 값으로 되돌린다 (음량은 PlayerPrefs에 남는다).
 // 오류 로그(Debug.LogError·LogException)가 하나라도 나오면 실패한다.
 // 환경 변수 DUELROGUELIKE_SCREENSHOT_DIR에 폴더를 주면 화면마다 처음 한 번 1920×1080 PNG로 저장한다 (화면 모양 확인용).
 // DUELROGUELIKE_SCREEN_THOROUGH=1이면 한 단계씩 보여 주기를 더 오래(더 많은 듀얼에서) 지켜보며 가끔만 생기는 장면(체인 2 이상, 상대 체인, 선택 창)도 기다린다.
@@ -71,6 +73,7 @@ namespace DuelRoguelike.Tests
         bool _chainSeen;
         bool _speedSeen;
         bool _lpSeen;
+        bool _duelMusicSeen, _towerMusicSeen;
         // 필드 보기는 선택 창(묘지·덱에서 고르기, 예/아니오 등)이 뜰 때만 있어서 기다리지 않는다. 뜨면 확인한다.
         bool PlaybackAllSeen => _previewSeen && _skipSeen && _chainSeen && _speedSeen && _lpSeen && _enterSeen;
         bool _enterSeen;
@@ -105,6 +108,7 @@ namespace DuelRoguelike.Tests
             Assert.IsNull(Find<Button>(RunUi, "continue-run"), "처음 켰는데 진행 중인 런이 있다");
             Assert.IsFalse(File.Exists(SaveFile), "아무것도 안 했는데 저장 파일이 있다");
             yield return CardGallery();
+            yield return SoundAndSettings();
 
             // ---- 덱 레시피: 새 게임에는 스타터 덱 4개 ----
             foreach (string id in new[] { "Yugi", "Kaiba", "Joey", "Pegasus" })
@@ -725,6 +729,7 @@ namespace DuelRoguelike.Tests
         IEnumerator FirstClimb()
         {
             StringAssert.Contains("1층으로 올라간다", HubTextOf("climb"), "메뉴의 올라가기 글");
+            int steps = SoundCount("Step"), arrives = SoundCount("Arrive"), beats = SoundCount("Encounter", "BossEncounter");
             Click(Find<Button>(RunUi, "climb"));
             yield return null;
             Assert.IsNotNull(Find<Button>(RunUi, "climb-skip"), "올라가기를 눌렀는데 연출이 시작되지 않았다");
@@ -732,6 +737,9 @@ namespace DuelRoguelike.Tests
             yield return WaitFor(() => Find<Label>(RunUi, "stand-floor")?.text == "1층", 15, "1층 도착");
             yield return Shot(RunUi, "4b-arrive");
             yield return WaitFor(() => Find<Button>(RunUi, "climb-skip") == null, 20, "올라가는 연출의 끝");
+            Assert.GreaterOrEqual(SoundCount("Step") - steps, 3, "올라가는 동안 발소리가 나지 않았다");
+            Assert.Greater(SoundCount("Arrive"), arrives, "층에 올라섰는데 도착 소리가 나지 않았다");
+            Assert.Greater(SoundCount("Encounter", "BossEncounter"), beats, "전투 층에 올라섰는데 심장 소리가 나지 않았다");
             Assert.IsNotNull(Find<VisualElement>(RunUi, "duel-window"), "1층에 올라섰는데 듀얼 창이 뜨지 않았다");
             Assert.AreEqual("듀얼 시작", Find<Button>(RunUi, "next-duel")?.text, "듀얼 창의 듀얼 시작 버튼");
             Assert.AreEqual("상대 · ???", Find<Label>(RunUi, "duel-opponent")?.text, "듀얼 창에서 상대 덱 이름을 가리지 않았다");
@@ -747,7 +755,7 @@ namespace DuelRoguelike.Tests
             yield return Shot(RunUi, "4d-deck-from-duel");
             yield return CloseDeck();
             Assert.IsNotNull(Find<VisualElement>(RunUi, "duel-window"), "덱 창을 닫았는데 듀얼 창으로 돌아오지 않았다");
-            Debug.Log("[런 화면 시험] 올라가는 연출(끝까지) → 듀얼 창 → 덱 조정 → 듀얼 창");
+            Debug.Log($"[런 화면 시험] 올라가는 연출(끝까지, 발소리 {SoundCount("Step") - steps}번) → 듀얼 창 → 덱 조정 → 듀얼 창");
         }
 
         /// <summary>
@@ -757,6 +765,7 @@ namespace DuelRoguelike.Tests
         {
             bool Selected(string name) => Find<Button>(RunUi, name)?.ClassListContains("selected") == true;
             Assert.IsTrue(Selected("climb"), "허브에 들어왔을 때 메뉴의 첫 항목이 골라져 있지 않다");
+            Assert.IsNotNull(Find<Button>(RunUi, "hub-settings"), "허브 메뉴에 설정이 없다");
             StringAssert.Contains("Z", HubTextOf("hub-menu"), "처음에는 방향키 자리(Z)의 키 표시여야 한다");
             yield return Tap(UnityEngine.InputSystem.Key.S);
             Assert.IsTrue(Selected("open-deck"), "S를 눌렀는데 메뉴의 다음 항목(덱)이 골라지지 않았다");
@@ -867,6 +876,91 @@ namespace DuelRoguelike.Tests
             Click(button);
             yield return null;
         }
+
+        /// <summary>
+        /// 소리와 설정 창 (처음 화면): 효과음 파일이 다 있는지, 처음 화면의 배경음이 탑 곡인지, 메뉴를 누르면 결정 소리가 나는지 보고,
+        /// 설정 창에서 효과음 음량은 −·+ 버튼으로, 배경음 음량은 ↓ 뒤 좌우 키로 한 칸 바꾼 뒤 X로 닫는다.
+        /// 음량은 PlayerPrefs에 남으므로 끝나면 처음 값으로 되돌린다. 새 런 창을 다시 열고 끝난다.
+        /// </summary>
+        IEnumerator SoundAndSettings()
+        {
+            var missing = ((IEnumerable)SoundType.GetMethod("MissingFiles").Invoke(null, null)).Cast<string>().ToList();
+            CollectionAssert.IsEmpty(missing, "소리 표에 있는 효과음 파일이 없다: " + string.Join(", ", missing));
+            foreach (string track in new[] { "tower", "duel" })
+                Assert.IsNotNull(Resources.Load<AudioClip>("Audio/Music/" + track), $"배경음 파일 Audio/Music/{track}이 없다");
+            Assert.AreEqual("Tower", SoundValue("CurrentMusic").ToString(), "처음 화면의 배경음이 탑 곡이 아니다");
+            yield return CloseNewRun();
+            int sfx = (int)SoundValue("SfxLevel"), music = (int)SoundValue("MusicLevel");
+            try
+            {
+                // 같은 소리는 잠깐(MinGap) 안에 다시 나지 않는다. 바로 앞의 "뒤로" 버튼 소리와 떨어뜨린다.
+                yield return new WaitForSecondsRealtime(0.2f);
+                int confirms = SoundCount("Confirm");
+                Click(Find<Button>(RunUi, "open-settings"));
+                yield return null;
+                Assert.IsNotNull(Find<VisualElement>(RunUi, "settings"), "설정을 눌렀는데 설정 창이 열리지 않았다");
+                Assert.Greater(SoundCount("Confirm"), confirms, "메뉴를 눌렀는데 결정 소리가 나지 않았다");
+                Assert.AreEqual(LevelText(sfx), Find<Label>(RunUi, "settings-sfx-value").text, "설정 창의 효과음 음량 표시");
+                Assert.AreEqual(LevelText(music), Find<Label>(RunUi, "settings-music-value").text, "설정 창의 배경음 음량 표시");
+                Assert.IsTrue(Find<VisualElement>(RunUi, "settings-sfx").ClassListContains("selected"), "설정 창이 열렸는데 첫 줄(효과음)이 골라져 있지 않다");
+                yield return Shot(RunUi, "0c-settings");
+
+                // 효과음: 버튼으로 한 칸 (끝이면 반대쪽). 바꾸면 그 크기로 소리를 들려 준다.
+                int flips = SoundCount("Flip");
+                int sfxTo = sfx > 0 ? sfx - 1 : sfx + 1;
+                Click(Find<Button>(RunUi, sfx > 0 ? "settings-sfx-down" : "settings-sfx-up"));
+                yield return null;
+                Assert.AreEqual(sfxTo, (int)SoundValue("SfxLevel"), "효과음 음량 버튼을 눌렀는데 음량이 바뀌지 않았다");
+                Assert.AreEqual(LevelText(sfxTo), Find<Label>(RunUi, "settings-sfx-value").text, "효과음 음량을 바꿨는데 표시가 그대로다");
+                Assert.Greater(SoundCount("Flip"), flips, "효과음 음량을 바꿨는데 들려 주는 소리가 없다");
+
+                // 배경음: ↓로 둘째 줄, →(끝이면 ←)로 한 칸
+                yield return Tap(UnityEngine.InputSystem.Key.DownArrow);
+                Assert.IsTrue(Find<VisualElement>(RunUi, "settings-music").ClassListContains("selected"), "↓를 눌렀는데 배경음 줄이 골라지지 않았다");
+                int musicTo = music < 10 ? music + 1 : music - 1;
+                yield return Tap(music < 10 ? UnityEngine.InputSystem.Key.RightArrow : UnityEngine.InputSystem.Key.LeftArrow);
+                Assert.AreEqual(musicTo, (int)SoundValue("MusicLevel"), "배경음 줄에서 좌우 키를 눌렀는데 음량이 바뀌지 않았다");
+                Assert.AreEqual(LevelText(musicTo), Find<Label>(RunUi, "settings-music-value").text, "배경음 음량을 바꿨는데 표시가 그대로다");
+
+                // 방향키 쪽 취소 키(X)로 닫는다 (K로 닫으면 키 표시가 J·K 배치로 남는다)
+                int cancels = SoundCount("Cancel");
+                yield return Tap(UnityEngine.InputSystem.Key.X);
+                Assert.IsNull(Find<VisualElement>(RunUi, "settings"), "X를 눌렀는데 설정 창이 닫히지 않았다");
+                Assert.Greater(SoundCount("Cancel"), cancels, "취소 키를 눌렀는데 취소 소리가 나지 않았다");
+                Assert.IsNotNull(Find<Button>(RunUi, "title-new-run"), "설정 창을 닫았는데 처음 화면의 메뉴가 없다");
+            }
+            finally
+            {
+                SetSoundValue("SfxLevel", sfx);
+                SetSoundValue("MusicLevel", music);
+            }
+            Debug.Log($"[런 화면 시험] 설정 창: 효과음 {sfx}·배경음 {music} → 버튼·키로 한 칸씩 바꾸고 되돌림, 효과음 파일 모두 있음");
+            yield return OpenNewRun();
+        }
+
+        static string LevelText(int level) => level == 0 ? "끔" : $"{level * 10}%";
+
+        /// <summary>화면의 소리(DuelRoguelike.UI.Sound). 시험 어셈블리는 화면 어셈블리를 참조하지 않으므로 이름으로 부른다.</summary>
+        static Type SoundType => Type.GetType("DuelRoguelike.UI.Sound, DuelRoguelike.UI", true);
+
+        static object SoundValue(string property) => SoundType.GetProperty(property).GetValue(null);
+
+        static void SetSoundValue(string property, object value) => SoundType.GetProperty(property).SetValue(null, value);
+
+        /// <summary>효과음을 낸 횟수의 합 (Sound.Count). 이름은 Sfx의 이름.</summary>
+        static int SoundCount(params string[] names)
+        {
+            var sfx = Type.GetType("DuelRoguelike.UI.Sfx, DuelRoguelike.UI", true);
+            var count = SoundType.GetMethod("Count");
+            return names.Sum(n => (int)count.Invoke(null, new[] { Enum.Parse(sfx, n) }));
+        }
+
+        /// <summary>듀얼 화면이 엔진 메시지에 맞춰 내는 효과음.</summary>
+        static readonly string[] DuelSounds =
+        {
+            "Draw", "Set", "Flip", "Shuffle", "Summon", "SpecialSummon", "Activate", "Target", "ToGrave", "ToHand", "Destroy", "Banish", "Equip",
+            "Attack", "Damage", "Recover", "NewTurn", "Phase", "Coin", "Dice",
+        };
 
         /// <summary>
         /// 카드 견본 화면(RunScreen.ToggleCardGallery)을 띄워 카드가 그려지는지 보고 스크린샷을 남긴 뒤 닫는다.
@@ -1231,6 +1325,11 @@ namespace DuelRoguelike.Tests
                 LoadTimeout, "듀얼 화면");
             Assert.IsNull(Find<Button>(RunUi, "next-duel"), "듀얼 중에 런 화면이 보인다");
             yield return Shot(DuelUi, "2-duel");
+            if (!_duelMusicSeen && Find<Button>(DuelUi, "leave-duel") == null)
+            {
+                yield return WaitFor(() => SoundValue("CurrentMusic").ToString() == "Duel", 5, "듀얼 화면의 배경음(듀얼 곡)");
+                _duelMusicSeen = true;
+            }
             float until = Time.realtimeSinceStartup + DuelTimeout;
             while (Find<Button>(DuelUi, "leave-duel") == null)
             {
@@ -1252,6 +1351,11 @@ namespace DuelRoguelike.Tests
             Assert.IsNull(Find<Button>(DuelUi, "leave-duel"), "결과 보기 뒤에도 듀얼 화면이 보인다");
             Assert.IsTrue(IsHub() || Find<Button>(RunUi, "new-run") != null,
                 "결과 보기 뒤에 층 사이 화면이나 런 종료 화면이 아니다");
+            if (!_towerMusicSeen && IsHub())
+            {
+                yield return WaitFor(() => SoundValue("CurrentMusic").ToString() == "Tower", 5, "듀얼 뒤 층 사이 화면의 배경음(탑 곡)");
+                _towerMusicSeen = true;
+            }
             if (IsHub() && NoModal())
                 yield return Shot(RunUi, "4-hub");
         }
@@ -1697,6 +1801,7 @@ namespace DuelRoguelike.Tests
         IEnumerator CheckPlayback()
         {
             _playbackTries++;
+            int sounds = SoundCount(DuelSounds);
             var stop = Find<Button>(DuelUi, "auto-stop");
             if (stop != null)
             {
@@ -1845,6 +1950,8 @@ namespace DuelRoguelike.Tests
             }
             _playbackDone = battle && PlaybackAllSeen && (!Thorough || RareSeen);
             Assert.Greater(steps, 0, "자동(한 번)으로 답했는데 멈춰 보여 주는 단계가 없다");
+            Assert.Greater(SoundCount(DuelSounds), sounds, "한 단계씩 보여 주는 동안 듀얼 효과음이 하나도 나지 않았다");
+            Debug.Log("[런 화면 시험] 지금까지의 듀얼 효과음: " + string.Join(", ", DuelSounds.Select(n => (n, c: SoundCount(n))).Where(x => x.c > 0).Select(x => $"{x.n} {x.c}")));
             Debug.Log($"[런 화면 시험] 한 단계씩 보여 주기 ({_playbackTries}번째): 멈춘 단계 {steps}개, 상대 공격 {(attack ? "봄" : "못 봄")}, 그 뒤 데미지 계산 {(battle ? "봄" : "못 봄")}"
                 + $", 필드 확인 중 {(_fieldViewSeen ? "봄" : "못 봄")}, 가속 중 {(_speedSeen ? "봄" : "못 봄")}, LP 변화 {(_lpSeen ? "봄" : "못 봄")}"
                 + $", 체인 2 이상 {(_chain2Seen ? "봄" : "못 봄")}, 상대 체인 {(_chainOpponentSeen ? "봄" : "못 봄")}");

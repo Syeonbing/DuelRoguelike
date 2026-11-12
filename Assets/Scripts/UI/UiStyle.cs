@@ -78,9 +78,16 @@ namespace DuelRoguelike.UI
         /// <summary>
         /// 돌 버튼: 위쪽 모서리는 밝고 아래쪽 테두리는 두꺼워서 두께가 있어 보인다. 누르면 조금 내려간다.
         /// </summary>
+        /// <summary>누르면 결정 소리를 내고 onClick을 부른다 (마우스·결정 키·화면 시험 모두). 버튼을 만드는 곳은 이것으로 감싼다.</summary>
+        public static System.Action Clicked(System.Action onClick) => () =>
+        {
+            Sound.Play(Sfx.Confirm);
+            onClick?.Invoke();
+        };
+
         public static Button Button(string text, System.Action onClick, int size = 17)
         {
-            var b = new Button(onClick) { text = text };
+            var b = new Button(Clicked(onClick)) { text = text };
             b.style.fontSize = size;
             b.style.color = Text;
             b.style.backgroundColor = ButtonColor;
@@ -114,7 +121,7 @@ namespace DuelRoguelike.UI
         /// </summary>
         public static Button StoneButton(string text, System.Action onClick, bool gold = false, bool small = false)
         {
-            var b = new Button(onClick) { text = text, focusable = false };
+            var b = new Button(Clicked(onClick)) { text = text, focusable = false };
             Color face = gold ? Gold : ButtonColor, hover = gold ? GoldHover : ButtonHoverColor;
             b.style.fontSize = small ? 19 : 26;
             b.style.color = gold ? GoldInk : Text;
