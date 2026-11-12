@@ -133,7 +133,14 @@ namespace DuelRoguelike.UI
                 RewardKey(nav);
                 return;
             }
-            // 그 밖의 창과 화면(런 시작, 덱 편집, 런 종료, 이벤트·칩교환소·휴식·코인 토스 등): 버튼과 카드를 이동 키로 고른다
+            if (modal && WindowKeysOpen)
+            {
+                // 제 목록이나 버튼 줄이 있는 창 (이벤트, 칩교환소, 휴식 등)
+                _navOn = false;
+                WindowKey(nav);
+                return;
+            }
+            // 그 밖의 창과 화면(런 시작, 덱 편집, 런 종료, 코인 토스 등): 버튼과 카드를 이동 키로 고른다
             ScopeKey(modal ? _modalLayer[0] : _root, nav);
         }
 

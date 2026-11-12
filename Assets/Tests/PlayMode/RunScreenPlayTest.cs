@@ -473,21 +473,21 @@ namespace DuelRoguelike.Tests
             Click(Find<Button>(RunUi, "open-shop"));
             yield return null;
             Assert.IsNotNull(Find<VisualElement>(RunUi, "chip-exchange"), "칩교환소 창이 열리지 않았다");
-            Assert.AreEqual("보유 칩 400", Find<Label>(RunUi, "shop-chips")?.text, "칩교환소의 보유 칩");
-            StringAssert.Contains("고대의 망원경", HubTextOf("shop-offer-ItemCard"), "칩교환소에 아이템 카드(고대의 망원경) 상품이 없다");
+            Assert.AreEqual("400", Find<Label>(RunUi, "shop-chips")?.text, "칩교환소의 보유 칩");
+            StringAssert.Contains("고대의 망원경", HubTextOf("shop-buy-ItemCard"), "칩교환소에 아이템 카드(고대의 망원경) 상품이 없다");
             foreach (string product in new[] { "SwapSameRarity", "SwapSameRarityChosen", "SwapAny", "SwapAnyChosen", "Unseal", "ItemCard" })
                 Assert.IsTrue(Find<Button>(RunUi, "shop-buy-" + product)?.enabledSelf == true, $"칩 400인데 {product}를 살 수 없다");
             yield return Shot(RunUi, "12-shop");
 
             yield return BuyInShop("SwapSameRarity", chooseSeal: false);
-            Assert.AreEqual("보유 칩 370", Find<Label>(RunUi, "shop-chips")?.text, "같은 레어도 교체(30) 뒤 칩");
+            Assert.AreEqual("370", Find<Label>(RunUi, "shop-chips")?.text, "같은 레어도 교체(30) 뒤 칩");
             var sold = Find<Button>(RunUi, "shop-buy-SwapSameRarity");
-            Assert.IsTrue(sold != null && !sold.enabledSelf && sold.text == "샀음", "산 상품을 또 살 수 있다");
+            Assert.IsTrue(sold != null && !sold.enabledSelf && Find<Label>(RunUi, "shop-price-SwapSameRarity")?.text == "샀음", "산 상품을 또 살 수 있다");
             Assert.AreEqual("3", Find<Label>(RunUi, "stat-sealed")?.text, "교체 뒤 봉인 장수가 바뀌었다");
             yield return BuyInShop("SwapAnyChosen", chooseSeal: true);
-            Assert.AreEqual("보유 칩 290", Find<Label>(RunUi, "shop-chips")?.text, "직접 고르는 완전 교체(80) 뒤 칩");
+            Assert.AreEqual("290", Find<Label>(RunUi, "shop-chips")?.text, "직접 고르는 완전 교체(80) 뒤 칩");
             yield return BuyInShop("Unseal", chooseSeal: false);
-            Assert.AreEqual("보유 칩 140", Find<Label>(RunUi, "shop-chips")?.text, "봉인 해제(150) 뒤 칩");
+            Assert.AreEqual("140", Find<Label>(RunUi, "shop-chips")?.text, "봉인 해제(150) 뒤 칩");
             Assert.AreEqual("2", Find<Label>(RunUi, "stat-sealed")?.text, "봉인 해제 뒤 봉인 장수");
             string saved = File.ReadAllText(SaveFile).Replace("\r\n", "\n");
             StringAssert.Contains("SwapSameRarity:30:1", saved, "산 상품이 저장되지 않았다");
@@ -498,10 +498,10 @@ namespace DuelRoguelike.Tests
             Click(Find<Button>(RunUi, "shop-buy-ItemCard"));
             yield return null;
             Assert.IsNotNull(Find<VisualElement>(RunUi, "chip-exchange"), "아이템 카드를 산 뒤 칩교환소 창으로 돌아오지 않았다");
-            Assert.AreEqual("보유 칩 80", Find<Label>(RunUi, "shop-chips")?.text, "아이템 카드(60) 뒤 칩");
+            Assert.AreEqual("80", Find<Label>(RunUi, "shop-chips")?.text, "아이템 카드(60) 뒤 칩");
             StringAssert.StartsWith("칩교환소: 아이템 카드", Find<Label>(RunUi, "move-notice")?.text ?? "", "아이템 카드를 산 뒤 알림");
             var soldItem = Find<Button>(RunUi, "shop-buy-ItemCard");
-            Assert.IsTrue(soldItem != null && !soldItem.enabledSelf && soldItem.text == "샀음", "산 아이템 카드를 또 살 수 있다");
+            Assert.IsTrue(soldItem != null && !soldItem.enabledSelf && Find<Label>(RunUi, "shop-price-ItemCard")?.text == "샀음", "산 아이템 카드를 또 살 수 있다");
             yield return Shot(RunUi, "12b-shop-item");
             Click(Find<Button>(RunUi, "shop-close"));
             yield return null;
@@ -537,11 +537,12 @@ namespace DuelRoguelike.Tests
             Assert.IsNotNull(Find<VisualElement>(RunUi, "tower-event"), "이벤트 층에 들어갔는데 이벤트 창이 뜨지 않았다");
             yield return EditSave(text => Regex.Replace(text, @"\nfloor-event [^\n]*", "\nfloor-event dragon-shrine"));
             Assert.IsNotNull(Find<VisualElement>(RunUi, "tower-event"), "이어하기로 이벤트 층에 왔는데 이벤트 창이 뜨지 않았다");
-            Assert.AreEqual("용의 사당", Find<Label>(RunUi, "event-title")?.text, "이벤트 제목");
+            Assert.AreEqual("[ 용의 사당. ]", Find<Label>(RunUi, "event-title")?.text, "이벤트 제목");
+            Assert.IsTrue(Named("event-choice-").OfType<Button>().Any(b => b.ClassListContains("selected")), "이벤트 창이 떴는데 가리키는 선택지가 없다");
             StringAssert.Contains("드래곤족 몬스터 2장 이상", Find<Label>(RunUi, "event-choice-note-0")?.text ?? "", "조건 선택지에 조건이 보이지 않는다");
             Assert.IsTrue(Find<Button>(RunUi, "event-choice-1").enabledSelf, "칩 30 이상인데 시주 선택지가 잠겼다");
             // 선택지 글에는 조건·비용을 괄호로 넣지 않는다: 버튼에는 할 일만, 조건은 버튼 오른쪽 끝에 따로
-            Assert.AreEqual("시주한다", Find<Button>(RunUi, "event-choice-1").text, "선택지 글에 괄호로 비용이 들어 있다");
+            Assert.AreEqual("시주한다", Find<Label>(RunUi, "event-choice-title-1")?.text, "선택지 글에 괄호로 비용이 들어 있다");
             Assert.AreEqual("칩 30 이상", Find<Label>(RunUi, "event-choice-note-1")?.text, "시주 선택지의 조건 표시");
             Assert.IsNull(Find<Label>(RunUi, "event-choice-note-2"), "조건이 없는 선택지(지나간다)에 조건 표시가 있다");
             StringAssert.DoesNotContain("결과:", Find<Label>(RunUi, "event-choice-note-1")?.text ?? "", "처음 고르는 선택지의 결과가 보인다");
@@ -582,11 +583,17 @@ namespace DuelRoguelike.Tests
             Assert.IsNull(Find<VisualElement>(RunUi, "tower-rest"), "아직 올라가지 않았는데 휴식 창이 떴다");
             yield return Climb();
             Assert.IsNotNull(Find<VisualElement>(RunUi, "tower-rest"), "휴식 층에 올라섰는데 휴식 창이 뜨지 않았다");
-            Assert.AreEqual("LP 3000 → 8000", Find<Label>(RunUi, "rest-lp")?.text, "휴식 창의 LP");
+            Assert.AreEqual("LP 3000 → 8000", Find<Label>(RunUi, "rest-lp-from")?.text + " → " + Find<Label>(RunUi, "rest-lp-to")?.text, "휴식 창의 LP");
             Assert.AreEqual("8000", Find<Label>(RunUi, "stat-lp")?.text, "휴식 뒤 LP");
             yield return Shot(RunUi, "15-rest");
-            Click(Find<Button>(RunUi, "rest-close"));
-            yield return null;
+            // 휴식 창의 키보드: 좌우로 버튼을 고른다. 덱 정리로 연 덱 창을 닫으면 휴식 창으로 돌아온다. 취소 키는 창을 닫는다.
+            yield return Tap(UnityEngine.InputSystem.Key.RightArrow);
+            yield return Tap(UnityEngine.InputSystem.Key.Z);
+            Assert.IsNotNull(Find<VisualElement>(RunUi, "run-decks"), "휴식 창의 덱 정리를 골랐는데 덱 창이 열리지 않았다");
+            StringAssert.Contains("휴식 창", Find<Label>(RunUi, "deck-from-duel")?.text ?? "", "휴식 창에서 연 덱 창의 안내");
+            yield return CloseDeck();
+            Assert.IsNotNull(Find<VisualElement>(RunUi, "tower-rest"), "덱 창을 닫았는데 휴식 창으로 돌아오지 않았다");
+            yield return Tap(UnityEngine.InputSystem.Key.X);
             Assert.IsNull(Find<VisualElement>(RunUi, "tower-rest"), "휴식 창이 닫히지 않았다");
             Click(Find<Button>(RunUi, "open-rest"));
             yield return null;

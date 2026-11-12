@@ -770,6 +770,9 @@ namespace DuelRoguelike.UI
 
         VisualElement OpenModal(float width)
         {
+            _windowMenu = null;
+            _windowRow = null;
+            _windowCancel = null;
             _modalLayer.Clear();
             _modalLayer.style.display = DisplayStyle.Flex;
             _modalLayer.style.backgroundColor = new Color(0, 0, 0, 0.55f);
@@ -800,6 +803,9 @@ namespace DuelRoguelike.UI
         /// </summary>
         VisualElement OpenPlain(string name, float dim)
         {
+            _windowMenu = null;
+            _windowRow = null;
+            _windowCancel = null;
             _modalLayer.Clear();
             _modalLayer.style.display = DisplayStyle.Flex;
             _modalLayer.style.backgroundColor = new Color(0, 0, 0, dim);
@@ -810,6 +816,9 @@ namespace DuelRoguelike.UI
 
         void CloseModal()
         {
+            _windowMenu = null;
+            _windowRow = null;
+            _windowCancel = null;
             _modalLayer.Clear();
             _modalLayer.style.display = DisplayStyle.None;
         }

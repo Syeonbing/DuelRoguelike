@@ -608,17 +608,25 @@ namespace DuelRoguelike.UI
             public int Index { get; private set; } = -1;
             public int Count => _items.Count;
 
-            public Button Add(string name, string text, Action run, string sub = null, string subName = null, bool enabled = true, int height = 60, int size = 27)
+            /// <summary>
+            /// 빈 줄을 더한다 (▶ 자리만 있다). 내용은 부른 쪽이 돌려받은 줄에 넣는다 (이벤트 선택지, 칩교환소 상품).
+            /// height가 0이면 내용에 맞춘다 (가장 작게 60).
+            /// </summary>
+            public Button AddRow(string name, Action run, bool enabled = true, int height = 60)
             {
                 int index = _items.Count;
                 var button = new Button(run) { name = name, text = "", focusable = false };
                 button.style.flexDirection = FlexDirection.Row;
                 button.style.alignItems = Align.Center;
-                button.style.height = height;
+                button.style.unityTextAlign = TextAnchor.MiddleLeft; // 줄 안의 글은 왼쪽 맞춤 (버튼의 기본값은 가운데)
+                if (height > 0)
+                    button.style.height = height;
+                else
+                    button.style.minHeight = 60;
                 button.style.flexShrink = 0;
                 UiStyle.Margin(button, 0);
                 button.style.marginTop = index == 0 ? 0 : 5;
-                button.style.paddingTop = button.style.paddingBottom = 0;
+                button.style.paddingTop = button.style.paddingBottom = height > 0 ? 0 : 7;
                 button.style.paddingLeft = 10;
                 button.style.paddingRight = 16;
                 button.style.backgroundColor = Color.clear;
@@ -627,8 +635,19 @@ namespace DuelRoguelike.UI
                 var mark = UiStyle.Label("▶", 17, Color.clear);
                 mark.style.width = 20;
                 mark.style.marginRight = 12;
+                mark.style.flexShrink = 0;
                 mark.pickingMode = PickingMode.Ignore;
                 button.Add(mark);
+                button.SetEnabled(enabled);
+                button.RegisterCallback<MouseEnterEvent>(_ => Select(index));
+                _items.Add((button, mark, run));
+                Root.Add(button);
+                return button;
+            }
+
+            public Button Add(string name, string text, Action run, string sub = null, string subName = null, bool enabled = true, int height = 60, int size = 27)
+            {
+                var button = AddRow(name, run, enabled, height);
                 var title = UiStyle.Label(text, size, UiStyle.Text, bold: true);
                 title.style.whiteSpace = WhiteSpace.NoWrap;
                 title.pickingMode = PickingMode.Ignore;
@@ -642,10 +661,6 @@ namespace DuelRoguelike.UI
                     small.pickingMode = PickingMode.Ignore;
                     button.Add(small);
                 }
-                button.SetEnabled(enabled);
-                button.RegisterCallback<MouseEnterEvent>(_ => Select(index));
-                _items.Add((button, mark, run));
-                Root.Add(button);
                 return button;
             }
 

@@ -59,6 +59,15 @@ namespace DuelRoguelike.UI
             _deckScroll = null;
             ShowHub();
             if (back)
+                ReopenFloorWindow();
+        }
+
+        /// <summary>창에서 연 덱 창을 닫았을 때 그 창으로 돌아간다 (듀얼 창, 휴식 창).</summary>
+        void ReopenFloorWindow()
+        {
+            if (_run != null && _run.Phase == RunPhase.Ready && _run.FloorKind == FloorKind.Rest)
+                OpenRest();
+            else
                 OpenDuelWindow();
         }
 
@@ -144,7 +153,7 @@ namespace DuelRoguelike.UI
             foot.style.marginTop = 6;
             if (_deckFromDuel)
             {
-                var from = UiStyle.Label("듀얼 전 덱 조정 중. 닫으면 듀얼 창으로 돌아간다.", 17, UiStyle.Gold, bold: true);
+                var from = UiStyle.Label(_run.FloorKind == FloorKind.Rest ? "덱 정리 중. 닫으면 휴식 창으로 돌아간다." : "듀얼 전 덱 조정 중. 닫으면 듀얼 창으로 돌아간다.", 17, UiStyle.Gold, bold: true);
                 from.name = "deck-from-duel";
                 from.style.whiteSpace = WhiteSpace.NoWrap;
                 from.style.marginRight = 18;
