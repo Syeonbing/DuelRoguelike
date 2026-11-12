@@ -15,6 +15,8 @@
 // 승리 보상 창은 자리 3개를 확인하고, 누르고 받기·두 번 누르기를 번갈아 하며, 빈 자리(골드)가 나오면 한 번 골드를 고른다.
 // 보충 고르기를 한 번 이상 거칠 때까지 런을 더 한다. 비전투 층(칩교환소·휴식·이벤트)은 다음 층으로 지나가고, 보스 보상 창은 첫 카드를 고른다.
 // 탑·칩교환소 시험(TowerAndChipExchange): 저장 파일을 고쳐 5층 칩교환소로 가서 교체·봉인 해제를 사고, 이벤트 창, 휴식 창(LP 3000 → 8000) → 보스, 보스 보상 창을 본다.
+// 끝에 탑 메뉴의 "런 포기"를 해 본다: 확인 창(계속한다·취소 키·결정 키로는 끝나지 않음) → 포기 → 런 종료 화면, 저장 파일에서 런이 빠지고 골드 정산.
+// 패배 패널티: 듀얼 도중에 끈 패배에서 메인 덱 봉인 장수가 1 + 연패 + 층÷10인지 본다.
 // 듀얼 화면은 한 번, 6턴쯤에 자동 진행을 멈추고 카드에 마우스 올리기(왼쪽 카드 정보)와 묘지 누르기(카드 목록 창)를 해 본다.
 // 소리: 효과음 파일이 다 있는지, 처음 화면·탑은 탑 곡·듀얼은 듀얼 곡인지, 버튼·키·올라가기·한 단계씩 보여 주기에 소리가 나는지 (낸 횟수로 본다).
 // 설정 창: 처음 화면의 "설정"에서 효과음·배경음 음량을 버튼과 키로 바꿔 보고 처음 값으로 되돌린다 (음량은 PlayerPrefs에 남는다).
@@ -375,6 +377,7 @@ namespace DuelRoguelike.Tests
             // ---- 듀얼 도중에 끄기 → 그 듀얼은 패배 ----
             yield return ToBattleFloor(1);
             int played = DuelsPlayed();
+            int sealedBefore = SavedCards("sealed-main").Count, mainCards = SavedCards("main").Count, lossFloor = SavedNumber("floor");
             yield return BeginDuelWithCoinToss();
             yield return WaitFor(() => Find<Button>(DuelUi, "auto-to-end") != null || Find<Button>(DuelUi, "leave-duel") != null, LoadTimeout, "듀얼 화면");
             StringAssert.Contains("\nphase InDuel\n", File.ReadAllText(SaveFile), "듀얼을 시작했는데 듀얼 중 상태로 저장되지 않았다");
@@ -388,6 +391,12 @@ namespace DuelRoguelike.Tests
             string forfeited = File.ReadAllText(SaveFile);
             StringAssert.Contains("event DuelForfeited ", forfeited, "듀얼 도중에 끈 듀얼이 패배로 저장되지 않았다");
             Assert.IsFalse(forfeited.Contains("\nphase InDuel\n"), "패배로 처리했는데 저장 파일이 아직 듀얼 중이다");
+            // 패배 패널티: 메인 덱에서 1 + 연패 + 층÷10장을 봉인한다 (RunRules.MainSealCount, 2026-11-13에 앞의 1을 더함).
+            int lossStreak = SavedNumber("streak");
+            int expectedSeals = Math.Min(1 + lossStreak + lossFloor / 10, mainCards);
+            Assert.AreEqual(sealedBefore + expectedSeals, SavedCards("sealed-main").Count,
+                $"{lossFloor}층 {lossStreak}연패의 봉인 장수 (메인 덱 {mainCards}장에서 {expectedSeals}장이어야 함)");
+            Debug.Log($"[런 화면 시험] 패배 패널티: {lossFloor}층 {lossStreak}연패, 메인 덱 봉인 {expectedSeals}장");
             yield return Shot(RunUi, "7b-forfeit");
             Click(Find<Button>(RunUi, "continue-run"));
             yield return null;
@@ -665,6 +674,66 @@ namespace DuelRoguelike.Tests
             yield return null;
             Assert.IsNull(Find<VisualElement>(RunUi, "event-codex"), "이벤트 도감 창이 닫히지 않았다");
             Debug.Log("[런 화면 시험] 탑·칩교환소: 교체 2가지와 봉인 해제 구매, 이벤트 창·결과, 휴식 → 보스, 보스 보상 봉인 해제, 이벤트 도감");
+
+            // 런 포기 (탑 메뉴): 이 런(46층)을 이어 해서 포기한다.
+            Click(Find<Button>(RunUi, "continue-run"));
+            yield return null;
+            yield return AbandonFromHub();
+        }
+
+        /// <summary>
+        /// 탑 메뉴의 "런 포기": 확인 창이 뜨고, "계속한다"·취소 키·결정 키로는 끝나지 않는다 (처음에는 "계속한다"가 골라져 있다).
+        /// "포기한다"를 누르면 런 종료 화면("런을 포기했다.")으로 가고, 저장 파일에서 진행 중인 런이 빠지며 확인 창에 보인 골드가 누적에 더해진다.
+        /// </summary>
+        IEnumerator AbandonFromHub()
+        {
+            Assert.IsTrue(IsHub(), "런 포기: 층 사이 화면이 아니다");
+            int goldBefore = SavedNumber("gold"); // 맨 위 줄이 골드 누적
+            int runFloor = SavedNumber("floor");
+            var abandon = Find<Button>(RunUi, "hub-abandon");
+            Assert.IsNotNull(abandon, "허브 메뉴에 런 포기가 없다");
+            Assert.IsTrue(abandon.enabledSelf, "허브 메뉴의 런 포기가 꺼져 있다");
+            bool WindowOpen() => Find<VisualElement>(RunUi, "abandon-window") != null;
+            bool RunSaved() => File.ReadAllText(SaveFile).Replace("\r\n", "\n").Contains("\nrun\n");
+
+            Click(abandon);
+            yield return null;
+            Assert.IsTrue(WindowOpen(), "런 포기를 눌렀는데 확인 창이 뜨지 않았다");
+            StringAssert.Contains($"{runFloor}층", Find<Label>(RunUi, "abandon-text")?.text ?? "", "확인 창에 지금 층이 없다");
+            var goldMatch = Regex.Match(Find<Label>(RunUi, "abandon-gold")?.text ?? "", @"\+(\d+)");
+            Assert.IsTrue(goldMatch.Success, "확인 창에 받을 골드가 없다");
+            yield return Shot(RunUi, "18-abandon-confirm");
+            Click(Find<Button>(RunUi, "abandon-cancel"));
+            yield return null;
+            Assert.IsFalse(WindowOpen(), "계속한다를 눌렀는데 확인 창이 닫히지 않았다");
+            Assert.IsTrue(IsHub() && RunSaved(), "계속한다를 눌렀는데 런이 끝났다");
+
+            Click(abandon);
+            yield return null;
+            yield return Tap(UnityEngine.InputSystem.Key.K);
+            Assert.IsFalse(WindowOpen(), "취소 키(K)를 눌렀는데 확인 창이 닫히지 않았다");
+            Click(abandon);
+            yield return null;
+            yield return Tap(UnityEngine.InputSystem.Key.J);
+            Assert.IsFalse(WindowOpen(), "결정 키(J)를 눌렀는데 확인 창이 닫히지 않았다");
+            Assert.IsTrue(IsHub() && RunSaved(), "확인 창을 열고 결정 키를 바로 눌렀는데 런이 끝났다 (처음에는 계속한다가 골라져 있어야 한다)");
+
+            int loseSounds = SoundCount("Lose");
+            Click(abandon);
+            yield return null;
+            Click(Find<Button>(RunUi, "abandon-confirm"));
+            yield return null;
+            Assert.IsNotNull(Find<Button>(RunUi, "new-run"), "포기했는데 런 종료 화면이 아니다");
+            StringAssert.Contains("런을 포기했다", Find<Label>(RunUi, "run-end-reason")?.text ?? "", "런 종료 화면에 포기한 까닭이 없다");
+            Assert.Greater(SoundCount("Lose"), loseSounds, "포기할 때 패배 소리가 나지 않았다");
+            Assert.IsFalse(RunSaved(), "포기했는데 저장 파일에 진행 중인 런이 남아 있다");
+            int gained = int.Parse(goldMatch.Groups[1].Value);
+            Assert.AreEqual(goldBefore + gained, SavedNumber("gold"), "포기한 런의 골드(확인 창에 보인 값)가 누적에 더해지지 않았다");
+            yield return Shot(RunUi, "18b-abandon-end");
+            Click(Find<Button>(RunUi, "end-title"));
+            yield return null;
+            Assert.IsNull(Find<Button>(RunUi, "continue-run"), "포기한 런이 처음 화면에 이어하기로 남아 있다");
+            Debug.Log($"[런 화면 시험] 런 포기: {runFloor}층, 확인 창(계속한다·K·J로는 끝나지 않음) → 포기 → 런 종료 화면, 골드 +{gained}, 저장 파일에서 런 빠짐");
         }
 
         /// <summary>칩교환소에서 상품 하나를 산다: 사기 → 풀 카드 → (직접 고르는 교체면 대신 봉인할 카드) → 사기. 산 뒤 칩교환소 창으로 돌아온다.</summary>
@@ -842,6 +911,14 @@ namespace DuelRoguelike.Tests
         {
             var match = Regex.Match(File.ReadAllText(SaveFile).Replace("\r\n", "\n"), $@"\n{Regex.Escape(key)}( [^\n]*)?\n");
             return match.Success ? match.Groups[1].Value.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries).ToList() : new List<string>();
+        }
+
+        /// <summary>저장 파일의 "key 숫자" 줄의 숫자 (floor, streak, lp …). 그 줄이 없으면 실패.</summary>
+        int SavedNumber(string key)
+        {
+            var match = Regex.Match(File.ReadAllText(SaveFile).Replace("\r\n", "\n"), $@"\n{Regex.Escape(key)} (-?\d+)\n");
+            Assert.IsTrue(match.Success, $"저장 파일에 {key} 줄이 없다");
+            return int.Parse(match.Groups[1].Value);
         }
 
         /// <summary>저장 파일의 "key 값…" 줄을 바꾼다 (값이 없는 줄도). 그 줄이 없으면 실패.</summary>

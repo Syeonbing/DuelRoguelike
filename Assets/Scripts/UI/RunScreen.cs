@@ -6,7 +6,8 @@
 // - 층 사이 화면 (RunScreen.Hub.cs, docs/UI.md "탑 (허브)"): 화면 전체가 탑 장면(TowerScene.cs)이고 그 위에 위 막대(층·LP·칩·골드·연승·봉인),
 //   높이 자, 층 팻말, 직전 듀얼 판, 명령 메뉴를 얹는다. 메뉴의 "N층으로 올라간다"를 고르면 올라가는 연출 뒤에 그 층의 일이 시작된다.
 //   전투 층에서는 듀얼 창("듀얼 시작", "덱 조정")이 뜨고, "듀얼 시작"을 누르면 코인 토스 뒤 RunState.BeginDuel로 상대·덱·LP·시드를 정해
-//   듀얼 화면에 맡긴다. "처음 화면으로"는 저장된 채로 런 시작 화면으로. 런 로그는 따로 여는 창. 키보드는 RunScreen.Keys.cs.
+//   듀얼 화면에 맡긴다. "처음 화면으로"는 저장된 채로 런 시작 화면으로. "런 포기"는 확인 창(abandon-window)을 거쳐 런을 끝내고
+//   런 종료 화면으로 (저장 파일에서 진행 중인 런이 빠진다). 런 로그는 따로 여는 창. 키보드는 RunScreen.Keys.cs.
 // - 덱 창 (RunScreen.DeckWindow.cs): 메인·엑스트라·사이드 덱, 봉인, 상점 덱을 탭으로 나눠 카드 모양으로 늘어놓는다. 덱과 사이드 덱 사이는
 //   끌어다 놓기, 두 번 누르기, 카드 정보의 버튼으로 옮긴다. "지금 덱을 레시피로"는 지금 메인·엑스트라 덱을 새 레시피로 저장한다 (사이드 덱은 비운다).
 // - 승리 보상 고르기 (RunScreen.Reward.cs): 이기면(ChoosingReward) 층 사이 화면 위에 뜨는 창. 후보 카드 3장(모자라면 빈 자리는 골드) 중 하나를 고른다.
@@ -425,7 +426,9 @@ namespace DuelRoguelike.UI
                 ? $"메인 덱이 {RunRules.MinMainDeck}장보다 적어졌는데 사이드 덱에서 채울 카드가 모자랐다."
                 : _run.EndReason == RunEndReason.Abandoned ? "런을 포기했다."
                 : "런이 끝났다.";
-            column.Add(Text(reason, 24, top: 2));
+            var reasonLabel = Text(reason, 24, top: 2);
+            reasonLabel.name = "run-end-reason";
+            column.Add(reasonLabel);
             column.Add(Text($"{_run.StartDeckName} · 시드 {_run.Seed}", 19, UiStyle.TextDim));
 
             var rewards = _run.Events.Where(e => e.Kind == RunEventKind.RewardGained).ToList();

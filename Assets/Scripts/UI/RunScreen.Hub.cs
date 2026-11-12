@@ -5,6 +5,7 @@
 // 메뉴의 "N층으로 올라간다"를 골라야 올라가는 연출이 나온 뒤 그 층의 일(듀얼 창, 칩교환소, 휴식, 이벤트)이 시작된다.
 // 연출은 아무 곳이나 누르거나 결정·취소 키를 누르면 건너뛴다 (climb-skip).
 // 듀얼 창(duel-window): 모든 전투 직전에 뜬다. "듀얼 시작"(next-duel)과 "덱 조정"(duel-deck). 상대 덱 이름은 가린다.
+// 런 포기 창(abandon-window): 메뉴의 "런 포기"(hub-abandon). "포기한다"(abandon-confirm)를 눌러야 끝나고, 처음에는 "계속한다"(abandon-cancel)가 골라져 있다.
 // 덱 창은 RunScreen.DeckWindow.cs, 키보드는 RunScreen.Keys.cs.
 using System;
 using System.Collections;
@@ -780,6 +781,7 @@ namespace DuelRoguelike.UI
             menu.Add("open-sealed", "봉인", () => OpenDeck(Pile.Sealed), $"{_run.SealedMain.Count + _run.SealedExtra.Count}장");
             menu.Add("open-log", "런 기록", OpenLog);
             menu.Add("hub-settings", "설정", OpenSettings);
+            menu.Add("hub-abandon", "런 포기", OpenAbandon, enabled: _run.CanAbandon);
             menu.Add("to-title", "처음 화면으로", GoToStart);
             menu.SelectEnabled(_hubMenuIndex);
             _hubMenu = menu;
@@ -790,6 +792,63 @@ namespace DuelRoguelike.UI
             hint.style.marginTop = 10;
             panel.Add(hint);
             return panel;
+        }
+
+        // ================= 런 포기 =================
+
+        /// <summary>
+        /// 런 포기 확인 창 (메뉴의 "런 포기"). 실수로 끝내지 않게 한 번 더 묻는다. 처음에는 "계속한다"가 골라져 있어서
+        /// 결정 키를 두 번 눌러도 런이 끝나지 않는다. "포기한다"를 눌러야 끝난다.
+        /// </summary>
+        void OpenAbandon()
+        {
+            if (_run == null || !_run.CanAbandon)
+                return;
+            var panel = OpenSlab("abandon-window", 880);
+            panel.style.alignItems = Align.Center;
+            panel.Add(WindowTitle("런 포기"));
+            var what = Text($"「{_run.StartDeckName}」 {_run.Floor}층에서 이 런을 끝낸다.", 26, top: 18);
+            what.name = "abandon-text";
+            what.style.whiteSpace = WhiteSpace.Normal;
+            what.style.unityTextAlign = TextAnchor.MiddleCenter;
+            panel.Add(what);
+            var warn = Text("되돌릴 수 없다. 이번 런에서 얻은 카드는 컬렉션에 남고, 골드는 지금 층까지로 정산해 받는다.", 19, UiStyle.Opponent, top: 10);
+            warn.style.whiteSpace = WhiteSpace.Normal;
+            warn.style.unityTextAlign = TextAnchor.MiddleCenter;
+            warn.style.maxWidth = 760;
+            panel.Add(warn);
+            int gold = _run.Gold + RunRules.SettlementGold(_run.Floor, _run.ChipsEarned, _run.Chips);
+            var reward = Text($"받을 골드 +{gold}", 24, UiStyle.Good, bold: true, top: 14);
+            reward.name = "abandon-gold";
+            panel.Add(reward);
+
+            var buttons = new ButtonRow();
+            buttons.Root.style.marginTop = 26;
+            var confirm = buttons.Add("abandon-confirm", "포기한다", AbandonRun, width: 280);
+            confirm.style.color = UiStyle.Bad;
+            buttons.Add("abandon-cancel", "계속한다", CloseModal, gold: true, width: 280);
+            buttons.Select(1);
+            _windowRow = buttons;
+            panel.Add(buttons.Root);
+            var hints = Hints(("←", "A", null), ("→", "D", "고르기"), ("Z", "J", "결정"), ("X", "K", "계속한다"));
+            hints.name = "modal-hints";
+            hints.style.marginTop = 16;
+            panel.Add(hints);
+            _windowCancel = CloseModal;
+            ApplyKeyCaps();
+        }
+
+        /// <summary>런을 포기한다: 보통의 런 종료처럼 정산하고(골드 누적, 진행 중인 런에서 뺌) 런 종료 화면으로 간다.</summary>
+        void AbandonRun()
+        {
+            if (_run == null || !_run.CanAbandon)
+                return;
+            Debug.Log($"[런] 포기 (탑 메뉴): {_run.StartDeckName}, {_run.Floor}층, 듀얼 {_run.DuelsPlayed}판, 시드 {_run.Seed}");
+            _run.Abandon();
+            CloseModal();
+            Sound.Play(Sfx.Lose);
+            Persist(); // 끝난 런을 정리하고 저장한다 (저장 파일에서 진행 중인 런이 없어진다)
+            ShowEnd();
         }
 
         // ================= 띠 알림 =================
