@@ -100,6 +100,69 @@ namespace DuelRoguelike.UI
             return b;
         }
 
+        static readonly Color GoldInk = Hex(0x22180a), GoldEdge = Hex(0x5f4519), GoldTop = Hex(0xf6dc9b), GoldHover = Hex(0xf0cb78);
+
+        /// <summary>
+        /// 돌 버튼 (docs/UI.md "부품"): 높이 64, 글자 26 Bold, 가운데 정렬. small이면 높이 48, 글자 19.
+        /// gold면 그 화면에서 가장 중요한 버튼. 키보드 포커스는 받지 않는다 (키보드는 화면이 직접 읽는다).
+        /// </summary>
+        public static Button StoneButton(string text, System.Action onClick, bool gold = false, bool small = false)
+        {
+            var b = new Button(onClick) { text = text, focusable = false };
+            Color face = gold ? Gold : ButtonColor, hover = gold ? GoldHover : ButtonHoverColor;
+            b.style.fontSize = small ? 19 : 26;
+            b.style.color = gold ? GoldInk : Text;
+            b.style.backgroundColor = face;
+            b.style.height = small ? 48 : 64;
+            b.style.flexShrink = 0;
+            b.style.whiteSpace = WhiteSpace.NoWrap;
+            b.style.unityTextAlign = TextAnchor.MiddleCenter;
+            Margin(b, 0);
+            b.style.paddingTop = b.style.paddingBottom = 0;
+            b.style.paddingLeft = b.style.paddingRight = small ? 12 : 24;
+            Radius(b, 8);
+            BorderColor(b, gold ? GoldEdge : Stone9, 2);
+            b.style.borderTopColor = gold ? GoldTop : Stone4;
+            b.style.borderBottomWidth = small ? 5 : 7;
+            Bold(b);
+            b.RegisterCallback<MouseEnterEvent>(_ => b.style.backgroundColor = hover);
+            b.RegisterCallback<MouseLeaveEvent>(_ =>
+            {
+                b.style.backgroundColor = face;
+                b.style.translate = StyleKeyword.Null;
+            });
+            b.RegisterCallback<PointerDownEvent>(_ => b.style.translate = new Translate(0, 4), TrickleDown.TrickleDown);
+            b.RegisterCallback<PointerUpEvent>(_ => b.style.translate = StyleKeyword.Null, TrickleDown.TrickleDown);
+            return b;
+        }
+
+        /// <summary>키 표시: 버튼과 도움말 줄에 쓰는 작은 키 모양.</summary>
+        public static Label KeyCap(string text)
+        {
+            var l = Label(text, 15, TextDim, bold: true);
+            l.style.backgroundColor = Stone9;
+            l.style.whiteSpace = WhiteSpace.NoWrap;
+            l.style.unityTextAlign = TextAnchor.MiddleCenter;
+            l.style.paddingLeft = l.style.paddingRight = 7;
+            l.style.paddingTop = l.style.paddingBottom = 1;
+            l.style.flexShrink = 0;
+            Radius(l, 5);
+            BorderColor(l, Stone5, 2);
+            l.style.borderBottomWidth = 4;
+            return l;
+        }
+
+        /// <summary>요소를 부모 안의 정해진 자리에 놓는다 (1920×1080 기준 좌표로 짠 화면용).</summary>
+        public static T Place<T>(T e, float left, float top, float width = float.NaN, float height = float.NaN) where T : VisualElement
+        {
+            e.style.position = Position.Absolute;
+            e.style.left = left;
+            e.style.top = top;
+            if (!float.IsNaN(width)) e.style.width = width;
+            if (!float.IsNaN(height)) e.style.height = height;
+            return e;
+        }
+
         public static void SetSelected(Button b, bool selected)
         {
             b.EnableInClassList("selected", selected);

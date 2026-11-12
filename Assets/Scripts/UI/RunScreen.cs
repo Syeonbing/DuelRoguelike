@@ -3,14 +3,15 @@
 // - 런 시작 (RunScreen.Start.cs): 진행 중인 런이 있으면 "이어하기". 새 런은 덱 레시피(메인·엑스트라·시작 사이드 덱)와 시드를 고른다.
 //   진행 중인 런이 있을 때 새 런을 시작하려면 한 번 더 눌러 포기를 확인한다.
 // - 덱 편집 (RunScreen.Deck.cs): 런 시작 화면에서 레시피를 열어 컬렉션의 카드로 고치고 저장한다 (규칙은 RecipeEditor·RecipeRules).
-// - 층 사이 화면 (RunScreen.Hub.cs): 위 상태 줄(층·LP·전적·직전 듀얼), 왼쪽 카드 정보, 가운데 메인·엑스트라·사이드 덱과 봉인된 카드를
-//   카드 모양으로 늘어놓는다. 덱과 사이드 덱 사이는 끌어다 놓기, 두 번 누르기, 카드 정보의 버튼으로 옮긴다. 런 로그는 따로 여는 창.
-//   "다음 듀얼 시작"을 누르면 RunState.BeginDuel로 상대·덱·LP·시드를 정해 듀얼 화면에 맡긴다. "처음 화면으로"는 저장된 채로 런 시작 화면으로.
-//   "지금 덱을 레시피로 저장"은 지금 메인·엑스트라 덱을 새 레시피로 저장한다 (사이드 덱은 비운다).
+// - 층 사이 화면 (RunScreen.Hub.cs, docs/UI.md "탑 (허브)"): 화면 전체가 탑 장면(TowerScene.cs)이고 그 위에 위 막대(층·LP·칩·골드·연승·봉인),
+//   높이 자, 층 팻말, 직전 듀얼 판, 명령 메뉴를 얹는다. 메뉴의 "N층으로 올라간다"를 고르면 올라가는 연출 뒤에 그 층의 일이 시작된다.
+//   전투 층에서는 듀얼 창("듀얼 시작", "덱 조정")이 뜨고, "듀얼 시작"을 누르면 코인 토스 뒤 RunState.BeginDuel로 상대·덱·LP·시드를 정해
+//   듀얼 화면에 맡긴다. "처음 화면으로"는 저장된 채로 런 시작 화면으로. 런 로그는 따로 여는 창. 키보드는 RunScreen.Keys.cs.
+// - 덱 창 (RunScreen.DeckWindow.cs): 메인·엑스트라·사이드 덱, 봉인, 상점 덱을 탭으로 나눠 카드 모양으로 늘어놓는다. 덱과 사이드 덱 사이는
+//   끌어다 놓기, 두 번 누르기, 카드 정보의 버튼으로 옮긴다. "지금 덱을 레시피로"는 지금 메인·엑스트라 덱을 새 레시피로 저장한다 (사이드 덱은 비운다).
 // - 승리 보상 고르기 (RunScreen.Reward.cs): 이기면(ChoosingReward) 층 사이 화면 위에 뜨는 창. 후보 카드 3장(모자라면 빈 자리는 골드) 중 하나를 고른다.
 // - 보충 고르기: 메인 덱이 40장 미만(NeedsRefill)이면 층 사이 화면 위에 뜨는 창. 닫을 수 없고, 다 채우면 저절로 닫힌다.
-// - 탑·칩교환소·이벤트·보스 보상 (RunScreen.Tower.cs): 층 사이 화면 오른쪽의 탑(10층 묶음), 층 종류마다 버튼
-//   (전투·보스: 듀얼 시작, 칩교환소: 열기·다음 층, 휴식: 다음 층, 이벤트: 이벤트 보기), 칩교환소 창, 이벤트 창, 보스 보상 봉인 해제 창.
+// - 칩교환소·이벤트·휴식·보스 보상 (RunScreen.Tower.cs): 그 층에 올라서면 한 번 저절로 뜨는 창들과 보스 보상 봉인 해제 창.
 // - 런 종료: 도달한 층, 전적, 얻은 카드·골드·칩, 골드 정산, 런 로그.
 // 카드는 모두 CardFaces(텍스트 카드 템플릿)로 그린다. 마우스를 올리면 카드 정보 칸에 크게 보이고, 누르면 그 카드에 고정된다.
 // 저장(GameSave): 런 시작, 듀얼 시작, 듀얼 결과(보상 후보·봉인), 보상 고르기, 교환·보충마다 저장 파일에 쓴다.
@@ -177,7 +178,11 @@ namespace DuelRoguelike.UI
             }
         }
 
-        void SetVisible(bool visible) => _docRoot.style.display = visible ? DisplayStyle.Flex : DisplayStyle.None;
+        void SetVisible(bool visible)
+        {
+            _docRoot.style.display = visible ? DisplayStyle.Flex : DisplayStyle.None;
+            _keysBlockedFrame = Time.frameCount; // 듀얼 화면에서 누른 키가 돌아온 화면에 그대로 들어가지 않게
+        }
 
         static int NewSeed() => new System.Random().Next(1, 1000000);
 
@@ -224,7 +229,12 @@ namespace DuelRoguelike.UI
                 buttons.Add(CoinButton("coin-start", "듀얼 시작", true));
             }
             panel.Add(buttons);
-            var later = UiStyle.Button("나중에", CloseModal, 16);
+            // 나중에: 듀얼 창으로 돌아간다 (덱을 조정하고 다시 시작할 수 있다. 코인 토스 결과는 그대로다)
+            var later = UiStyle.Button("나중에", () =>
+            {
+                CloseModal();
+                OpenDuelWindow();
+            }, 16);
             later.name = "coin-close";
             later.style.marginTop = 14;
             later.style.alignSelf = Align.FlexEnd;
@@ -311,6 +321,7 @@ namespace DuelRoguelike.UI
 
         void ShowEnd()
         {
+            StopClimb();
             BeginScreen();
             var panel = CenterPanel(1600);
             panel.name = "run-end";
@@ -463,6 +474,13 @@ namespace DuelRoguelike.UI
             _dropZones.Clear();
             _detail = null;
             _renderDetail = null;
+            // 층 사이 화면의 요소들 (ShowHub가 다시 만든다)
+            _hubShown = false;
+            _stage = null;
+            _scene = null;
+            _hubMenu = null;
+            _deckScroll = null;
+            _keyCaps.Clear();
         }
 
         static string SlotName(Pile pile, uint code)
@@ -483,15 +501,16 @@ namespace DuelRoguelike.UI
         /// 누르고 끌 수 있는 카드 하나. 마우스를 올리면 카드 정보 칸에 미리 보기, 누르면 고르기(고정),
         /// 두 번 누르면 onDoubleClick, 끌어다 놓으면 놓은 곳(AddDropZone)의 동작.
         /// </summary>
+        /// <param name="width">0보다 크면 카드 폭을 직접 정한다 (덱 창의 1.1배 카드). 그때 size는 쓰지 않는다.</param>
         VisualElement CardSlot(Pile pile, uint code, CardFaceSize size, int count = 0, string tag = null, bool dim = false,
-            Action onDoubleClick = null, bool draggable = true)
+            Action onDoubleClick = null, bool draggable = true, float width = 0)
         {
             var slot = new VisualElement { name = SlotName(pile, code), focusable = true };
             UiStyle.Padding(slot, 2);
             UiStyle.Margin(slot, 3);
             UiStyle.Radius(slot, 6);
             UiStyle.BorderColor(slot, Color.clear, 2);
-            var face = _faces.Build(code, size, count, tag);
+            var face = width > 0 ? _faces.Build(code, width, count, tag) : _faces.Build(code, size, count, tag);
             if (dim)
                 face.style.opacity = 0.4f;
             face.pickingMode = PickingMode.Ignore;
@@ -501,7 +520,7 @@ namespace DuelRoguelike.UI
                 onLeave: () => ShowPinnedDetail(pile),
                 onClick: () => Select(pile, code),
                 onDoubleClick: onDoubleClick,
-                makeGhost: draggable ? () => _faces.Build(code, size) : (Func<VisualElement>)null,
+                makeGhost: draggable ? () => width > 0 ? _faces.Build(code, width) : _faces.Build(code, size) : (Func<VisualElement>)null,
                 onDrop: position => Drop(pile, code, position));
             _cardViews.Add((pile, code, slot));
             if (IsSelected(pile, code))

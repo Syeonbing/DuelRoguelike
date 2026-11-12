@@ -34,6 +34,7 @@ namespace DuelRoguelike.UI
 
         void ShowStart()
         {
+            StopClimb();
             _run = null;
             _editor = null;
             if (_recipeScroll != null)
@@ -150,6 +151,7 @@ namespace DuelRoguelike.UI
             _eventShownFloor = _restShownFloor = _shopShownFloor = 0;
             _eventResult = null;
             _shopProduct = null;
+            ResetHubView();
             _shopRelease = 0;
         }
 

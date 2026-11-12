@@ -112,6 +112,10 @@ namespace DuelRoguelike.UI
         public VisualElement Build(uint code, CardFaceSize size, int count = 0, string tag = null, CardStats? stats = null) =>
             Scaled("card-face", SizeOf(size), BaseCard(code, count, tag, stats));
 
+        /// <summary>폭을 직접 정한 작은 카드 (덱 창의 1.1배 = 119 등). 높이는 카드 비율을 따른다.</summary>
+        public VisualElement Build(uint code, float width, int count = 0, string tag = null) =>
+            Scaled("card-face", new Vector2(width, width * BaseHeight / BaseWidth), BaseCard(code, count, tag, null));
+
         /// <summary>
         /// 카드 뒷면 (직접 디자인: 어두운 남색 바탕, 안쪽 테두리, 가운데 금색 마름모). 공식 카드 뒷면은 따르지 않는다.
         /// </summary>
