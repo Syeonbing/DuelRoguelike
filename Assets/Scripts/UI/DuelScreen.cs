@@ -1,11 +1,12 @@
-// 듀얼 화면 (UI Toolkit). 설계 문서의 화면 구성을 따른다:
-// 왼쪽 플레이어 정보(위 상대, 아래 나, 카드 정보는 내 초상화 자리), 가운데 필드(점대칭, 엑스트라 몬스터 존 없음,
-// 패는 필드 위아래), 오른쪽 로그. 필드·손패·카드 더미·카드 정보는 DuelScreen.Field.cs에 있다.
+// 듀얼 화면 (UI Toolkit). docs/UI.md "듀얼"의 배치를 따른다:
+// 가운데 필드(점대칭, 엑스트라 몬스터 존 없음, 내 패는 아래 부채꼴·상대 패는 위), 왼쪽에 상대 정보·상세 카드·내 정보,
+// 오른쪽에 턴·페이즈·버튼·방금 일어난 일, 오른쪽에서 나오는 로그 서랍. 필드·패·카드 더미·상세 카드·패널은 DuelScreen.Field.cs에 있다.
 // 조작: 카드를 직접 눌러 행동을 고른다. 행동할 수 있는 카드·고를 수 있는 카드·고를 수 있는 칸은 테두리로 강조한다.
 // 칸 고르기(놓을 칸·무효로 할 칸)는 필드 칸(빈칸 포함)을 눌러서 고른다.
 // 진행: 엔진 메시지를 한 단계씩 보여 준다. 발동·공격·데미지 계산·LP·파괴 등에서는 잠깐 멈추고, 그 카드에 테두리를 치고,
-// 가운데 줄에 그 단계를 띄운다 (속도: 빠름·보통·느림, 필드를 누르면 다음 입력까지 건너뜀).
-// 체인: 로그 위 체인 목록(번호·카드·효과·처리 상태)과 필드 카드 왼쪽 위 체인 번호. 센터 카드, 초상화 그림은 아직 없다.
+// 가운데 띠에 그 단계를 띄운다 (속도: 빠름·보통·느림, 필드를 누르면 다음 입력까지 건너뜀).
+// 체인: 오른쪽 패널의 체인 목록(번호·카드·효과·처리 상태)과 필드 카드 왼쪽 위 체인 번호. 센터 카드, 카드가 움직이는 연출은 아직 없다.
+// 보조 키: R·L 로그 서랍, C·I 효과문 넘기기, Q 두 번 다음 페이즈, E 두 번 턴 종료, 1·2·3 자동·속도·체인 확인.
 //
 // 두 가지로 쓴다:
 // - 혼자: Duel 씬. 인스펙터의 고정 덱으로 듀얼 하나를 하고, 끝나면 새 시드로 다시 시작한다 (화면 시험용).
@@ -124,7 +125,7 @@ namespace DuelRoguelike.UI
         readonly PileCell[] _removed = new PileCell[2];
         readonly VisualElement[] _handRows = new VisualElement[2];
         Label _turnLabel, _promptLabel, _promptDetail;
-        VisualElement _chainBox, _stripButtons;
+        VisualElement _stripButtons;
         ScrollView _log;
         VisualElement _menuLayer, _modalLayer;
 
@@ -265,8 +266,8 @@ namespace DuelRoguelike.UI
             badge.name = "status-badge";
             badge.pickingMode = PickingMode.Ignore;
             badge.style.position = Position.Absolute;
-            badge.style.top = 8;
-            badge.style.right = 8;
+            badge.style.top = 12;
+            badge.style.right = StageWidth - 1574; // 필드 판의 오른쪽 위 모서리 (오른쪽 패널 왼쪽)
             badge.style.paddingLeft = badge.style.paddingRight = 10;
             badge.style.paddingTop = badge.style.paddingBottom = 4;
             UiStyle.Radius(badge, 5);
@@ -312,7 +313,61 @@ namespace DuelRoguelike.UI
                     Render();
                 }
             }
+            // 보조 키 (docs/UI.md "듀얼의 보조 키"). 글자 키는 한/영 상태와 상관없이 키의 자리로 읽는다.
+            if (keyboard.rKey.wasPressedThisFrame || keyboard.lKey.wasPressedThisFrame)
+                ToggleLogDrawer();
+            if (keyboard.cKey.wasPressedThisFrame || keyboard.iKey.wasPressedThisFrame)
+                PageDetailText();
+            if (keyboard.digit1Key.wasPressedThisFrame && devAutoButtons && !_session.State.IsFinished)
+                SetAutoPlay(!_autoPlay);
+            if (keyboard.digit2Key.wasPressedThisFrame)
+                CycleSpeed();
+            if (keyboard.digit3Key.wasPressedThisFrame)
+                CycleChainPrompt();
+            if (keyboard.qKey.wasPressedThisFrame)
+                PressPhaseKey('q');
+            if (keyboard.eKey.wasPressedThisFrame)
+                PressPhaseKey('e');
+            if (_armedKey != '\0' && Time.unscaledTime > _armedUntil)
+            {
+                _armedKey = '\0';
+                Render();
+            }
 #endif
+        }
+
+        /// <summary>다음 페이즈(Q)·턴 종료(E)를 한 번 눌러 둔 키 ('\0'이면 없음)와 그것이 풀리는 때.</summary>
+        char _armedKey;
+        float _armedUntil;
+        const float ArmSeconds = 1.8f;
+
+        /// <summary>이 버튼을 누르는 키: 다음 페이즈(배틀 페이즈, 메인 페이즈 2)는 q, 턴 종료는 e, 그 밖에는 '\0'.</summary>
+        static char PhaseKeyOf(string label) =>
+            label == "배틀 페이즈" || label == "메인 페이즈 2" ? 'q' : label == "턴 종료" ? 'e' : '\0';
+
+        /// <summary>
+        /// 다음 페이즈·턴 종료 키. 되돌릴 수 없는 조작이라 두 번 눌러야 실행한다: 한 번 누르면 버튼에 "한 번 더"가 뜨고,
+        /// 1.8초 안에 같은 키를 누르면 실행한다. 시간이 지나거나 다른 쪽 키를 누르면 풀린다. 마우스로 버튼을 누르면 바로 실행한다.
+        /// </summary>
+        void PressPhaseKey(char key)
+        {
+            if (_autoPlay || _interaction == null || _modalOpen)
+                return;
+            var button = _interaction.Buttons.FirstOrDefault(b => PhaseKeyOf(b.Label) == key);
+            if (button == null)
+            {
+                _armedKey = '\0';
+                return;
+            }
+            if (_armedKey == key && Time.unscaledTime <= _armedUntil)
+            {
+                _armedKey = '\0';
+                Respond(button.Response);
+                return;
+            }
+            _armedKey = key;
+            _armedUntil = Time.unscaledTime + ArmSeconds;
+            Render();
         }
 
         // ================= 런 화면이 맡기는 듀얼 =================
@@ -748,6 +803,10 @@ namespace DuelRoguelike.UI
             _autoPlay = false;
             ResetPlayback();
             _log.Clear();
+            _recentLines.Clear();
+            RenderRecentLog();
+            SetLogDrawer(false, instant: true);
+            _hoveredHand = -1;
             CloseMenu();
             CloseModal();
             ClearDetail();
@@ -855,13 +914,16 @@ namespace DuelRoguelike.UI
             for (byte p = 0; p < 2; p++)
             {
                 var player = state.Players[p];
-                _lp[p].text = $"LP {System.Math.Max(0, player.Lp)}";
+                int lp = System.Math.Max(0, player.Lp);
+                _lp[p].text = lp.ToString();
+                // LP 막대: 시작 LP(8000)를 꽉 찬 것으로 본다. 넘으면 꽉 찬 채로 둔다.
+                _lpBar[p].style.width = Length.Percent(Mathf.Clamp01(lp / 8000f) * 100f);
                 bool lpFocus = _focus != null && _focus.LpPlayer == p;
                 _lp[p].style.color = lpFocus ? FocusTarget : UiStyle.Text;
                 // LP가 바뀌는 단계: 바뀐 양을 LP 옆에 띄운다.
                 _lpDelta[p].text = lpFocus && _focus.LpDelta != 0 ? (_focus.LpDelta > 0 ? $"+{_focus.LpDelta}" : $"−{-_focus.LpDelta}") : "";
                 _lpDelta[p].style.color = lpFocus && _focus.LpDelta > 0 ? Chosen : FocusTarget;
-                _playerInfo[p].text = $"패 {player.Hand.Count} · 덱 {player.DeckCount} · 묘지 {player.Grave.Count}";
+                _playerInfo[p].text = $"패 {player.Hand.Count} · 덱 {player.DeckCount} · 묘지 {player.Grave.Count} · 제외 {player.Removed.Count}";
                 for (int i = 0; i < MainZones; i++)
                 {
                     SetCell(_monsters[p, i], player.MonsterZones[i]);
@@ -872,20 +934,29 @@ namespace DuelRoguelike.UI
                 RenderHand(p, player);
             }
 
-            _turnLabel.text = state.Turn == 0 ? "듀얼 준비"
-                : $"{state.Turn}턴 · {_text.Player(state.TurnPlayer)}의 턴 · {DuelText.ShortPhase(state.Phase)}";
-            _chainBox.Clear();
-            // 체인: 오른쪽 위 체인 목록에 자세히, 가운데 줄에는 한 줄로 알린다.
+            // 오른쪽 위: 턴 숫자와 누구 턴인지, 그 아래 페이즈 여섯 줄 (지난 것은 흐리게, 지금은 금색 바탕, 남은 것은 꺼진 글자)
+            _turnLabel.text = state.Turn == 0 ? "듀얼 준비" : $"{state.Turn}턴";
+            _turnLabel.style.fontSize = state.Turn == 0 ? 30 : 46;
+            _turnSide.text = state.Turn == 0 ? "" : $"{_text.Player(state.TurnPlayer)}의 턴";
+            _turnSide.style.color = state.TurnPlayer == Me ? UiStyle.Mine : UiStyle.Opponent;
+            int phase = state.Turn == 0 ? -1 : System.Array.IndexOf(PhaseNames, DuelText.ShortPhase(state.Phase));
+            for (int i = 0; i < _phaseLabels.Length; i++)
+            {
+                bool now = i == phase;
+                _phaseLabels[i].style.backgroundColor = now ? UiStyle.Gold : Color.clear;
+                _phaseLabels[i].style.color = now ? UiStyle.Hex(0x22180a) : i < phase ? UiStyle.TextDim : UiStyle.Stone4;
+            }
+            // 체인: 오른쪽 체인 목록에 번호·카드·처리 상태를 보인다.
             RenderChain(state);
-            if (state.Chain.Count > 0)
-                _chainBox.Add(UiStyle.Label(_solvingChain > 0 ? $"체인 {state.Chain.Count}개 · 체인 {_solvingChain} 처리 중" : $"체인 {state.Chain.Count}개 쌓임",
-                    16, UiStyle.Accent, bold: true));
+            _stripButtons.Clear();
+            _smallButtons.Clear();
+            _firstPrimary = true;
             RenderStrip(state);
+            SetPrompt(_promptLabel.text, _promptDetail.text);
         }
 
         void RenderStrip(DuelState state)
         {
-            _stripButtons.Clear();
             _promptLabel.style.color = UiStyle.Accent;
             if (state.IsFinished)
             {
@@ -938,7 +1009,19 @@ namespace DuelRoguelike.UI
             foreach (var b in _interaction.Buttons)
             {
                 var response = b.Response;
-                AddStripButton(b.Label, () => Respond(response), true);
+                var button = AddStripButton(b.Label, () => Respond(response), true);
+                // 다음 페이즈는 Q, 턴 종료는 E (두 번 눌러야 실행한다. 한 번 누르면 "한 번 더"가 뜬다)
+                char key = PhaseKeyOf(b.Label);
+                if (key == '\0')
+                    continue;
+                if (_armedKey == key)
+                    button.text = $"{b.Label} · 한 번 더";
+                var cap = UiStyle.KeyCap(key == 'q' ? "Q" : "E");
+                cap.pickingMode = PickingMode.Ignore;
+                cap.style.position = Position.Absolute;
+                cap.style.right = 10;
+                cap.style.top = 12;
+                button.Add(cap);
             }
             if (sel != null && sel.NeedsConfirm)
             {
@@ -1057,8 +1140,8 @@ namespace DuelRoguelike.UI
             header.style.justifyContent = Justify.SpaceBetween;
             header.style.alignItems = Align.Center;
             header.style.marginBottom = 6;
-            header.Add(UiStyle.Label($"체인 {state.Chain.Count}", 18, UiStyle.Accent, bold: true));
-            header.Add(UiStyle.Label("위에서부터 처리", 13, UiStyle.TextDim));
+            header.Add(UiStyle.Label($"체인 {state.Chain.Count}", 19, UiStyle.Accent, bold: true));
+            header.Add(UiStyle.Label(_solvingChain > 0 ? $"체인 {_solvingChain} 처리하는 중" : "위에서부터 처리", 15, UiStyle.TextDim));
             _chainPanel.Add(header);
 
             for (int i = state.Chain.Count - 1; i >= 0; i--)
@@ -1116,14 +1199,35 @@ namespace DuelRoguelike.UI
             }
         }
 
+        bool _firstPrimary;
+
+        /// <summary>
+        /// 오른쪽 패널의 버튼. primary(지금 물음에 답하는 것)는 한 줄에 하나씩 큰 돌 버튼으로 놓고 맨 위 하나는 금색으로 한다.
+        /// 나머지(자동·속도·체인 확인·건너뛰기)는 그 아래에 작은 버튼으로 나란히 놓는다.
+        /// </summary>
         Button AddStripButton(string label, Action onClick, bool primary)
         {
-            var b = UiStyle.Button(label, onClick, primary ? 17 : 13);
-            b.style.marginLeft = 6;
-            b.style.unityTextAlign = TextAnchor.MiddleCenter;
-            if (!primary) b.style.color = UiStyle.TextDim;
-            _stripButtons.Add(b);
-            return b;
+            if (primary)
+            {
+                var big = UiStyle.StoneButton(label, onClick, gold: _firstPrimary);
+                _firstPrimary = false;
+                big.style.height = 56;
+                big.style.fontSize = 24;
+                big.style.marginBottom = 6;
+                big.style.paddingLeft = big.style.paddingRight = 10;
+                _stripButtons.Add(big);
+                return big;
+            }
+            var small = UiStyle.StoneButton(label, onClick, small: true);
+            small.style.height = 44;
+            small.style.fontSize = 16;
+            small.style.flexGrow = 1;
+            small.style.marginBottom = 4;
+            small.style.marginRight = 4;
+            small.style.paddingLeft = small.style.paddingRight = 8;
+            small.style.color = UiStyle.TextDim;
+            _smallButtons.Add(small);
+            return small;
         }
 
         void SetCell(CardCell cell, CardInfo card, bool? visibleOverride = null)
@@ -1245,15 +1349,20 @@ namespace DuelRoguelike.UI
             catcher.RegisterCallback<PointerDownEvent>(_ => CloseMenu());
             _menuLayer.Add(catcher);
 
-            var menu = UiStyle.PanelBox();
+            // 카드 메뉴: 돌판, 폭 270, 항목 높이 54. 엔진이 지금 허용한 행동만 넣고 맨 아래에 "취소".
+            var menu = UiStyle.PanelBox("card-menu");
             menu.style.position = Position.Absolute;
-            menu.style.minWidth = 170;
-            UiStyle.BorderColor(menu, UiStyle.Accent, 2);
+            menu.style.width = 270;
+            UiStyle.Padding(menu, 8);
             foreach (var a in actions)
             {
                 var response = a.Response;
-                menu.Add(UiStyle.Button(a.Label, () => Respond(response)));
+                menu.Add(MenuItem(a.Label, () => Respond(response)));
             }
+            var cancel = MenuItem("취소", CloseMenu);
+            cancel.name = "menu-cancel";
+            cancel.style.color = UiStyle.TextDim;
+            menu.Add(cancel);
             Rect bound = anchor.worldBound;
             Vector2 topLeft = _menuLayer.WorldToLocal(new Vector2(bound.xMax + 6, bound.yMin));
             menu.style.left = topLeft.x;
@@ -1270,6 +1379,15 @@ namespace DuelRoguelike.UI
                 if (!Mathf.Approximately(top, menu.layout.y)) menu.style.top = Mathf.Max(8, top);
             });
             _menuLayer.Add(menu);
+        }
+
+        static Button MenuItem(string label, Action onClick)
+        {
+            var item = UiStyle.StoneButton(label, onClick, small: true);
+            item.style.height = 54;
+            item.style.fontSize = 25;
+            item.style.marginBottom = 4;
+            return item;
         }
 
         void CloseMenu()
@@ -1537,12 +1655,18 @@ namespace DuelRoguelike.UI
 
         void AddLog(string line, Color color)
         {
-            var label = UiStyle.Label(line, 15, color);
-            label.style.marginBottom = 2;
+            var label = UiStyle.Label(line, 18, color);
+            label.style.marginBottom = 3;
             _log.Add(label);
             while (_log.contentContainer.childCount > MaxLogLines)
                 _log.contentContainer.RemoveAt(0);
-            _log.schedule.Execute(() => _log.scrollOffset = new Vector2(0, float.MaxValue)).ExecuteLater(10);
+            if (_drawerOpen)
+                _log.schedule.Execute(() => _log.scrollOffset = new Vector2(0, float.MaxValue)).ExecuteLater(10);
+            // 오른쪽 패널의 "방금 일어난 일"
+            _recentLines.Add((line, color));
+            while (_recentLines.Count > RecentLogLines)
+                _recentLines.RemoveAt(0);
+            RenderRecentLog();
         }
 
         // ================= 화면 구성 =================
@@ -1551,10 +1675,10 @@ namespace DuelRoguelike.UI
         {
             var docRoot = _docRoot = UiStyle.CreateDocument(transform, "DuelUI");
 
+            // 화면 전체. 그 안에 1920×1080 판(duel-stage)을 화면 크기에 맞춰 놓는다 (BuildLayout).
             _root = UiStyle.Box("duel", FlexDirection.Row);
             _root.style.flexGrow = 1;
             _root.style.backgroundColor = UiStyle.Background;
-            UiStyle.Padding(_root, 12);
             docRoot.Add(_root);
 
             // 창(대화창·카드 목록)과 카드 메뉴는 화면 전체를 덮는 층에 띄운다.

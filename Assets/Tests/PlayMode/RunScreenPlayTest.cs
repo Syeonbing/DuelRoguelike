@@ -1423,8 +1423,40 @@ namespace DuelRoguelike.Tests
             Assert.IsNotNull(cell, $"카드 앞면이 필드 칸·손패 칸 안에 있지 않다 (나 = {me}, 앞면 {faces.Count}장, 첫 장 위로: {string.Join(" < ", chain)})");
             Hover(cell);
             yield return null;
-            Assert.IsNotNull(root.Q("card-detail")?.Q("card-face"), $"{cell.name}에 마우스를 올렸는데 카드 정보에 카드가 없다");
+            Assert.IsNotNull(root.Q("card-detail")?.Q("card-detail-face"), $"{cell.name}에 마우스를 올렸는데 왼쪽 상세 카드가 없다");
             yield return Shot(DuelUi, "2b-duel-mid");
+
+            // 점대칭: 내 쪽과 상대 쪽의 같은 칸은 필드 중심에 대해 마주 본다 (칸마다 두 칸의 가운데가 같은 점이어야 한다).
+            string opp = me == "0" ? "1" : "0";
+            Vector2 Middle(string mine, string theirs)
+            {
+                var a = root.Q(mine);
+                var b = root.Q(theirs);
+                Assert.IsTrue(a != null && b != null, $"{mine} 또는 {theirs} 칸이 없다");
+                return (a.worldBound.center + b.worldBound.center) / 2;
+            }
+            var center = Middle($"zone-{me}-m2", $"zone-{opp}-m2");
+            foreach (string zone in new[] { "zone-{0}-m0", "zone-{0}-s4", "zone-{0}-field", "extra-{0}", "grave-{0}", "deck-{0}", "removed-{0}" })
+            {
+                var middle = Middle(string.Format(zone, me), string.Format(zone, opp));
+                Assert.Less((middle - center).magnitude, 1.5f, $"{string.Format(zone, me)}: 상대 쪽 칸과 점대칭이 아니다 (가운데 {middle}, 필드 중심 {center})");
+            }
+            Assert.Greater(root.Q($"zone-{me}-m2").worldBound.center.y, center.y, "내 몬스터 존이 필드 중심보다 위에 있다");
+            Assert.Greater(root.Q($"removed-{me}").worldBound.center.x, center.x, "내 제외 칸이 오른쪽 끝에 있지 않다");
+
+            // 로그 서랍: "로그 전체"로 열고, 같은 자리의 "로그 닫기"로 닫는다 (마우스를 옮기지 않고 다시 누를 수 있어야 한다).
+            var drawer = Find<VisualElement>(DuelUi, "log-drawer");
+            var openLog = Find<Button>(DuelUi, "open-log");
+            var closeLog = Find<Button>(DuelUi, "close-log");
+            Assert.IsTrue(drawer != null && openLog != null && closeLog != null, "로그 서랍이나 여닫는 버튼이 없다");
+            Assert.AreEqual(DisplayStyle.None, drawer.style.display.value, "로그 서랍이 처음부터 열려 있다");
+            Click(openLog);
+            yield return WaitFor(() => drawer.style.display.value == DisplayStyle.Flex
+                                       && (closeLog.worldBound.center - openLog.worldBound.center).magnitude < 2f, 5, "로그 서랍이 열려 닫기 버튼이 여는 버튼 자리에 오기");
+            Assert.Greater(drawer.Q<ScrollView>().contentContainer.childCount, 0, "로그 서랍에 로그가 없다");
+            yield return Shot(DuelUi, "2q-log-drawer");
+            Click(closeLog);
+            yield return WaitFor(() => drawer.style.display.value == DisplayStyle.None, 5, "로그 서랍 닫힘");
 
             Click(Find<VisualElement>(DuelUi, "grave-" + me));
             yield return null;
