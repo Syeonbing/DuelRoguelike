@@ -67,6 +67,7 @@ namespace DuelRoguelike.Tests
         bool _playbackDone;
         bool _previewSeen;
         bool _fieldViewSeen;
+        bool _revealShot;
         bool _chainSeen;
         bool _speedSeen;
         bool _lpSeen;
@@ -1233,6 +1234,7 @@ namespace DuelRoguelike.Tests
             float until = Time.realtimeSinceStartup + DuelTimeout;
             while (Find<Button>(DuelUi, "leave-duel") == null)
             {
+                yield return DismissReveal();
                 Assert.Less(Time.realtimeSinceStartup, until, $"시드 {seed} 듀얼: {DuelTimeout}초 안에 끝나지 않았다");
                 if (!_playbackDone && _playbackTries < MaxPlaybackTries && TurnOf(Find<Label>(DuelUi, "turn-label")) >= 2)
                     yield return CheckPlayback();
@@ -1483,9 +1485,24 @@ namespace DuelRoguelike.Tests
             Debug.Log($"[런 화면 시험] 교환: {code} 사이드 덱 → 덱 → 사이드 덱 (버튼, 두 번 누르기, 끌어다 놓기)");
         }
 
+        /// <summary>공개된 카드 확인 창이 떠 있으면 닫는다 (닫을 때까지 듀얼 진행이 멈춘다). 처음 한 번은 스크린샷을 남긴다.</summary>
+        IEnumerator DismissReveal()
+        {
+            var confirm = Find<Button>(DuelUi, "reveal-confirm");
+            if (confirm == null)
+                yield break;
+            if (!_revealShot)
+            {
+                _revealShot = true;
+                yield return Shot(DuelUi, "2c3-reveal-in-duel");
+            }
+            Click(confirm);
+            yield return null;
+        }
+
         /// <summary>
         /// 듀얼 도중 (한 번): 자동 진행을 멈추고, 내 필드(없으면 손패)의 카드에 마우스를 올려 왼쪽 카드 정보에 카드가 나오는지,
-        /// 내 묘지를 눌러 카드 목록 창이 열리는지 본다. 그 뒤 루프가 "자동으로 끝까지"를 다시 누른다.
+        /// 내 묘지를 눌러 카드 목록 창이 열리는지, 공개된 카드 확인 창이 뜨고 닫히는지 본다. 그 뒤 루프가 "자동으로 끝까지"를 다시 누른다.
         /// </summary>
         IEnumerator CheckDuelView()
         {
@@ -1568,6 +1585,28 @@ namespace DuelRoguelike.Tests
             yield return null;
             Assert.IsNull(Find<Button>(DuelUi, "modal-close"), "닫기를 눌렀는데 카드 목록 창이 남아 있다");
             Debug.Log($"[런 화면 시험] 듀얼 화면: {cell.name}에 마우스 올리기 → 카드 정보, 묘지 누르기 → 카드 목록 창");
+
+            // 공개된 카드 확인 창 (「고대의 망원경」으로 상대 덱 위를 볼 때 등): 보기만 하는 창이 뜨고 "확인"으로 닫힌다.
+            // 시험 듀얼에서 그런 효과가 나온다는 보장이 없어서, 화면의 견본 띄우기로 같은 창을 연다.
+            var duelScreen = UnityEngine.Object.FindObjectsByType<MonoBehaviour>(FindObjectsSortMode.None)
+                .FirstOrDefault(m => m.GetType().Name == "DuelScreen");
+            Assert.IsNotNull(duelScreen, "DuelScreen을 찾지 못했다");
+            var showReveal = duelScreen.GetType().GetMethod("ShowRevealSample");
+            Assert.IsNotNull(showReveal, "DuelScreen.ShowRevealSample이 없다");
+            // 블랙 매지션, 푸른 눈의 백룡, 크리보, 죽은 자의 소생, 고대의 망원경
+            showReveal.Invoke(duelScreen, new object[] { new uint[] { 46986414, 89631139, 40640057, 83764719, 17092736 } });
+            yield return null;
+            yield return null;
+            var revealCards = Root(DuelUi).Query<VisualElement>().Where(e => e.name != null && e.name.StartsWith("reveal-card-")).ToList();
+            Assert.AreEqual(5, revealCards.Count, "공개된 카드 확인 창에 카드 5장이 없다");
+            var revealConfirm = Find<Button>(DuelUi, "reveal-confirm");
+            Assert.IsNotNull(revealConfirm, "공개된 카드 확인 창에 확인 버튼이 없다");
+            Assert.IsNull(Find<Button>(DuelUi, "field-view"), "보기만 하는 창에 필드 보기 버튼이 있다");
+            yield return Shot(DuelUi, "2c2-reveal-window");
+            Click(revealConfirm);
+            yield return null;
+            Assert.IsNull(Find<Button>(DuelUi, "reveal-confirm"), "확인을 눌렀는데 공개된 카드 확인 창이 남아 있다");
+            Debug.Log("[런 화면 시험] 듀얼 화면: 공개된 카드 확인 창 → 카드 5장, 확인으로 닫힘");
         }
 
         /// <summary>
@@ -1670,6 +1709,7 @@ namespace DuelRoguelike.Tests
             string last = null;
             while (!(battle && PlaybackAllSeen && (!Thorough || RareSeen)) && Time.realtimeSinceStartup < until && Find<Button>(DuelUi, "leave-duel") == null)
             {
+                yield return DismissReveal();
                 // 내가 공격 대상을 고를 때: 후보 몬스터 위의 예상 결과
                 var note = Root(DuelUi)?.Query<Label>("attack-preview").Where(l => l.style.display.value == DisplayStyle.Flex && !string.IsNullOrEmpty(l.text)).First();
                 if (!_previewSeen && note != null)
