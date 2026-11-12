@@ -149,8 +149,15 @@ namespace DuelRoguelike.UI
                 cells[_hoveredHand].Root.BringToFront();
         }
 
+        /// <summary>마우스가 패의 카드에 올라오거나 나갔다. 마우스를 움직여 올린 것이면 키보드 커서는 풀린다.</summary>
         void HoverHand(int index, bool on)
         {
+            if (_cursorOn)
+            {
+                if (!on || !MouseMovedLately)
+                    return; // 키보드로 고르는 중: 가만히 있는 마우스 아래로 카드가 지나가는 것은 무시한다
+                _cursorOn = false;
+            }
             int hovered = on ? index : _hoveredHand == index ? -1 : _hoveredHand;
             if (hovered == _hoveredHand)
                 return;
@@ -274,6 +281,16 @@ namespace DuelRoguelike.UI
             field.Add(FieldSide(Me));
             field.Add(CenterStrip());
             field.Add(_handRows[Me] = HandRow(Me));
+            // 키 도움말: 필드 위쪽 빈 띠 (상대 패의 양옆). 왼쪽에 이동·결정·취소, 오른쪽에 다음 카드·건너뛰기·효과문.
+            _keyCaps.Clear();
+            var leftHints = Hints(("← ↑ ↓ →", "W A S D", "이동"), ("Z", "J", "결정"), ("X", "K", "취소"));
+            UiStyle.Place(leftHints, FieldLeft, 26);
+            field.Add(leftHints);
+            var rightHints = Hints(("Tab", "Tab", "다음 카드"), ("F", "F", "패↔필드"), ("C", "I", "효과문"));
+            rightHints.style.position = Position.Absolute;
+            rightHints.style.right = StageWidth - (ColumnX(6) + Tile);
+            rightHints.style.top = 26;
+            field.Add(rightHints);
             _statusBadge = BuildStatusBadge();
             field.Add(_statusBadge); // 다른 것 위에 겹쳐 그린다 (필드 오른쪽 위 모서리)
             _stage.Add(field);
@@ -542,7 +559,7 @@ namespace DuelRoguelike.UI
             button.name = name;
             button.style.height = LogButtonHeight;
             button.style.paddingRight = 44;
-            var key = UiStyle.KeyCap("R");
+            var key = KeyCap("R", "L");
             key.pickingMode = PickingMode.Ignore;
             key.style.position = Position.Absolute;
             key.style.right = 12;
@@ -874,8 +891,17 @@ namespace DuelRoguelike.UI
                 _foot.style.display = height > 0 ? DisplayStyle.Flex : DisplayStyle.None;
             }
 
+            public CardInfo Card => _card;
+            public bool Visible => _visible;
+            /// <summary>강조 테두리가 켜져 있는지 (할 수 있는 일이 있거나 고를 수 있는 카드·칸). Tab으로 도는 대상이다.</summary>
+            public bool Highlighted { get; private set; }
+
             /// <summary>행동·선택 강조. null이면 끈다.</summary>
-            public void SetHighlight(Color? color) => ShowRing(_ring, color);
+            public void SetHighlight(Color? color)
+            {
+                Highlighted = color.HasValue;
+                ShowRing(_ring, color);
+            }
 
             public void SetEmptyText(string text)
             {
@@ -1090,11 +1116,16 @@ namespace DuelRoguelike.UI
                 }
             }
 
+            public CardInfo TopCard => _topCard;
+            public bool TopVisible => _topVisible;
+            public bool Highlighted { get; private set; }
+
             /// <summary>top: 위 카드 (덱·엑스트라 덱은 null → 뒷면). visible: 위 카드를 앞면으로 보일지.</summary>
             public void Set(int count, CardInfo top, bool visible, bool highlight)
             {
                 _topCard = top;
                 _topVisible = visible;
+                Highlighted = highlight;
                 ShowRing(_ring, highlight ? Actionable : (Color?)null);
                 if (_kind == PileKind.Removed)
                 {

@@ -28,7 +28,11 @@ namespace DuelRoguelike.UI
         }
 
         /// <summary>마지막에 쓴 이동 키의 자리: false = 방향키 + Z·X, true = W A S D + J·K.</summary>
-        bool _wasdLayout;
+        bool _wasdLayout
+        {
+            get => UiStyle.WasdLayout;
+            set => UiStyle.WasdLayout = value;
+        }
         readonly List<(Label Cap, string Arrows, string Wasd)> _keyCaps = new List<(Label, string, string)>();
 #pragma warning disable 0169 // 유니티 밖(헤드리스 컴파일)에서는 키보드를 읽는 코드가 빠져서 쓰이지 않는다
         Nav _heldMove;

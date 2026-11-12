@@ -1458,6 +1458,8 @@ namespace DuelRoguelike.Tests
             Click(closeLog);
             yield return WaitFor(() => drawer.style.display.value == DisplayStyle.None, 5, "로그 서랍 닫힘");
 
+            yield return DuelKeyboard(root, me);
+
             Click(Find<VisualElement>(DuelUi, "grave-" + me));
             yield return null;
             var close = Find<Button>(DuelUi, "modal-close");
@@ -1467,6 +1469,86 @@ namespace DuelRoguelike.Tests
             yield return null;
             Assert.IsNull(Find<Button>(DuelUi, "modal-close"), "닫기를 눌렀는데 카드 목록 창이 남아 있다");
             Debug.Log($"[런 화면 시험] 듀얼 화면: {cell.name}에 마우스 올리기 → 카드 정보, 묘지 누르기 → 카드 목록 창");
+        }
+
+        /// <summary>
+        /// 듀얼의 키보드 커서 (가상 키보드): 첫 키는 커서를 켜고(금색 테), W로 패 → 내 마법·함정 줄 → 내 몬스터 줄로 올라간다.
+        /// F는 패와 필드 사이를 건너뛰고, 오른쪽 끝 열의 내 묘지에서 결정 키를 누르면 카드 목록 창이 열리고 취소 키로 닫힌다.
+        /// 키 표시는 마지막에 쓴 이동 키의 자리(W A S D면 J·K, 방향키면 Z·X)를 따른다.
+        /// </summary>
+        IEnumerator DuelKeyboard(VisualElement root, string me)
+        {
+            // 키를 누른 뒤 두 프레임을 더 기다린다: 패의 카드는 올라오며 자리가 바뀌고, 금색 테는 그 다음 프레임에 따라간다.
+            IEnumerator PressKey(UnityEngine.InputSystem.Key key)
+            {
+                yield return Tap(key);
+                yield return null;
+                yield return null;
+            }
+            var ring = Find<VisualElement>(DuelUi, "key-ring");
+            Assert.IsNotNull(ring, "키보드 커서의 금색 테가 없다");
+            Assert.AreEqual(DisplayStyle.None, ring.style.display.value, "키를 누르기 전인데 키보드 커서가 보인다");
+            // 금색 테가 두른 것: 가운데가 테의 가운데와 같은 칸·패 카드·더미의 이름
+            string Under()
+            {
+                if (ring.style.display.value != DisplayStyle.Flex)
+                    return "(없음)";
+                Vector2 at = ring.worldBound.center;
+                var best = root.Query<VisualElement>().Where(e => e.name != null && (e.name.StartsWith("zone-") || e.name.StartsWith("hand-")
+                        || e.name.StartsWith("extra-") || e.name.StartsWith("grave-") || e.name.StartsWith("deck-") || e.name.StartsWith("removed-")))
+                    .ToList().OrderBy(e => (e.worldBound.center - at).magnitude).FirstOrDefault();
+                return best != null && (best.worldBound.center - at).magnitude < 3f ? best.name : "(칸이 아님)";
+            }
+            bool InRow(string name, params string[] prefixes) => prefixes.Any(name.StartsWith);
+            string[] spellRow = { $"zone-{me}-s", $"extra-{me}", $"deck-{me}" };
+            string[] monsterRow = { $"zone-{me}-m", $"zone-{me}-field", $"grave-{me}" };
+            string CapsText() => string.Join(" ", root.Query("key-hints").ToList().SelectMany(h => h.Query<Label>().ToList()).Select(l => l.text));
+
+            yield return PressKey(UnityEngine.InputSystem.Key.W);
+            string start = Under();
+            Assert.AreNotEqual("(없음)", start, "이동 키를 눌렀는데 키보드 커서가 켜지지 않았다");
+            StringAssert.Contains("W A S D", CapsText(), "W A S D를 썼는데 키 표시가 바뀌지 않았다");
+            StringAssert.Contains("J", CapsText(), "W A S D를 썼는데 결정 키 표시가 J가 아니다");
+            bool fromHand = start.StartsWith($"hand-{me}-");
+            if (fromHand)
+            {
+                Assert.Greater(root.Q(start).resolvedStyle.scale.value.x, 1.5f, "키보드로 가리킨 패의 카드가 올라오며 커지지 않았다");
+                yield return PressKey(UnityEngine.InputSystem.Key.W);
+                Assert.IsTrue(InRow(Under(), spellRow), $"패에서 위로 갔는데 내 마법·함정 줄이 아니다: {Under()}");
+            }
+            else
+                Assert.IsTrue(InRow(start, monsterRow) || InRow(start, spellRow), $"패가 없을 때 커서가 내 필드에서 시작하지 않았다: {start}");
+            if (InRow(Under(), spellRow))
+                yield return PressKey(UnityEngine.InputSystem.Key.W);
+            string onMonsterRow = Under();
+            Assert.IsTrue(InRow(onMonsterRow, monsterRow), $"위로 갔는데 내 몬스터 줄이 아니다: {onMonsterRow}");
+            yield return Shot(DuelUi, "2r-key-cursor");
+            if (fromHand)
+            {
+                yield return PressKey(UnityEngine.InputSystem.Key.F);
+                StringAssert.StartsWith($"hand-{me}-", Under(), "F를 눌렀는데 패로 건너뛰지 않았다");
+                yield return PressKey(UnityEngine.InputSystem.Key.F);
+                Assert.AreEqual(onMonsterRow, Under(), "F를 다시 눌렀는데 있던 필드 칸으로 돌아오지 않았다");
+            }
+            // 오른쪽 끝 열(내 묘지)까지 가서, 끝에서 더 눌러도 그대로인지
+            for (int i = 0; i < 8 && Under() != $"grave-{me}"; i++)
+                yield return PressKey(UnityEngine.InputSystem.Key.RightArrow);
+            Assert.AreEqual($"grave-{me}", Under(), "오른쪽 끝까지 갔는데 내 묘지 칸이 아니다");
+            StringAssert.Contains("Z", CapsText(), "방향키를 썼는데 결정 키 표시가 Z로 돌아오지 않았다");
+            yield return PressKey(UnityEngine.InputSystem.Key.RightArrow);
+            Assert.AreEqual($"grave-{me}", Under(), "오른쪽 끝에서 더 눌렀는데 커서가 움직였다");
+            // 결정 키: 묘지의 카드 목록 창 (진행을 보여 주는 중이면 결정 키는 단계를 넘기는 데 쓰이므로 그때는 넘어간다)
+            yield return PressKey(UnityEngine.InputSystem.Key.Z);
+            if (Find<Button>(DuelUi, "modal-close") != null)
+            {
+                yield return PressKey(UnityEngine.InputSystem.Key.DownArrow);
+                Assert.AreEqual(DisplayStyle.Flex, ring.style.display.value, "카드 목록 창에서 키보드 커서가 보이지 않는다");
+                yield return PressKey(UnityEngine.InputSystem.Key.X);
+                Assert.IsNull(Find<Button>(DuelUi, "modal-close"), "취소 키를 눌렀는데 카드 목록 창이 닫히지 않았다");
+                Debug.Log("[런 화면 시험] 듀얼 키보드: 커서 이동, F, 묘지 창 열기(Z)·닫기(X)");
+            }
+            else
+                Debug.Log("[런 화면 시험] 듀얼 키보드: 커서 이동, F (진행을 보여 주는 중이라 결정 키로 묘지 창은 열지 않음)");
         }
 
         /// <summary>

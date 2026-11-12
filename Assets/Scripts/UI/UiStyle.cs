@@ -50,6 +50,12 @@ namespace DuelRoguelike.UI
 
         public static Color Alpha(Color c, float a) => new Color(c.r, c.g, c.b, a);
 
+        /// <summary>
+        /// 화면의 키 표시가 따를 자리: 마지막에 쓴 이동 키가 W A S D면 true (결정·취소를 J·K로 쓴다), 방향키면 false (Z·X).
+        /// 런 화면과 듀얼 화면이 함께 쓴다.
+        /// </summary>
+        public static bool WasdLayout;
+
         public static VisualElement Box(string name = null, FlexDirection direction = FlexDirection.Column)
         {
             var e = new VisualElement { name = name };

@@ -178,6 +178,7 @@ namespace DuelRoguelike.UI
             else
                 AdvancePlayback();
             UpdateStatusBadge();
+            UpdateKeyCursor();
         }
 
         // ================= 모서리 상태 표시 =================
@@ -276,8 +277,8 @@ namespace DuelRoguelike.UI
         }
 
         /// <summary>
-        /// 키보드: 스페이스 = 지금 멈춘 단계를 넘긴다 (누르고 있으면 빨리 넘어간다), 엔터 = 다음 입력까지 건너뛴다,
-        /// Esc = 메뉴·창을 닫는다 (선택 창은 "선택 창 열기"로 다시 연다).
+        /// 키보드: 진행을 보여 주는 중에는 스페이스 = 지금 멈춘 단계를 넘긴다 (누르고 있으면 빨리 넘어간다), 엔터 = 다음 입력까지 건너뛴다.
+        /// 이동·결정·취소와 Tab·F는 DuelScreen.Keys.cs (취소 = 메뉴·창을 닫는다. 선택 창은 "선택 창 열기"나 취소 키로 다시 연다).
         /// </summary>
         void HandleKeys()
         {
@@ -289,45 +290,35 @@ namespace DuelRoguelike.UI
             _spaceHeld = keyboard.spaceKey.isPressed;
             if (_spaceHeld && _focus != null)
                 _holdUntil = 0;
-            if ((keyboard.enterKey.wasPressedThisFrame || keyboard.numpadEnterKey.wasPressedThisFrame) && !_autoPlay
+            // 창·메뉴가 떠 있으면 엔터는 결정 키다 (건너뛰기로 쓰지 않는다)
+            if ((keyboard.enterKey.wasPressedThisFrame || keyboard.numpadEnterKey.wasPressedThisFrame) && !_autoPlay && !OverlayOpen
                 && (_focus != null || _session.CanStep))
                 BeginSkip();
-            if (keyboard.escapeKey.wasPressedThisFrame)
-            {
-                // 메뉴가 있으면 메뉴만, 창이 있으면 창을 닫고(필드 확인), 필드 확인 중이면 선택 창을 다시 연다.
-                if (_menuLayer != null && _menuLayer.style.display == DisplayStyle.Flex)
-                    CloseMenu();
-                else if (_modalOpen)
-                {
-                    _windowHidden = true;
-                    CloseModal();
-                    Render();
-                }
-                else if (InFieldView)
-                {
-                    _windowHidden = false;
-                    if (_interaction.Dialog != null)
-                        OpenDialog(_interaction.Dialog);
-                    else
-                        OpenSelectionWindow();
-                    Render();
-                }
-            }
+            // 이동·결정·취소·Tab·F (DuelScreen.Keys.cs). Esc도 취소 키로 거기서 받는다.
+            HandleCursorKeys();
             // 보조 키 (docs/UI.md "듀얼의 보조 키"). 글자 키는 한/영 상태와 상관없이 키의 자리로 읽는다.
-            if (keyboard.rKey.wasPressedThisFrame || keyboard.lKey.wasPressedThisFrame)
-                ToggleLogDrawer();
-            if (keyboard.cKey.wasPressedThisFrame || keyboard.iKey.wasPressedThisFrame)
-                PageDetailText();
-            if (keyboard.digit1Key.wasPressedThisFrame && devAutoButtons && !_session.State.IsFinished)
-                SetAutoPlay(!_autoPlay);
-            if (keyboard.digit2Key.wasPressedThisFrame)
-                CycleSpeed();
-            if (keyboard.digit3Key.wasPressedThisFrame)
-                CycleChainPrompt();
-            if (keyboard.qKey.wasPressedThisFrame)
-                PressPhaseKey('q');
-            if (keyboard.eKey.wasPressedThisFrame)
-                PressPhaseKey('e');
+            // 글 입력 칸에 글을 치는 중에는 받지 않는다.
+            if (!TypingText())
+            {
+                if (keyboard.rKey.wasPressedThisFrame || keyboard.lKey.wasPressedThisFrame)
+                {
+                    if (keyboard.lKey.wasPressedThisFrame)
+                        UiStyle.WasdLayout = true;
+                    ToggleLogDrawer();
+                }
+                if (keyboard.cKey.wasPressedThisFrame || keyboard.iKey.wasPressedThisFrame)
+                    PageDetailText();
+                if (keyboard.digit1Key.wasPressedThisFrame && devAutoButtons && !_session.State.IsFinished)
+                    SetAutoPlay(!_autoPlay);
+                if (keyboard.digit2Key.wasPressedThisFrame)
+                    CycleSpeed();
+                if (keyboard.digit3Key.wasPressedThisFrame)
+                    CycleChainPrompt();
+                if (keyboard.qKey.wasPressedThisFrame)
+                    PressPhaseKey('q');
+                if (keyboard.eKey.wasPressedThisFrame)
+                    PressPhaseKey('e');
+            }
             if (_armedKey != '\0' && Time.unscaledTime > _armedUntil)
             {
                 _armedKey = '\0';
@@ -807,6 +798,9 @@ namespace DuelRoguelike.UI
             RenderRecentLog();
             SetLogDrawer(false, instant: true);
             _hoveredHand = -1;
+            _cursorOn = false;
+            _cursorRow = HandRowIndex;
+            _cursorHand = 0;
             CloseMenu();
             CloseModal();
             ClearDetail();
@@ -1688,6 +1682,7 @@ namespace DuelRoguelike.UI
             docRoot.Add(_modalLayer);
             _menuLayer = OverlayLayer(Color.clear);
             docRoot.Add(_menuLayer);
+            BuildKeyLayer(docRoot);
         }
 
         static VisualElement OverlayLayer(Color background)
