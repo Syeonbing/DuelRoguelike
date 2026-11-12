@@ -212,9 +212,12 @@ namespace DuelRoguelike.UI
             if (scope == null)
                 return new List<VisualElement>();
             return scope.Query<VisualElement>().Where(e =>
-                (e is Button b && b.enabledInHierarchy && b.resolvedStyle.display != DisplayStyle.None)
-                || (e.name != null && (e.name.StartsWith("candidate-") || e.name.StartsWith("pile-card-")))).ToList();
+                (e is Button b && b.enabledInHierarchy && b.resolvedStyle.display != DisplayStyle.None) || IsWindowCard(e)).ToList();
         }
+
+        /// <summary>창 안의 카드 한 장인지 (선택 창의 후보, 카드 목록 창, 공개된 카드 확인 창).</summary>
+        static bool IsWindowCard(VisualElement e) =>
+            e.name != null && (e.name.StartsWith("candidate-") || e.name.StartsWith("pile-card-") || e.name.StartsWith("reveal-card-"));
 
         /// <summary>커서가 지금 가리키는 화면 요소 (없으면 null). 메뉴·창이 떠 있으면 그 안의 항목이다.</summary>
         VisualElement CursorTarget()
@@ -368,7 +371,8 @@ namespace DuelRoguelike.UI
                 CloseMenu();
             else if (_modalOpen)
             {
-                _windowHidden = true;
+                if (!_revealOpen) // 공개된 카드 확인 창은 그냥 닫는다 (필드 확인 상태로 가지 않는다)
+                    _windowHidden = true;
                 CloseModal();
                 Render();
             }
@@ -437,7 +441,7 @@ namespace DuelRoguelike.UI
             var item = items[_keyIndex];
             item.GetFirstAncestorOfType<ScrollView>()?.ScrollTo(item);
             // 창 안의 카드는 왼쪽 상세 카드에도 띄운다 (마우스를 올린 것처럼)
-            if (item.name != null && (item.name.StartsWith("candidate-") || item.name.StartsWith("pile-card-")))
+            if (IsWindowCard(item))
                 using (var enter = PointerEnterEvent.GetPooled())
                 {
                     enter.target = item;

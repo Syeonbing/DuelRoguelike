@@ -109,6 +109,7 @@ namespace DuelRoguelike.UI
         int _interactionSerial = -1;
         bool _windowHidden;
         bool _modalOpen;
+        bool _revealOpen;          // 떠 있는 창이 공개된 카드를 확인하는 창이다 (닫을 때까지 진행이 멈춘다)
 
         VisualElement _docRoot, _root;
         readonly Label[] _playerName = new Label[2];
@@ -505,6 +506,10 @@ namespace DuelRoguelike.UI
             /// <summary>카드 정보에 띄울 카드 (0이면 그대로 둔다).</summary>
             public uint DetailCode;
             public CardLocation DetailLocation;
+            /// <summary>내게 공개된 카드. 있으면 확인 창을 띄우고, 창을 닫을 때까지 이 단계에서 멈춘다.</summary>
+            public List<CardRef> Reveal;
+            /// <summary>확인 창을 이미 띄웠는지.</summary>
+            public bool RevealShown;
             public readonly List<(CardKey Key, Color Color)> Cards = new List<(CardKey, Color)>();
 
             public void Add(CardLocation loc, Color color)
@@ -597,6 +602,9 @@ namespace DuelRoguelike.UI
                 return;
             if (_focus != null)
             {
+                // 공개된 카드를 확인하는 창은 닫을 때까지 기다린다 (건너뛰기로도 넘어가지 않는다)
+                if (_focus.Reveal != null && (!_focus.RevealShown || _revealOpen))
+                    return;
                 if (!_skipping && Time.realtimeSinceStartup < _holdUntil)
                     return;
                 _focus = null;
@@ -620,8 +628,10 @@ namespace DuelRoguelike.UI
                     _session.Step();
                     if (_nextFocus != null)
                         ShowFocusCard(_nextFocus);
-                    if (_nextFocus != null && !_skipping)
+                    if (_nextFocus != null && (!_skipping || _nextFocus.Reveal != null))
                     {
+                        if (_nextFocus.Reveal != null)
+                            _skipping = false; // 확인 창에서 건너뛰기가 끝난다
                         _focus = _nextFocus;
                         _holdUntil = Time.realtimeSinceStartup + _focus.Seconds;
                         break;
@@ -764,12 +774,25 @@ namespace DuelRoguelike.UI
                 case WinMessage _:
                     seconds = 1.6f; // 승리·패배 띠 알림
                     break;
+                case ConfirmCardsMessage m when ShowsToMe(m):
+                    // 내게 공개된 카드: 시간으로 멈추지 않고, 확인 창을 닫을 때까지 멈춘다
+                    f.Reveal = m.Cards.Where(c => c.Code != 0).ToList();
+                    seconds = 0f;
+                    break;
                 default:
                     return null;
             }
             f.Seconds = seconds * SpeedFactor;
             return f;
         }
+
+        /// <summary>
+        /// 이 공개를 확인 창으로 보여 줄지. 내게 보여 주는 카드(MSG_CONFIRM_CARDS의 Player가 나)와
+        /// 덱·엑스트라 덱 위를 넘겨 서로에게 보이는 카드(MSG_CONFIRM_DECKTOP, MSG_CONFIRM_EXTRATOP)만 띄운다.
+        /// 상대에게만 보여 주는 카드는 띄우지 않는다. 자동 진행 중에는 로그만 남긴다.
+        /// </summary>
+        bool ShowsToMe(ConfirmCardsMessage m) =>
+            !_autoPlay && m.Cards.Any(c => c.Code != 0) && (m.Type != OcgMessageType.ConfirmCards || m.Player == Me);
 
         // ================= 듀얼 =================
 
@@ -923,6 +946,12 @@ namespace DuelRoguelike.UI
                     OpenDialog(_interaction.Dialog);
                 else if (_interaction?.Selection != null && _interaction.Selection.NeedsWindow)
                     OpenSelectionWindow();
+            }
+            // 멈춘 단계가 카드 공개면 확인 창을 띄운다 (위에서 창을 정리한 뒤에 띄워야 닫히지 않는다)
+            if (_focus?.Reveal != null && !_focus.RevealShown)
+            {
+                _focus.RevealShown = true;
+                OpenRevealWindow(_focus.Reveal);
             }
 
             for (byte p = 0; p < 2; p++)
@@ -1505,6 +1534,7 @@ namespace DuelRoguelike.UI
             _modalLayer.Clear();
             _modalLayer.style.display = DisplayStyle.None;
             _modalOpen = false;
+            _revealOpen = false;
         }
 
         void ShowMessage(string title, string detail)
@@ -1646,6 +1676,54 @@ namespace DuelRoguelike.UI
 
         /// <summary>선택 창의 카드 폭: 패의 카드와 같은 1.39배.</summary>
         const float SelectionCardWidth = 150;
+
+        /// <summary>
+        /// 내게 공개된 카드를 보여 주는 창 (예: 「고대의 망원경」으로 보는 상대 덱 위의 카드). 보기만 한다.
+        /// 카드에 마우스를 올리거나 누르면 왼쪽 상세 카드에 뜬다. "확인"이나 취소 키로 닫으면 진행이 이어진다.
+        /// </summary>
+        void OpenRevealWindow(List<CardRef> cards)
+        {
+            if (cards == null || cards.Count == 0)
+                return;
+            var first = cards[0].Location;
+            bool samePlace = cards.All(c => c.Location.Controller == first.Controller && c.Location.Location == first.Location);
+            bool pile = samePlace && (first.Location == OcgLocation.Deck || first.Location == OcgLocation.Extra);
+            if (pile) // 맨 위 카드부터 (엔진의 덱 순번은 맨 아래가 0이다)
+                cards = cards.OrderByDescending(c => c.Location.Sequence).ToList();
+            string title = samePlace ? $"{LocationCaption(first)} 확인 · {cards.Count}장" : $"공개된 카드 · {cards.Count}장";
+            string detail = pile ? "왼쪽이 맨 위 카드입니다. 보기만 할 수 있습니다." : "보기만 할 수 있습니다.";
+            var panel = OpenModal(title, detail, closable: false);
+            _revealOpen = true;
+            var grid = CardGrid(panel);
+            grid.style.justifyContent = Justify.Center;
+            for (int i = 0; i < cards.Count; i++)
+            {
+                var info = MakeInfo(cards[i]);
+                var cell = WindowCell($"reveal-card-{i}", faceWidth: SelectionCardWidth);
+                cell.Root.style.marginLeft = cell.Root.style.marginRight = 9;
+                cell.ClickOverride = () => PreviewCard(info, true);
+                cell.Set(info, true);
+                cell.SetCaption(pile ? $"위에서 {i + 1}번째" : LocationCaption(cards[i].Location));
+                grid.Add(cell.Root);
+            }
+            var row = UiStyle.Box(null, FlexDirection.Row);
+            row.style.justifyContent = Justify.Center;
+            row.style.marginTop = 14;
+            row.style.flexShrink = 0;
+            row.Add(ModalKeyButton("reveal-confirm", "확인", () => { CloseModal(); Render(); }, 150));
+            panel.Add(row);
+        }
+
+        /// <summary>개발·시험용: 상대 덱 위의 카드를 확인하는 창을 띄운다 (엔진이 카드를 공개했을 때와 같은 창). 맨 위 카드부터 적는다.</summary>
+        public void ShowRevealSample(uint[] codes)
+        {
+            if (_session == null || codes == null)
+                return;
+            var cards = new List<CardRef>();
+            for (int i = 0; i < codes.Length; i++)
+                cards.Add(new CardRef(codes[i], new CardLocation(Opp, OcgLocation.Deck, (uint)(codes.Length - 1 - i))));
+            OpenRevealWindow(cards);
+        }
 
         /// <summary>묘지·제외·엑스트라 덱(·덱) 안의 카드를 보여 주는 창. 행동할 수 있는 카드는 눌러서 메뉴를 연다.</summary>
         void OpenPileWindow(byte p, OcgLocation location)

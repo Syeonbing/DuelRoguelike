@@ -79,7 +79,13 @@ namespace DuelRoguelike.UI
                 case TossMessage m:
                     return $"{_text.Player(m.Player)}: 주사위 → {string.Join(", ", m.Results)}";
                 case ConfirmCardsMessage m when m.Cards.Count > 0:
-                    return $"{_text.Player(m.Player)}에게 공개: {string.Join(", ", m.Cards.Select(c => _text.CardName(c.Code)))}";
+                {
+                    // 덱·엑스트라 덱 위를 넘겨 보이는 메시지의 Player는 그 덱의 주인이고, 그 밖에는 카드를 보는 쪽이다.
+                    string names = string.Join(", ", m.Cards.Select(c => _text.CardName(c.Code)));
+                    return m.Type == OcgMessageType.ConfirmDecktop ? $"{_text.Player(m.Player)}의 덱 위 카드 공개: {names}"
+                        : m.Type == OcgMessageType.ConfirmExtratop ? $"{_text.Player(m.Player)}의 엑스트라 덱 위 카드 공개: {names}"
+                        : $"{_text.Player(m.Player)}에게 공개: {names}";
+                }
                 case CardPairMessage m when m.Type == OcgMessageType.Equip:
                     return $"{CardAt(state.Find(m.Card), m.Card)} → {CardAt(state.Find(m.Target), m.Target)}에 장착";
                 case HintMessage m when m.HintType == OcgHintType.OptionSelected:
