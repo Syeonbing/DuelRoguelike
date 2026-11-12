@@ -304,11 +304,14 @@ namespace DuelRoguelike.UI
                 return;
             if (nav == Nav.Cancel)
             {
+                Sound.Play(Sfx.Cancel);
                 CancelKey();
                 return;
             }
             if (_autoPlay)
                 return;
+            if (nav != Nav.Confirm)
+                Sound.Play(Sfx.Move); // 결정은 누른 버튼이 소리를 낸다
             if (!_cursorOn)
             {
                 // 첫 키는 커서를 켜기만 한다 (마지막으로 있던 자리, 메뉴·창이 떠 있으면 그 첫 항목). 무엇을 가리키는지 보고 나서 누르게 한다.

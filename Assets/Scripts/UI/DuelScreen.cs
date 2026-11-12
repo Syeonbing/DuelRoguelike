@@ -181,6 +181,7 @@ namespace DuelRoguelike.UI
             UpdateStatusBadge();
             UpdateKeyCursor();
             UpdateFx();
+            UpdateMusic();
         }
 
         // ================= 모서리 상태 표시 =================
@@ -245,6 +246,7 @@ namespace DuelRoguelike.UI
         {
             _skipping = true;
             ClearFx(); // 틀고 있던 연출은 지우고 결과만 남긴다
+            Sound.Hush(); // 내던 소리도 빨리 줄인다
             _badgeUntil = Time.realtimeSinceStartup + BadgeLingerSeconds;
             SetBadge(SkipText, UiStyle.Accent);
         }
@@ -899,6 +901,9 @@ namespace DuelRoguelike.UI
         {
             TrackChain(message);
             string line = _logFormatter.Format(message, _session.State);
+            // 소리도 연출과 같이 보여 주는 동안에만 낸다 (셔플은 로그에 줄이 없어도 소리를 낸다)
+            if (_pacing && !_skipping && (line != null || message is ShuffleMessage))
+                PlayMessageSound(message);
             if (line == null)
                 return;
             if (_pacing && !_skipping)
@@ -1451,6 +1456,8 @@ namespace DuelRoguelike.UI
         /// </summary>
         VisualElement OpenModal(string title, string detail, bool closable)
         {
+            if (!_modalOpen)
+                Sound.Play(Sfx.WindowOpen); // 떠 있던 창을 새로 그릴 때는 내지 않는다
             CloseModal();
             _modalLayer.style.display = DisplayStyle.Flex;
             // 선형 색 공간에서는 어두운 덮개가 옅게 보여서 시안(50%)보다 진하게 덮는다

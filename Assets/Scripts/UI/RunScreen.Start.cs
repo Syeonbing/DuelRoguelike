@@ -170,6 +170,7 @@ namespace DuelRoguelike.UI
             menu.Add("title-new-run", "새 런", () => OpenRecipes(RecipeWindow.NewRun));
             menu.Add("title-edit", "덱 편집", () => OpenRecipes(RecipeWindow.Edit), $"레시피 {_save.Recipes.Count}개");
             menu.Add("open-codex", "이벤트 도감", OpenCodex, $"{_save.Codex.SeenCount} / {TowerEventList.All.Count}");
+            menu.Add("open-settings", "설정", OpenSettings);
             menu.Add("title-quit", "끝내기", () => Application.Quit());
             menu.Select(Mathf.Clamp(_titleMenuIndex, 0, menu.Count - 1));
             _titleMenu = menu;

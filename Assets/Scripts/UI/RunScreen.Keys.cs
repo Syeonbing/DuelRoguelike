@@ -89,6 +89,23 @@ namespace DuelRoguelike.UI
         {
             HandleKeys();
             UpdateKeyRing();
+            // 런 화면이 보이는 동안(처음 화면, 탑, 창들)은 탑의 배경음. 듀얼 중에는 듀얼 화면이 정한다.
+            if (_docRoot != null && _docRoot.style.display != DisplayStyle.None)
+                Sound.Music(MusicTrack.Tower);
+        }
+
+        /// <summary>
+        /// 키 소리: 이동 키는 짧은 소리, 취소 키는 취소 소리. 결정 키는 누른 버튼·메뉴가 소리를 낸다.
+        /// 올라가는 연출을 건너뛰는 키에는 내지 않는다.
+        /// </summary>
+        void PlayNavSound(Nav nav)
+        {
+            if (_hubShown && _climbing)
+                return;
+            if (nav == Nav.Cancel)
+                Sound.Play(Sfx.Cancel);
+            else if (nav != Nav.Confirm)
+                Sound.Play(Sfx.Move);
         }
 
         void HandleKeys()
@@ -105,7 +122,14 @@ namespace DuelRoguelike.UI
                 typing.Blur();
                 return;
             }
+            PlayNavSound(nav);
             bool modal = _modalLayer.style.display != DisplayStyle.None && _modalLayer.childCount > 0;
+            if (modal && SettingsOpen)
+            {
+                _navOn = false;
+                SettingsKey(nav); // 설정 창
+                return;
+            }
             if (_hubShown && _run != null && !modal)
             {
                 // 허브: 올라가는 연출(건너뛰기), 덱 창, 명령 메뉴
