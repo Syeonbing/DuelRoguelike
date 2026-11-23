@@ -66,8 +66,14 @@ namespace DuelRoguelike.Run
         /// <summary>시작 덱 (메인 + 엑스트라).</summary>
         public DeckRecipe StartDeck;
 
-        /// <summary>시작 사이드 덱 (최대 RunRules.StartingSideDeckMax장, 시작 덱과 합쳐 같은 카드명 3장까지).</summary>
+        /// <summary>시작 사이드 덱 (최대 SideDeckLimit장, 시작 덱과 합쳐 같은 카드명 3장까지).</summary>
         public IReadOnlyList<uint> SideDeck = Array.Empty<uint>();
+
+        /// <summary>
+        /// 이 런의 시작 사이드 덱 한도 = 골드로 영구히 늘린 한도(GameSave.SideDeckLimit) + 이번 런에 산 임시 칸.
+        /// RunRules.StartingSideDeckMax(3) ~ StartingSideDeckCap(15). 런 중의 사이드 덱에는 장수 제한이 없다.
+        /// </summary>
+        public int SideDeckLimit = RunRules.StartingSideDeckMax;
 
         /// <summary>층마다 무작위로 고를 상대 덱. 첫 버전은 스타터 덱 4개.</summary>
         public IReadOnlyList<DeckRecipe> Opponents = StarterDecks.All;
@@ -311,8 +317,10 @@ namespace DuelRoguelike.Run
             }
             problems.AddRange(setup.StartDeck.Validate(database));
             var side = setup.SideDeck ?? Array.Empty<uint>();
-            if (side.Count > RunRules.StartingSideDeckMax)
-                problems.Add($"사이드 덱 {side.Count}장 ({RunRules.StartingSideDeckMax}장 이하여야 함)");
+            if (setup.SideDeckLimit < RunRules.StartingSideDeckMax || setup.SideDeckLimit > RunRules.StartingSideDeckCap)
+                problems.Add($"시작 사이드 덱 한도 {setup.SideDeckLimit}장 ({RunRules.StartingSideDeckMax}~{RunRules.StartingSideDeckCap}장이어야 함)");
+            else if (side.Count > setup.SideDeckLimit)
+                problems.Add($"사이드 덱 {side.Count}장 ({setup.SideDeckLimit}장 이하여야 함)");
             foreach (uint code in side.Distinct())
                 if (!database.TryGet(code, out _))
                     problems.Add($"사이드 덱의 {code}: 카드 DB에 없음");

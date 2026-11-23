@@ -155,7 +155,10 @@ namespace DuelRoguelike.Dev
         IReadOnlyList<uint> _lastOpponentCards = Array.Empty<uint>();
         Snapshot _before;
 
-        public RunRuleChecker(RunState run, CardDatabase db, RarityTable rarities, RunRuleStats stats, string tag)
+        /// <param name="sideDeckLimit">
+        /// 이 런의 시작 사이드 덱 한도 (RunRules와 따로 적는다): 처음 3장, 골드로 영구히 10장까지, 런마다 임시 칸 5장까지 더해 3~15장.
+        /// </param>
+        public RunRuleChecker(RunState run, CardDatabase db, RarityTable rarities, RunRuleStats stats, string tag, int sideDeckLimit = 3)
         {
             _run = run;
             _db = db;
@@ -168,7 +171,8 @@ namespace DuelRoguelike.Dev
                 "런 시작 이벤트가 RunStarted, FloorEntered가 아님");
             Expect(run.Chips == 0 && run.ChipsEarned == 0, $"런 시작 칩 {run.Chips} (얻은 칩 {run.ChipsEarned})");
             CheckFloor("런 시작", run.Events.Last());
-            Expect(run.SideDeck.Count <= 3, $"시작 사이드 덱 {run.SideDeck.Count}장 (3장까지)");
+            Expect(sideDeckLimit >= 3 && sideDeckLimit <= 10 + 5, $"시작 사이드 덱 한도 {sideDeckLimit}장 (3~15장)");
+            Expect(run.SideDeck.Count <= sideDeckLimit, $"시작 사이드 덱 {run.SideDeck.Count}장 ({sideDeckLimit}장까지)");
             foreach (var group in run.MainDeck.Concat(run.ExtraDeck).Concat(run.SideDeck).GroupBy(Name))
                 Expect(group.Count() <= 3, $"런 시작: 시작 덱과 사이드 덱을 합쳐 카드명 {group.Key}가 {group.Count()}장");
             _expectedCards = Tally(AllCards(run));

@@ -111,7 +111,8 @@ namespace DuelRoguelike.Run
             floor + SettlementFloorBonus(floor) + chipsEarned / SettlementEarnedChipsDivisor + chipsHeld / SettlementHeldChipsDivisor;
 
         // ---------------- 골드 (영구 재화) 가격 ----------------
-        // 2026-11-11 재화 세션에서 정함 ("느림" 가격대, docs/ECONOMY.md). 골드를 쓰는 기능은 아직 없다.
+        // 2026-11-11 재화 세션에서 정함 ("느림" 가격대, docs/ECONOMY.md).
+        // 골드 상점(GameSave)이 쓰는 것: 사이드 덱 영구 확장, 런 시작 때의 임시 확장, 컬렉션 분해. 팩·스트럭처 덱·코스트 완화는 가격만 있다.
         // 패치로 바꿀 수 있게 여기에만 둔다 (가격은 저장 파일에 적지 않는다).
 
         /// <summary>팩 1개 (5장 기준, 팩 구성은 미정).</summary>
@@ -139,6 +140,20 @@ namespace DuelRoguelike.Run
         /// <summary>런을 시작할 때 골드로 사는 사이드 덱 임시 한도: 최대 장수와 1장 가격 (그 런에서만, 고정가).</summary>
         public const int RunSideDeckExtraMax = 5;
         public const int RunSideDeckSlotPrice = 8;
+
+        /// <summary>런을 시작할 때 사이드 덱에 넣을 수 있는 가장 큰 장수 (영구 확장을 다 사고 임시 칸도 다 산 때).</summary>
+        public const int StartingSideDeckCap = PermanentSideDeckMax + RunSideDeckExtraMax;
+
+        /// <summary>런을 시작할 때 사이드 덱 임시 칸 slots장의 값.</summary>
+        public static int RunSideDeckSlotsPrice(int slots)
+        {
+            if (slots < 0 || slots > RunSideDeckExtraMax)
+                throw new ArgumentOutOfRangeException(nameof(slots), slots, $"사이드 덱 임시 칸은 0~{RunSideDeckExtraMax}장입니다.");
+            return RunSideDeckSlotPrice * slots;
+        }
+
+        /// <summary>컬렉션 분해: 카드 ID마다 이 장수는 남긴다 (넘는 분만 분해한다).</summary>
+        public const int DisassemblyKeep = 3;
 
         /// <summary>투입 코스트 제한 임시 완화 1점의 가격 (상한 없음).</summary>
         public const int CostReliefPricePerPoint = 8;
@@ -174,7 +189,10 @@ namespace DuelRoguelike.Run
         /// <summary>같은 카드명은 메인·엑스트라 덱에 이 장수까지 (카드 DB의 alias 기준). 사이드 덱에는 제한이 없다.</summary>
         public const int MaxCopies = DeckRecipe.MaxCopies;
 
-        /// <summary>런을 시작할 때 사이드 덱에 넣을 수 있는 장수. 골드로 늘리는 것(영구 10장, 런마다 +5장)은 아직 없다.</summary>
+        /// <summary>
+        /// 런을 시작할 때 사이드 덱에 넣을 수 있는 장수의 처음 값. 골드로 영구히 늘린 한도는 GameSave.SideDeckLimit(최대 PermanentSideDeckMax)이고,
+        /// 런마다 임시 칸을 RunSideDeckExtraMax장까지 더 산다 (RunSetup.SideDeckLimit = 영구 한도 + 산 임시 칸).
+        /// </summary>
         public const int StartingSideDeckMax = 3;
 
         /// <summary>승리 보상 후보 수. 상대 덱에서 뽑힌 등급의 서로 다른 카드를 이만큼 보여 주고, 모자란 자리는 골드로 채운다.</summary>
@@ -187,7 +205,7 @@ namespace DuelRoguelike.Run
         static readonly int[] GoldByRarity = { 1, 2, 4, 8, 16 };
 
         /// <summary>
-        /// 컬렉션 분해 1장의 골드 (등급 순서 N, R, SR, UR, FR). 카드 ID마다 3장을 넘는 분만 분해한다. 분해 기능은 아직 없다.
+        /// 컬렉션 분해 1장의 골드 (등급 순서 N, R, SR, UR, FR). 카드 ID마다 DisassemblyKeep(3)장을 넘는 분만 분해한다 (GameSave.Disassemble).
         /// 2026-11-11 정함 (docs/ECONOMY.md): N~UR은 보상 표와 같고, FR만 특별히 높다 (팩 2개 값).
         /// </summary>
         static readonly int[] DisassemblyGoldByRarity = { 1, 2, 4, 8, 160 };

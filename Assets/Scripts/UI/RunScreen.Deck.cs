@@ -4,7 +4,10 @@
 // 오른쪽 레시피(editor-deck: 메인 editor-main, 엑스트라 editor-extra, 시작 사이드 덱 editor-side).
 // 옮기기: 두 번 누르기(컬렉션 → 덱, 덱·사이드 → 컬렉션), 끌어다 놓기(어느 칸으로든), 카드 정보의 버튼.
 // 규칙은 RecipeEditor·RecipeRules(Run 어셈블리)가 정한다. 화면은 막힌 까닭과 저장·시작 가능 여부를 보여 준다:
-// - 넣기를 막음: 메인 60장·엑스트라 15장·시작 사이드 덱 3장 가득, 같은 카드명 3장 (덱 + 사이드 합쳐).
+// - 넣기를 막음: 메인 60장·엑스트라 15장·시작 사이드 덱(영구 칸 + 임시 칸 5장) 가득, 같은 카드명 3장 (덱 + 사이드 합쳐).
+// - 시작 사이드 덱은 칸으로 보인다: 영구 칸(골드 상점에서 늘린 만큼) + 임시 칸 5개. 카드는 넣은 순서대로 앞 칸부터 찬다.
+//   빈 칸은 editor-side-empty·editor-side-temp-empty, 임시 칸에 든 장수는 editor-side-temp-count.
+//   임시 칸의 카드("임시" 표시)는 런을 시작할 때 1장에 골드 8을 내고 가져간다. 카드 정보의 "영구 칸으로"·"임시 칸으로"로 칸을 바꾼다.
 // - 저장을 막음: 메인 40장 미만 등 (editor-status에 빨간 글).
 // - 컬렉션보다 많이 넣으면: 카드에 "부족" 표시, 저장은 되지만 런을 시작할 수 없음 (런 시작 화면에 "시작 불가").
 using System;
@@ -63,12 +66,13 @@ namespace DuelRoguelike.UI
         void OpenEditor(PlayerRecipe recipe, bool copy = false)
         {
             var db = _data.Database;
+            int sideLimit = _save.SideDeckLimit;
             if (recipe == null)
-                _editor = new RecipeEditor(null, db, _collection);
+                _editor = new RecipeEditor(null, db, _collection, sideLimit: sideLimit);
             else if (copy)
-                _editor = RecipeEditor.CopyOf(recipe, db, _collection, ClipName(recipe.Name + " 사본"));
+                _editor = RecipeEditor.CopyOf(recipe, db, _collection, ClipName(recipe.Name + " 사본"), sideLimit);
             else
-                _editor = new RecipeEditor(recipe, db, _collection);
+                _editor = new RecipeEditor(recipe, db, _collection, sideLimit: sideLimit);
             _editorNotice = null;
             _confirmLeave = _confirmDelete = false;
             _filter = CollectionFilter.All;
@@ -613,8 +617,10 @@ namespace DuelRoguelike.UI
                 $"{RunRules.MinMainDeck}~{RunRules.MaxMainDeck}장", main < RunRules.MinMainDeck);
             var extraZone = AddEditorSection(_editorDeckScroll, Pile.DeckExtra, "editor-extra", $"엑스트라 덱 {_editor.ExtraCount}장", $"최대 {RunRules.MaxExtraDeck}장", false);
             // 시작 사이드 덱은 스크롤 밖 아래에 고정해서 메인 덱을 내려 보지 않아도 늘 보이게 한다.
-            var sideZone = AddEditorSection(panel, Pile.DeckSide, "editor-side", $"시작 사이드 덱 {_editor.Side.Count}/{RunRules.StartingSideDeckMax}장",
-                "런 중에 덱과 바꾸거나 보충에 쓴다", false);
+            int sideLimit = _editor.SideLimit;
+            var sideZone = AddEditorSection(panel, Pile.DeckSide, "editor-side", $"시작 사이드 덱 {Math.Min(_editor.Side.Count, sideLimit)}/{sideLimit}장",
+                $"임시 칸의 카드는 런마다 1장에 골드 {RunRules.RunSideDeckSlotPrice}" +
+                (sideLimit < RunRules.PermanentSideDeckMax ? $" · 영구 칸은 골드 상점에서 {RunRules.PermanentSideDeckMax}장까지 늘린다" : ""), false);
             sideZone.style.flexShrink = 0;
             void ToDeck(Pile pile, uint code)
             {
@@ -663,6 +669,16 @@ namespace DuelRoguelike.UI
             var titleLabel = UiStyle.Label(title, 21, problem ? UiStyle.Bad : UiStyle.Text, bold: true);
             titleLabel.name = name + "-count";
             header.Add(titleLabel);
+            if (pile == Pile.DeckSide)
+            {
+                // 임시 칸에 든 장수 (영구 한도를 넘는 카드)
+                int temp = _editor.TempSideCount;
+                var tempLabel = UiStyle.Label($"임시 칸 {temp}/{RunRules.RunSideDeckExtraMax}장", 19, temp > 0 ? UiStyle.Gold : UiStyle.TextDim, bold: true);
+                tempLabel.name = "editor-side-temp-count";
+                tempLabel.style.marginLeft = 16;
+                tempLabel.style.marginBottom = 1;
+                header.Add(tempLabel);
+            }
             var noteLabel = Text(note, 15, UiStyle.TextDim);
             noteLabel.style.marginLeft = 10;
             noteLabel.style.marginBottom = 2;
@@ -672,20 +688,98 @@ namespace DuelRoguelike.UI
             var grid = Grid();
             grid.style.marginTop = 4;
             grid.style.minHeight = EditorCardWidth * 158f / 108f + 10;
-            var cards = EditorCards(pile);
-            if (cards.Count == 0)
-                grid.Add(Text("비어 있음. 컬렉션의 카드를 여기로 끌어다 놓으면 넣는다.", 17, UiStyle.TextDim, top: 4));
-            foreach (uint code in Sorted(cards))
+            if (pile == Pile.DeckSide)
+                FillEditorSideSlots(grid);
+            else
             {
-                uint c = code;
-                var slot = CardSlot(pile, c, CardFaceSize.Small, tag: _editor.Left(c) < 0 ? "부족" : null,
-                    onDoubleClick: () => EditorRemove(c, fromSide: pile == Pile.DeckSide), width: EditorCardWidth);
-                UiStyle.Margin(slot, 0);
-                grid.Add(slot);
+                var cards = EditorCards(pile);
+                if (cards.Count == 0)
+                    grid.Add(Text("비어 있음. 컬렉션의 카드를 여기로 끌어다 놓으면 넣는다.", 17, UiStyle.TextDim, top: 4));
+                foreach (uint code in Sorted(cards))
+                {
+                    uint c = code;
+                    var slot = CardSlot(pile, c, CardFaceSize.Small, tag: _editor.Left(c) < 0 ? "부족" : null,
+                        onDoubleClick: () => EditorRemove(c, fromSide: false), width: EditorCardWidth);
+                    UiStyle.Margin(slot, 0);
+                    grid.Add(slot);
+                }
             }
             zone.Add(grid);
             parent.Add(zone);
             return zone;
+        }
+
+        /// <summary>
+        /// 시작 사이드 덱의 칸: 영구 칸(가진 만큼), 구분선, 임시 칸 5개. 카드는 넣은 순서 그대로 앞 칸부터 놓는다 (정렬하지 않는다).
+        /// 한 줄(10칸)에 다 들어가지 않으면 임시 칸을 다음 줄로 내린다. 빈 칸은 테두리만 그린다.
+        /// </summary>
+        void FillEditorSideSlots(VisualElement grid)
+        {
+            float width = EditorCardWidth, height = EditorCardWidth * 158f / 108f;
+            var side = _editor.Side;
+            int limit = _editor.SideLimit, slots = Math.Max(_editor.SideCapacity, side.Count);
+            bool twoRows = _editor.SideCapacity > 10;
+            for (int i = 0; i < slots; i++)
+            {
+                bool temp = _editor.IsTempSideSlot(i);
+                if (i == limit)
+                {
+                    // 영구 칸과 임시 칸 사이: 한 줄이면 세로 선, 두 줄이면 줄 바꿈
+                    var divider = new VisualElement { name = "editor-side-divider", pickingMode = PickingMode.Ignore };
+                    divider.style.flexShrink = 0;
+                    if (twoRows)
+                        divider.style.width = Length.Percent(100);
+                    else
+                    {
+                        divider.style.width = 2;
+                        divider.style.height = height;
+                        divider.style.marginLeft = divider.style.marginRight = 8;
+                        divider.style.alignSelf = Align.Center;
+                        divider.style.backgroundColor = UiStyle.SlabTop;
+                    }
+                    grid.Add(divider);
+                }
+                if (i < side.Count)
+                {
+                    uint c = side[i];
+                    bool shortOwned = _editor.Left(c) < 0;
+                    var slot = CardSlot(Pile.DeckSide, c, CardFaceSize.Small, tag: shortOwned ? "부족" : temp ? "임시" : null,
+                        onDoubleClick: () => EditorRemove(c, fromSide: true), width: EditorCardWidth, tagColor: temp && !shortOwned ? UiStyle.Gold : (Color?)null);
+                    UiStyle.Margin(slot, 0);
+                    grid.Add(slot);
+                    continue;
+                }
+                // 빈 칸 (카드 칸과 같은 크기: 카드 + 여백 2 + 테두리 2)
+                var empty = new VisualElement { name = temp ? "editor-side-temp-empty" : "editor-side-empty", pickingMode = PickingMode.Ignore };
+                empty.style.width = width + 4;
+                empty.style.height = height + 4;
+                empty.style.flexShrink = 0;
+                UiStyle.Margin(empty, 2);
+                empty.style.alignItems = Align.Center;
+                empty.style.justifyContent = Justify.Center;
+                UiStyle.Radius(empty, 6);
+                // 선형 색 공간에서는 반투명한 금색이 밝게 보여서 시안(55%)보다 낮춘다
+                UiStyle.BorderColor(empty, temp ? UiStyle.Alpha(UiStyle.Gold, 0.3f) : UiStyle.Stone5, 2);
+                if (temp)
+                {
+                    var mark = UiStyle.Label("임시", 15, UiStyle.GoldDeep, bold: true);
+                    mark.pickingMode = PickingMode.Ignore;
+                    empty.Add(mark);
+                }
+                grid.Add(empty);
+            }
+        }
+
+        /// <summary>시작 사이드 덱 안에서 칸을 바꾼다: 임시 칸의 카드를 영구 칸으로(맨 앞), 영구 칸의 카드를 임시 칸으로(맨 뒤).</summary>
+        void EditorSideOrder(uint code, bool toFront)
+        {
+            if (!(toFront ? _editor.SideToFront(code) : _editor.SideToEnd(code)))
+                return;
+            SetEditorNotice(toFront ? $"{_text.CardName(code)} → 영구 칸 (영구 칸의 마지막 카드는 임시 칸으로 밀렸다)"
+                : $"{_text.CardName(code)} → 임시 칸 (임시 칸의 첫 카드는 영구 칸으로 들어왔다)", error: false);
+            _selectedPile = Pile.DeckSide;
+            _selectedCode = code;
+            ShowEditor();
         }
 
         // ---- 옮기기 ----
@@ -700,7 +794,7 @@ namespace DuelRoguelike.UI
                 ShowEditor();
                 return;
             }
-            string where = toSide ? "시작 사이드 덱" : _editor.IsExtraDeckCard(code) ? "엑스트라 덱" : "메인 덱";
+            string where = toSide ? _editor.TempSideCount > 0 ? "시작 사이드 덱의 임시 칸" : "시작 사이드 덱" : _editor.IsExtraDeckCard(code) ? "엑스트라 덱" : "메인 덱";
             SetEditorNotice($"{name} → {where}" + (_editor.Left(code) < 0 ? " (컬렉션보다 많음: 이대로는 런을 시작할 수 없음)" : ""), error: false);
             ShowEditor();
         }
@@ -715,7 +809,8 @@ namespace DuelRoguelike.UI
                 ShowEditor();
                 return;
             }
-            SetEditorNotice(toSide ? $"{name} → 시작 사이드 덱" : $"{name} → {(_editor.IsExtraDeckCard(code) ? "엑스트라" : "메인")} 덱", error: false);
+            SetEditorNotice(toSide ? $"{name} → 시작 사이드 덱{(_editor.TempSideCount > 0 ? "의 임시 칸" : "")}"
+                : $"{name} → {(_editor.IsExtraDeckCard(code) ? "엑스트라" : "메인")} 덱", error: false);
             _selectedPile = toSide ? Pile.DeckSide : _editor.IsExtraDeckCard(code) ? Pile.DeckExtra : Pile.DeckMain;
             _selectedCode = code;
             ShowEditor();
@@ -739,7 +834,7 @@ namespace DuelRoguelike.UI
                 hint.style.whiteSpace = WhiteSpace.Normal;
                 panel.Add(hint);
                 var rule = Text($"메인 덱 {RunRules.MinMainDeck}~{RunRules.MaxMainDeck}장, 엑스트라 덱 {RunRules.MaxExtraDeck}장 이하, " +
-                                $"시작 사이드 덱 {RunRules.StartingSideDeckMax}장 이하. 같은 카드명은 에라타 전·후 버전을 합쳐 덱과 시작 사이드 덱에 {RunRules.MaxCopies}장까지. " +
+                                $"시작 사이드 덱 {_editor.SideLimit}장과 임시 칸 {RunRules.RunSideDeckExtraMax}장. 같은 카드명은 에라타 전·후 버전을 합쳐 덱과 시작 사이드 덱에 {RunRules.MaxCopies}장까지. " +
                                 $"메인 덱이 {RunRules.MinMainDeck}장보다 적으면 저장할 수 없다.", 17, UiStyle.TextDim, top: 10);
                 rule.style.whiteSpace = WhiteSpace.Normal;
                 panel.Add(rule);
@@ -792,8 +887,15 @@ namespace DuelRoguelike.UI
                 bool side = pile == Pile.DeckSide;
                 AddAction("빼기", "editor-remove", null, () => EditorRemove(code, fromSide: side));
                 if (side)
+                {
                     AddAction(_editor.IsExtraDeckCard(code) ? "엑스트라 덱으로" : "메인 덱으로", "editor-to-deck", _editor.MoveReason(code, false),
                         () => EditorMove(code, toSide: false));
+                    // 영구 칸 ↔ 임시 칸 (임시 칸에 카드가 있을 때만 뜻이 있다)
+                    if (_editor.InTempSide(code))
+                        AddAction("영구 칸으로", "editor-side-front", null, () => EditorSideOrder(code, toFront: true));
+                    if (_editor.InPermanentSide(code) && _editor.TempSideCount > 0)
+                        AddAction("임시 칸으로", "editor-side-end", null, () => EditorSideOrder(code, toFront: false));
+                }
                 else
                     AddAction("시작 사이드 덱으로", "editor-to-side", _editor.MoveReason(code, true), () => EditorMove(code, toSide: true));
             }

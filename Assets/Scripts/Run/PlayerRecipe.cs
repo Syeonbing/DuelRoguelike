@@ -5,9 +5,14 @@
 // 저장 규칙 (사용자 결정 2026-11-10):
 // - 저장할 수 없음 (SaveProblems): 이름 없음, 카드 DB에 없는 카드, 메인 덱 40~60장이 아님, 엑스트라 덱 15장 초과,
 //   같은 카드명 4장 이상 (덱과 시작 사이드 덱을 합쳐, 카드 DB의 alias 기준: 에라타 전·후 버전도 합친다).
-// - 저장은 되지만 런을 시작할 수 없음 (StartOnlyProblems): 컬렉션보다 많은 장수, 시작 사이드 덱 한도(3장) 초과.
+// - 저장은 되지만 런을 시작할 수 없음 (StartOnlyProblems): 컬렉션보다 많은 장수, 시작 사이드 덱이 임시 칸까지 넘침.
 //   투입 코스트가 생기면 코스트 초과도 여기에 든다 (골드로 임시 완화할 수 있으므로).
 // 런을 시작할 때의 최종 확인은 RunState.CheckSetup이 한다 (같은 규칙).
+//
+// 시작 사이드 덱과 임시 칸 (골드 상점, 2026-11-24 사용자 승인):
+// - 시작 사이드 덱의 순서에는 뜻이 있다. 앞에서부터 영구 한도(GameSave.SideDeckLimit, 3~10장)까지가 영구 칸의 카드이고,
+//   그 뒤의 카드(최대 RunRules.RunSideDeckExtraMax장)는 임시 칸의 카드다.
+// - 임시 칸의 카드는 런을 시작할 때 1장에 골드 RunSideDeckSlotPrice를 내고 가져간다. 앞에서부터 산 장수만큼 가져가고, 나머지는 두고 간다.
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -28,8 +33,11 @@ namespace DuelRoguelike.Run
         /// <summary>메인·엑스트라 덱 카드 (장수만큼 반복). 엔진처럼 나누지 않는다: 카드 종류로 엑스트라 덱이 정해진다.</summary>
         public IReadOnlyList<uint> Deck { get; }
 
-        /// <summary>시작 사이드 덱 카드.</summary>
+        /// <summary>시작 사이드 덱 카드. 순서대로 영구 칸, 그 뒤가 임시 칸이다 (머리말).</summary>
         public IReadOnlyList<uint> Side { get; }
+
+        /// <summary>임시 칸에 든 카드 수: 시작 사이드 덱에서 영구 한도를 넘는 장수 (최대 RunRules.RunSideDeckExtraMax장까지만 친다).</summary>
+        public int TempSideCards(int sideLimit) => Math.Min(RunRules.RunSideDeckExtraMax, Math.Max(0, Side.Count - sideLimit));
 
         public PlayerRecipe(string id, string name, IEnumerable<uint> deck, IEnumerable<uint> side)
         {
@@ -45,9 +53,15 @@ namespace DuelRoguelike.Run
         public DeckRecipe ToDeckRecipe() =>
             new DeckRecipe(Id, Name, Deck.GroupBy(c => c).Select(g => (g.Key, g.Count())).ToList());
 
-        /// <summary>이 레시피로 런을 시작하는 설정.</summary>
-        public RunSetup ToSetup(ulong seed, IReadOnlyList<DeckRecipe> opponents) =>
-            new RunSetup { Seed = seed, StartDeck = ToDeckRecipe(), SideDeck = Side.ToList(), Opponents = opponents };
+        /// <summary>
+        /// 이 레시피로 런을 시작하는 설정. sideLimit는 영구 한도, runSideSlots는 이번 런에 산 임시 칸 수다.
+        /// 시작 사이드 덱은 앞에서부터 (sideLimit + runSideSlots)장만 가져간다 (사지 않은 임시 칸의 카드는 두고 간다).
+        /// </summary>
+        public RunSetup ToSetup(ulong seed, IReadOnlyList<DeckRecipe> opponents, int sideLimit = RunRules.StartingSideDeckMax, int runSideSlots = 0)
+        {
+            int limit = sideLimit + runSideSlots;
+            return new RunSetup { Seed = seed, StartDeck = ToDeckRecipe(), SideDeck = Side.Take(limit).ToList(), SideDeckLimit = limit, Opponents = opponents };
+        }
 
         /// <summary>스타터 덱 → 같은 Id·이름의 레시피 (사이드 덱은 비어 있음).</summary>
         public static PlayerRecipe FromStarter(DeckRecipe starter, IEnumerable<uint> side = null) =>
@@ -96,22 +110,29 @@ namespace DuelRoguelike.Run
             return problems;
         }
 
-        /// <summary>저장은 되지만 런을 시작할 수 없게 하는 문제: 시작 사이드 덱 한도, 컬렉션 장수.</summary>
-        public static List<string> StartOnlyProblems(PlayerRecipe recipe, CardDatabase database, CardCollection collection)
+        /// <summary>
+        /// 저장은 되지만 런을 시작할 수 없게 하는 문제: 시작 사이드 덱이 임시 칸까지 넘침, 컬렉션 장수.
+        /// sideLimit는 영구 한도 (GameSave.SideDeckLimit). 영구 한도를 넘는 카드는 임시 칸의 카드라 시작을 막지 않는다
+        /// (골드를 내고 가져가거나 두고 간다). 컬렉션 장수는 임시 칸의 카드까지 센다.
+        /// </summary>
+        public static List<string> StartOnlyProblems(PlayerRecipe recipe, CardDatabase database, CardCollection collection,
+            int sideLimit = RunRules.StartingSideDeckMax)
         {
             var problems = new List<string>();
-            if (recipe.Side.Count > RunRules.StartingSideDeckMax)
-                problems.Add($"사이드 덱 {recipe.Side.Count}장 ({RunRules.StartingSideDeckMax}장 이하여야 함)");
+            int capacity = sideLimit + RunRules.RunSideDeckExtraMax;
+            if (recipe.Side.Count > capacity)
+                problems.Add($"사이드 덱 {recipe.Side.Count}장 (임시 칸까지 {capacity}장 이하여야 함)");
             if (collection != null)
                 problems.AddRange(collection.CheckCards(recipe.Deck.Concat(recipe.Side), database));
             return problems;
         }
 
-        /// <summary>이 레시피로 런을 시작할 수 없게 하는 문제 전부 (저장 규칙 + 시작 규칙).</summary>
-        public static List<string> StartProblems(PlayerRecipe recipe, CardDatabase database, CardCollection collection)
+        /// <summary>이 레시피로 런을 시작할 수 없게 하는 문제 전부 (저장 규칙 + 시작 규칙). sideLimit는 영구 한도.</summary>
+        public static List<string> StartProblems(PlayerRecipe recipe, CardDatabase database, CardCollection collection,
+            int sideLimit = RunRules.StartingSideDeckMax)
         {
             var problems = SaveProblems(recipe, database);
-            problems.AddRange(StartOnlyProblems(recipe, database, collection));
+            problems.AddRange(StartOnlyProblems(recipe, database, collection, sideLimit));
             return problems;
         }
     }

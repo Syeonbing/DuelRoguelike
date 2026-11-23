@@ -87,9 +87,9 @@ namespace DuelRoguelike.UI
         }
 
         /// <summary>카드 고르기 창의 카드 한 장. confirm = 두 번 누르거나 결정 키를 눌렀을 때 할 일.</summary>
-        VisualElement PickSlot(Pile pile, uint code, Action confirm, int count = 0)
+        VisualElement PickSlot(Pile pile, uint code, Action confirm, int count = 0, string tag = null)
         {
-            var slot = CardSlot(pile, code, CardFaceSize.Small, count: count, onDoubleClick: confirm, draggable: false, width: PickCardWidth);
+            var slot = CardSlot(pile, code, CardFaceSize.Small, count: count, tag: tag, onDoubleClick: confirm, draggable: false, width: PickCardWidth);
             slot.focusable = false; // 키보드는 화면이 직접 읽는다
             UiStyle.Margin(slot, 2);
             _pickSlots.Add((pile, code, slot, confirm));

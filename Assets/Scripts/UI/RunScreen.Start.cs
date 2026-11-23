@@ -1,9 +1,11 @@
 // 런 화면: 처음 화면과 레시피 창(새 런, 덱 편집). docs/UI.md "나머지 창 > 처음 화면, 새 런". RunScreen.cs의 머리말 참고.
-// - 처음 화면: 탑 장면 위에 제목, 오른쪽 아래 명령 메뉴(이어하기, 새 런, 덱 편집, 이벤트 도감, 끝내기),
-//   왼쪽 아래 판(이어 할 런, 컬렉션, 골드).
+// - 처음 화면: 탑 장면 위에 제목, 오른쪽 아래 명령 메뉴(이어하기, 새 런, 덱 편집, 골드 상점, 이벤트 도감, 끝내기),
+//   왼쪽 아래 판(이어 할 런, 컬렉션, 골드). 골드 상점은 RunScreen.GoldShop.cs.
 // - 레시피 창(recipe-window): 처음 화면 위에 뜨는 큰 돌판. 왼쪽 레시피 목록(recipe-<Id>), 가운데 고른 레시피의 카드(탭),
 //   오른쪽 상세 카드(start-card-detail)·시드·시작. "새 런"으로 열면 금색 버튼이 "이 덱으로 시작"이고,
 //   "덱 편집"으로 열면 "이 레시피를 편집"이다.
+// - 사이드 덱 임시 확장(run-side-slots, 새 런일 때만): 레시피의 시작 사이드 덱에서 영구 한도를 넘는 카드가 임시 칸의 카드다.
+//   이번 런에 몇 장 살지 좌우 키나 − + 버튼으로 정한다 (1장에 골드 8). 산 만큼 앞에서부터 가져가고 나머지는 두고 간다.
 // 레시피 고치기는 덱 편집 화면(RunScreen.Deck.cs)에서 한다. 런 시작 확인은 RecipeRules·RunState.CheckSetup(Run 어셈블리)이 한다.
 using System;
 using System.Collections.Generic;
@@ -25,11 +27,20 @@ namespace DuelRoguelike.UI
         }
 
         const float StartCardWidth = 92, StartDetailHeight = 540;
+        /// <summary>사이드 덱 임시 확장 칸이 보일 때 상세 카드를 이만큼 줄인다 (오른쪽 열에 그 칸이 들어갈 자리).</summary>
+        const float RunSideBlockHeight = 96;
         static readonly Color TitleInk = UiStyle.Hex(0x1b140b);
 
         /// <summary>레시피 창에서 고른 레시피 Id (없어졌으면 첫 레시피).</summary>
         string _startRecipeId;
         string _seedText;
+        /// <summary>
+        /// 새 런 창에서 이번 런에 살 사이드 덱 임시 칸 수. -1이면 아직 정하지 않았다 (살 수 있는 만큼 다 사는 것으로 시작한다).
+        /// 레시피를 바꾸거나 창을 새로 열면 -1로 되돌린다.
+        /// </summary>
+        int _runSideSlots = -1;
+        /// <summary>레시피 창의 상세 카드 높이 (임시 확장 칸이 보이면 그만큼 줄어든다).</summary>
+        float _startDetailHeight = StartDetailHeight;
         ScrollView _recipeScroll;
         Vector2 _recipeScrollOffset;
         bool _confirmAbandon;
@@ -169,6 +180,7 @@ namespace DuelRoguelike.UI
                 menu.Add("continue-run", "이어하기", ContinueRun, $"{run.Floor}층 · 듀얼 {run.DuelsPlayed}판");
             menu.Add("title-new-run", "새 런", () => OpenRecipes(RecipeWindow.NewRun));
             menu.Add("title-edit", "덱 편집", () => OpenRecipes(RecipeWindow.Edit), $"레시피 {_save.Recipes.Count}개");
+            menu.Add("open-gold-shop", "골드 상점", OpenGoldShop, $"골드 {_save.Gold}", subName: "title-gold");
             menu.Add("open-codex", "이벤트 도감", OpenCodex, $"{_save.Codex.SeenCount} / {TowerEventList.All.Count}");
             menu.Add("open-settings", "설정", OpenSettings);
             menu.Add("title-quit", "끝내기", () => Application.Quit());
@@ -235,6 +247,27 @@ namespace DuelRoguelike.UI
         {
             _recipeWindow = mode;
             _confirmAbandon = false;
+            _runSideSlots = -1;
+            OpenRecipeWindow();
+        }
+
+        /// <summary>새 런 창의 지금 레시피로 이번 런에 살 임시 칸 수: 정한 값을 살 수 있는 범위 안으로 맞춘 것 (정하지 않았으면 살 수 있는 만큼).</summary>
+        int RunSideSlots(PlayerRecipe recipe)
+        {
+            int affordable = _save.RunSideSlotsAffordable(recipe);
+            return _runSideSlots < 0 ? affordable : Mathf.Clamp(_runSideSlots, 0, affordable);
+        }
+
+        /// <summary>새 런 창: 이번 런에 살 임시 칸 수를 delta만큼 바꾼다 (좌우 키, − + 버튼).</summary>
+        void ChangeRunSideSlots(int delta)
+        {
+            var recipe = StartRecipe;
+            if (_recipeWindow != RecipeWindow.NewRun || recipe == null || _save.RunSideSlotsMax(recipe) == 0)
+                return;
+            int now = RunSideSlots(recipe), next = Mathf.Clamp(now + delta, 0, _save.RunSideSlotsAffordable(recipe));
+            if (next == now)
+                return;
+            _runSideSlots = next;
             OpenRecipeWindow();
         }
 
@@ -268,7 +301,7 @@ namespace DuelRoguelike.UI
             head.style.alignItems = Align.FlexEnd;
             head.style.flexShrink = 0;
             head.Add(WindowTitle(newRun ? "새 런" : "덱 레시피"));
-            var problems = recipe == null ? new List<string>() : RecipeRules.StartProblems(recipe, _data.Database, _collection).ToList();
+            var problems = recipe == null ? new List<string>() : RecipeRules.StartProblems(recipe, _data.Database, _collection, _save.SideDeckLimit).ToList();
             var status = Text(recipe == null ? "덱 레시피가 없다. \"빈 새 레시피\"로 컬렉션에서 덱을 짠다."
                 : problems.Count == 0 ? "이 레시피로 런을 시작할 수 있다." : "런을 시작할 수 없다: " + string.Join(" / ", problems),
                 19, recipe != null && problems.Count == 0 ? UiStyle.Good : UiStyle.Bad);
@@ -288,9 +321,13 @@ namespace DuelRoguelike.UI
             body.Add(RecipeCardsColumn(recipe));
             body.Add(RecipeSideColumn(recipe, problems.Count == 0));
             panel.Add(body);
-            panel.Add(WindowFooter(newRun
-                ? Hints(("↑", "W", null), ("↓", "S", "레시피"), ("Q", "Q", null), ("E", "E", "탭"), ("Z", "J", "시작"), ("X", "K", "뒤로"))
-                : Hints(("↑", "W", null), ("↓", "S", "레시피"), ("Q", "Q", null), ("E", "E", "탭"), ("Z", "J", "편집"), ("X", "K", "뒤로"))));
+            bool sideSlots = newRun && recipe != null && _save.RunSideSlotsMax(recipe) > 0;
+            panel.Add(WindowFooter(!newRun
+                ? Hints(("↑", "W", null), ("↓", "S", "레시피"), ("Q", "Q", null), ("E", "E", "탭"), ("Z", "J", "편집"), ("X", "K", "뒤로"))
+                : sideSlots
+                    ? Hints(("↑", "W", null), ("↓", "S", "레시피"), ("Q", "Q", null), ("E", "E", "탭"), ("←", "A", null), ("→", "D", "임시 확장"),
+                        ("Z", "J", "시작"), ("X", "K", "뒤로"))
+                    : Hints(("↑", "W", null), ("↓", "S", "레시피"), ("Q", "Q", null), ("E", "E", "탭"), ("Z", "J", "시작"), ("X", "K", "뒤로"))));
             ApplyKeyCaps();
 
             _renderDetail = RenderStartDetail;
@@ -314,7 +351,7 @@ namespace DuelRoguelike.UI
                 var r = _save.Recipes[i];
                 if (r == recipe)
                     chosenIndex = i;
-                bool startable = RecipeRules.StartProblems(r, _data.Database, _collection).Count == 0;
+                bool startable = RecipeRules.StartProblems(r, _data.Database, _collection, _save.SideDeckLimit).Count == 0;
                 var row = menu.AddRow("recipe-" + r.Id, () => ChooseRecipe(r), height: 0);
                 var texts = UiStyle.Box();
                 texts.pickingMode = PickingMode.Ignore;
@@ -401,9 +438,15 @@ namespace DuelRoguelike.UI
                 return column;
 
             var cards = RecipeCards(recipe, _startTab);
+            bool sideTab = _startTab == Pile.DeckSide;
+            int sideLimit = _save.SideDeckLimit, tempCards = _save.RunSideSlotsMax(recipe);
+            string sideNote = tempCards == 0
+                ? $"시작 사이드 덱 {sideLimit}장까지. 런을 시작할 때 사이드 덱에 들어간다."
+                : $"시작 사이드 덱 {sideLimit}장까지. 그 뒤의 {tempCards}장은 임시 칸의 카드이고, 런마다 1장에 골드 {RunRules.RunSideDeckSlotPrice}로 가져간다.";
             var info = Text(_startTab == Pile.DeckMain ? KindCounts(cards)
                 : _startTab == Pile.DeckExtra ? $"엑스트라 덱 {RunRules.MaxExtraDeck}장 이하"
-                : $"시작 사이드 덱 {RunRules.StartingSideDeckMax}장 이하. 런을 시작할 때 사이드 덱에 들어간다.", 17, UiStyle.TextDim, top: 8);
+                : sideNote, 17, UiStyle.TextDim, top: 8);
+            info.name = "start-tab-note";
             column.Add(info);
             var scroll = new ScrollView(ScrollViewMode.Vertical);
             scroll.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
@@ -413,10 +456,23 @@ namespace DuelRoguelike.UI
             var grid = Grid(scroll.contentContainer);
             if (cards.Count == 0)
                 grid.Add(Text("비어 있음", 19, UiStyle.TextDim));
-            foreach (uint code in Sorted(cards))
+            // 시작 사이드 덱은 순서가 칸이라 정렬하지 않는다: 앞에서부터 영구 칸, 그 뒤가 임시 칸.
+            var ordered = sideTab ? cards : Sorted(cards).ToList();
+            int bought = _recipeWindow == RecipeWindow.NewRun ? RunSideSlots(recipe) : tempCards;
+            for (int i = 0; i < ordered.Count; i++)
             {
-                var slot = CardSlot(_startTab, code, CardFaceSize.Small, tag: _collection.Count(code) < RecipeUsed(recipe, code) ? "부족" : null,
-                    draggable: false, width: StartCardWidth);
+                uint code = ordered[i];
+                string tag = _collection.Count(code) < RecipeUsed(recipe, code) ? "부족" : null;
+                Color? tagColor = null;
+                bool left = false;
+                if (sideTab && i >= sideLimit && tag == null)
+                {
+                    // 임시 칸의 카드: 이번 런에 산 만큼은 "임시", 사지 않은 것은 "두고 감"
+                    left = i >= sideLimit + bought;
+                    tag = left ? "두고 감" : "임시";
+                    tagColor = left ? UiStyle.Bad : UiStyle.Gold;
+                }
+                var slot = CardSlot(_startTab, code, CardFaceSize.Small, tag: tag, dim: left, draggable: false, width: StartCardWidth, tagColor: tagColor);
                 slot.focusable = false;
                 UiStyle.Margin(slot, 0);
                 grid.Add(slot);
@@ -425,16 +481,71 @@ namespace DuelRoguelike.UI
             return column;
         }
 
+        /// <summary>
+        /// 새 런 창 오른쪽의 사이드 덱 임시 확장 칸 (run-side-slots): 이번 런에 살 임시 칸 수를 − + 버튼이나 좌우 키로 정한다.
+        /// 임시 칸에 든 카드 수와 가진 골드 안에서만 고를 수 있다. 값은 런을 시작할 때 낸다.
+        /// </summary>
+        VisualElement RunSideSlotsBlock(PlayerRecipe recipe)
+        {
+            int max = _save.RunSideSlotsMax(recipe), affordable = _save.RunSideSlotsAffordable(recipe), slots = RunSideSlots(recipe);
+            var block = UiStyle.Box("run-side-slots");
+            block.style.marginTop = 12;
+            block.style.paddingTop = 8;
+            block.style.borderTopWidth = 2;
+            block.style.borderTopColor = UiStyle.SlabTop;
+            block.style.flexShrink = 0;
+            var head = Row();
+            head.Add(Text("사이드 덱 임시 확장", 17, UiStyle.TextDim));
+            // 골드가 모자라 임시 칸의 카드를 다 가져갈 수 없으면 가진 골드를 내림 색으로 쓴다
+            var have = Text($"가진 골드 {_save.Gold}", 17, affordable < max ? UiStyle.Bad : UiStyle.TextDim);
+            have.name = "run-side-gold";
+            have.style.marginLeft = StyleKeyword.Auto;
+            head.Add(have);
+            block.Add(head);
+
+            var row = Row();
+            row.style.alignItems = Align.Center;
+            row.style.marginTop = 6;
+            Button Step(string name, string text, int delta, bool enabled)
+            {
+                var button = UiStyle.StoneButton(text, () => ChangeRunSideSlots(delta), small: true);
+                button.name = name;
+                button.style.width = 52;
+                button.style.fontSize = 24;
+                button.style.paddingLeft = button.style.paddingRight = 0;
+                button.SetEnabled(enabled);
+                return button;
+            }
+            row.Add(Step("run-side-less", "−", -1, slots > 0));
+            var count = UiStyle.Label($"{slots}장", 27);
+            UiStyle.Black(count);
+            count.name = "run-side-count";
+            count.style.width = 76;
+            count.style.unityTextAlign = TextAnchor.MiddleCenter;
+            row.Add(count);
+            row.Add(Step("run-side-more", "+", 1, slots < affordable));
+            var price = UiStyle.Label($"골드 {RunRules.RunSideDeckSlotsPrice(slots)}", 24, slots > 0 ? UiStyle.Gold : UiStyle.TextDim);
+            UiStyle.Black(price);
+            price.name = "run-side-price";
+            price.style.marginLeft = StyleKeyword.Auto;
+            price.style.whiteSpace = WhiteSpace.NoWrap;
+            row.Add(price);
+            block.Add(row);
+            return block;
+        }
+
         /// <summary>오른쪽: 상세 카드, 시드, 시작(또는 편집) 버튼.</summary>
         VisualElement RecipeSideColumn(PlayerRecipe recipe, bool startable)
         {
             bool newRun = _recipeWindow == RecipeWindow.NewRun;
+            bool sideSlots = newRun && recipe != null && _save.RunSideSlotsMax(recipe) > 0;
+            _startDetailHeight = StartDetailHeight - (sideSlots ? RunSideBlockHeight : 0);
             var column = UiStyle.Box();
             column.style.width = 324;
             column.style.marginLeft = StyleKeyword.Auto;
             column.style.flexShrink = 0;
             var detail = UiStyle.Box("start-card-detail");
-            detail.style.height = StartDetailHeight + 34;
+            detail.style.height = _startDetailHeight + 34;
             detail.style.flexShrink = 0;
             column.Add(detail);
             _detail = detail;
@@ -479,6 +590,8 @@ namespace DuelRoguelike.UI
             reroll.style.marginLeft = 8;
             seedRow.Add(reroll);
             column.Add(seedRow);
+            if (sideSlots)
+                column.Add(RunSideSlotsBlock(recipe));
             column.Add(error);
 
             if (_confirmAbandon && _save.Run != null)
@@ -556,6 +669,12 @@ namespace DuelRoguelike.UI
                     OpenRecipeWindow();
                     break;
                 }
+                case Nav.Left:
+                    ChangeRunSideSlots(-1); // 새 런: 사이드 덱 임시 확장
+                    break;
+                case Nav.Right:
+                    ChangeRunSideSlots(1);
+                    break;
                 case Nav.Confirm:
                     Press(_recipeGo);
                     break;
@@ -601,13 +720,14 @@ namespace DuelRoguelike.UI
                 var hint = Text("카드에 마우스를 올리면 여기에 크게 보인다.", 19, UiStyle.TextDim);
                 hint.style.whiteSpace = WhiteSpace.Normal;
                 panel.Add(hint);
-                var rule = Text($"메인 덱 {RunRules.MinMainDeck}~{RunRules.MaxMainDeck}장, 엑스트라 덱 {RunRules.MaxExtraDeck}장 이하, 시작 사이드 덱 {RunRules.StartingSideDeckMax}장 이하. " +
+                var rule = Text($"메인 덱 {RunRules.MinMainDeck}~{RunRules.MaxMainDeck}장, 엑스트라 덱 {RunRules.MaxExtraDeck}장 이하, " +
+                                $"시작 사이드 덱 {_save.SideDeckLimit}장과 임시 칸 {RunRules.RunSideDeckExtraMax}장. " +
                                 $"같은 카드명은 덱과 시작 사이드 덱을 합쳐 {RunRules.MaxCopies}장까지.", 17, UiStyle.TextDim, top: 10);
                 rule.style.whiteSpace = WhiteSpace.Normal;
                 panel.Add(rule);
                 return;
             }
-            panel.Add(_faces.BuildDetail(code, 324, StartDetailHeight));
+            panel.Add(_faces.BuildDetail(code, 324, _startDetailHeight));
             var recipe = StartRecipe;
             int used = recipe == null ? 0 : RecipeUsed(recipe, code);
             panel.Add(Text($"컬렉션 {_collection.Count(code)}장 · 이 레시피 {used}장", 17,
@@ -616,6 +736,8 @@ namespace DuelRoguelike.UI
 
         void ChooseRecipe(PlayerRecipe recipe)
         {
+            if (_startRecipeId != recipe.Id)
+                _runSideSlots = -1; // 레시피가 바뀌면 임시 칸은 살 수 있는 만큼으로 되돌린다
             _startRecipeId = recipe.Id;
             _selectedCode = 0;
             _confirmAbandon = false;
@@ -646,7 +768,12 @@ namespace DuelRoguelike.UI
                 ShowError(error, "덱 레시피가 없다. 먼저 새 레시피를 만든다.");
                 return;
             }
-            var problems = RecipeRules.StartProblems(recipe, _data.Database, _collection);
+            var problems = RecipeRules.StartProblems(recipe, _data.Database, _collection, _save.SideDeckLimit);
+            // 이번 런에 살 임시 칸: 진행 중인 런을 포기하기 전의 골드로 정한 값 그대로 (포기하면 정산 골드가 더해질 뿐 줄지 않는다)
+            int sideSlots = RunSideSlots(recipe);
+            string slotsProblem = _save.RunSideSlotsProblem(recipe, sideSlots);
+            if (slotsProblem != null)
+                problems.Add(slotsProblem);
             if (problems.Count > 0)
             {
                 ShowError(error, "런을 시작할 수 없다: " + string.Join(" / ", problems) + " · 덱 편집에서 고친다");
@@ -658,12 +785,14 @@ namespace DuelRoguelike.UI
                 Debug.Log($"[런] 포기: {old.StartDeckName}, {old.Floor}층, 듀얼 {old.DuelsPlayed}판, 시드 {old.Seed}");
                 _save.AbandonRun();
             }
-            _run = _save.StartRun(recipe, seed, StarterDecks.All, _data.Database, _rarities);
+            _run = _save.StartRun(recipe, seed, StarterDecks.All, _data.Database, _rarities, sideSlots);
             _forfeitNotice = null;
             _recipeWindow = RecipeWindow.Closed;
+            _runSideSlots = -1;
             Persist();
             ResetRunView();
-            Debug.Log($"[런] 시작: {recipe.Name} ({recipe.Id}), 시드 {seed}, 시작 사이드 덱 {recipe.Side.Count}장");
+            Debug.Log($"[런] 시작: {recipe.Name} ({recipe.Id}), 시드 {seed}, 시작 사이드 덱 {_run.SideDeck.Count}장" +
+                      (sideSlots > 0 ? $" (임시 칸 {sideSlots}장, 골드 {RunRules.RunSideDeckSlotsPrice(sideSlots)}, 남은 골드 {_save.Gold})" : ""));
             ShowHub();
         }
 

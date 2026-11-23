@@ -3,6 +3,8 @@
 // - 런 시작 (RunScreen.Start.cs): 진행 중인 런이 있으면 "이어하기". 새 런은 덱 레시피(메인·엑스트라·시작 사이드 덱)와 시드를 고른다.
 //   진행 중인 런이 있을 때 새 런을 시작하려면 한 번 더 눌러 포기를 확인한다.
 // - 덱 편집 (RunScreen.Deck.cs): 런 시작 화면에서 레시피를 열어 컬렉션의 카드로 고치고 저장한다 (규칙은 RecipeEditor·RecipeRules).
+// - 골드 상점 (RunScreen.GoldShop.cs): 처음 화면의 메뉴에서 연다. 골드로 시작 사이드 덱의 영구 칸을 늘리고, 컬렉션의 3장 넘는 카드를 분해해 골드를 얻는다.
+//   런마다 사는 사이드 덱 임시 칸은 새 런 창(RunScreen.Start.cs)에서 정한다. 값과 규칙은 GameSave·RunRules에 있다.
 // - 층 사이 화면 (RunScreen.Hub.cs, docs/UI.md "탑 (허브)"): 화면 전체가 탑 장면(TowerScene.cs)이고 그 위에 위 막대(층·LP·칩·골드·연승·봉인),
 //   높이 자, 층 팻말, 직전 듀얼 판, 명령 메뉴를 얹는다. 메뉴의 "N층으로 올라간다"를 고르면 올라가는 연출 뒤에 그 층의 일이 시작된다.
 //   전투 층에서는 듀얼 창("듀얼 시작", "덱 조정")이 뜨고, "듀얼 시작"을 누르면 코인 토스 뒤 RunState.BeginDuel로 상대·덱·LP·시드를 정해
@@ -63,6 +65,8 @@ namespace DuelRoguelike.UI
             Shop,
             /// <summary>보스 보상으로 봉인을 풀 카드 후보</summary>
             Unseal,
+            /// <summary>골드 상점의 분해 창: 컬렉션에서 3장을 넘게 가진 카드</summary>
+            Disassemble,
         }
 
         static readonly Color Positive = UiStyle.Hex(0x5ee07a);
@@ -617,15 +621,16 @@ namespace DuelRoguelike.UI
         /// 두 번 누르면 onDoubleClick, 끌어다 놓으면 놓은 곳(AddDropZone)의 동작.
         /// </summary>
         /// <param name="width">0보다 크면 카드 폭을 직접 정한다 (덱 창의 1.1배 카드). 그때 size는 쓰지 않는다.</param>
+        /// <param name="tagColor">tag의 색 (없으면 오름 색).</param>
         VisualElement CardSlot(Pile pile, uint code, CardFaceSize size, int count = 0, string tag = null, bool dim = false,
-            Action onDoubleClick = null, bool draggable = true, float width = 0)
+            Action onDoubleClick = null, bool draggable = true, float width = 0, Color? tagColor = null)
         {
             var slot = new VisualElement { name = SlotName(pile, code), focusable = true };
             UiStyle.Padding(slot, 2);
             UiStyle.Margin(slot, 3);
             UiStyle.Radius(slot, 6);
             UiStyle.BorderColor(slot, Color.clear, 2);
-            var face = width > 0 ? _faces.Build(code, width, count, tag) : _faces.Build(code, size, count, tag);
+            var face = width > 0 ? _faces.Build(code, width, count, tag, tagColor: tagColor) : _faces.Build(code, size, count, tag, tagColor: tagColor);
             if (dim)
                 face.style.opacity = 0.4f;
             face.pickingMode = PickingMode.Ignore;
