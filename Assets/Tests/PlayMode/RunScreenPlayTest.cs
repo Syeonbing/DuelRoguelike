@@ -6,12 +6,13 @@
 // - 듀얼을 시작하면 듀얼 중 상태로 저장되고, 듀얼 도중에 씬을 다시 부르면 그 듀얼이 패배로 처리되며 알림이 한 번 나오는지
 // - 런이 끝나면 진행 중인 런이 없어지고, 마지막으로 시작한 레시피(시작 사이드 덱 포함)가 다음 런에 그대로 골라져 있는지
 // - 레시피를 저장·지우면 저장 파일에 바로 쓰이는지, 층 사이 화면의 "지금 덱을 레시피로"가 새 레시피를 만드는지
-// 덱 편집: 시작 사이드 덱 3장(꽉 참)까지 넣기·빼기(버튼·두 번 누르기·끌어다 놓기), 덱 ↔ 사이드 덱 옮기기, 같은 카드명 4장째 막기,
+// 덱 편집: 시작 사이드 덱의 영구 칸 3장까지 넣기·빼기(버튼·두 번 누르기·끌어다 놓기), 그 뒤의 카드는 임시 칸, 덱 ↔ 사이드 덱 옮기기, 같은 카드명 4장째 막기,
 // 컬렉션보다 많이 넣으면 저장은 되고 런 시작은 막히는지, 메인 덱 39장은 저장할 수 없는지, 저장하지 않고 나가기 확인, 복사·지우기·빈 새 레시피.
 // - 진행 중인 런이 있을 때 새 런: 한 번 더 눌러야 포기하고, 취소할 수 있는지
 // 덱 창의 교환(사이드 덱 → 덱, 덱 → 사이드 덱)도 버튼·두 번 누르기·끌어다 놓기로 한 번씩 해 본다 (포인터 이벤트를 직접 보낸다).
 // 허브: 첫 층은 올라가는 연출을 끝까지 보고(그 밖에는 눌러서 건너뛴다), 듀얼 창 → 덱 조정 → 듀얼 창, 가상 키보드로 메뉴·덱 창을 다뤄 본다.
-// 런 로그 창 열고 닫기, 덱 편집 화면의 거르기, 꽉 찬 시작 사이드 덱(3장)에 더 넣을 때의 알림도 본다.
+// 런 로그 창 열고 닫기, 덱 편집 화면의 거르기, 영구 칸(3장)이 찬 시작 사이드 덱에 더 넣으면 임시 칸에 들어가는 것도 본다.
+// 골드 상점(사이드 덱 확장, 임시 칸 사기, 컬렉션 분해)은 짧은 전용 시험 GoldShopPlayTest가 본다.
 // 승리 보상 창은 자리 3개를 확인하고, 누르고 받기·두 번 누르기를 번갈아 하며, 빈 자리(골드)가 나오면 한 번 골드를 고른다.
 // 보충 고르기를 한 번 이상 거칠 때까지 런을 더 한다. 비전투 층(칩교환소·휴식·이벤트)은 다음 층으로 지나가고, 보스 보상 창은 첫 카드를 고른다.
 // 탑·칩교환소 시험(TowerAndChipExchange): 저장 파일을 고쳐 5층 칩교환소로 가서 교체·봉인 해제를 사고, 이벤트 창, 휴식 창(LP 3000 → 8000) → 보스, 보스 보상 창을 본다.
@@ -45,7 +46,7 @@ namespace DuelRoguelike.Tests
         const string RunUi = "RunUI";
         const string DuelUi = "DuelUI";
         const string SaveDirVariable = "DUELROGUELIKE_SAVE_DIR";
-        /// <summary>시작 사이드 덱 최대 장수 (RunRules.StartingSideDeckMax). 이만큼 골라 꽉 채운다.</summary>
+        /// <summary>시작 사이드 덱의 영구 칸 수 (새 게임: RunRules.StartingSideDeckMax). 이만큼 골라 영구 칸을 채운다.</summary>
         const int SidePicks = 3;
         /// <summary>승리 보상 창의 자리 수 (RunRules.RewardChoices).</summary>
         const int RewardChoices = 3;
@@ -173,17 +174,29 @@ namespace DuelRoguelike.Tests
             yield return null;
             Assert.AreEqual(mainBefore, EditorMainCount(), "메인 덱 카드를 시작 사이드 덱으로 끌어다 놓기");
             Assert.AreEqual(SideCountText(SidePicks), Find<Label>(RunUi, "editor-side-count").text, "시작 사이드 덱으로 되돌린 뒤 장수");
-            // 꽉 찬 시작 사이드 덱에 하나 더 끌어다 놓기: 들어가지 않고 까닭 알림
+            // 영구 칸(3장)이 찬 뒤 하나 더 끌어다 놓기: 임시 칸에 들어간다 (런을 시작할 때 골드로 가져가는 칸). 두 번 눌러 다시 뺀다.
+            // 임시 칸까지 다 차는 것(영구 칸 + 5장)과 골드로 사는 것은 골드 상점 시험(GoldShopPlayTest)과 규칙 시험이 본다.
+            Assert.AreEqual("임시 칸 0/5장", Find<Label>(RunUi, "editor-side-temp-count").text, "임시 칸이 비어 있지 않다");
             string extra = Named("pick-").Select(e => e.name.Substring("pick-".Length)).FirstOrDefault(c => !picked.Contains(c));
             Assert.IsNotNull(extra, "컬렉션 목록에 끌어다 놓을 카드가 없다");
             Drag(Find<VisualElement>(RunUi, "pick-" + extra), Find<VisualElement>(RunUi, "editor-side"));
             yield return null;
-            Assert.AreEqual(SideCountText(SidePicks), Find<Label>(RunUi, "editor-side-count").text, "꽉 찬 시작 사이드 덱에 더 들어갔다");
-            Assert.IsNull(Find<VisualElement>(RunUi, "deck-side-" + extra), "꽉 찬 시작 사이드 덱에 끌어다 놓은 카드가 들어갔다");
-            string full = EditorNotice();
-            StringAssert.StartsWith("넣을 수 없습니다", full, "꽉 찬 시작 사이드 덱에 넣을 때 까닭 알림이 없다");
-            StringAssert.Contains($"{SidePicks}장까지", full, "꽉 찬 시작 사이드 덱 알림에 장수 제한이 없다");
-            Debug.Log($"[런 화면 시험] 꽉 찬 시작 사이드 덱: {full}");
+            var temp = Find<VisualElement>(RunUi, "deck-side-" + extra);
+            if (temp != null)
+            {
+                Assert.AreEqual(SideCountText(SidePicks), Find<Label>(RunUi, "editor-side-count").text, "임시 칸에 넣었는데 영구 칸의 장수가 바뀌었다");
+                Assert.AreEqual("임시 칸 1/5장", Find<Label>(RunUi, "editor-side-temp-count").text, "임시 칸에 넣은 장수");
+                Assert.IsTrue(temp.Query<Label>().ToList().Any(l => l.text == "임시"), "임시 칸의 카드에 임시 표시가 없다");
+                StringAssert.Contains("임시 칸", EditorNotice(), "임시 칸에 넣었다는 알림이 없다");
+                Debug.Log($"[런 화면 시험] 영구 칸이 찬 뒤 넣은 카드: {EditorNotice()}");
+                DoubleClick(temp);
+                yield return null;
+            }
+            else
+                StringAssert.Contains("3장까지", EditorNotice(), "임시 칸에 들어가지 않았는데 같은 카드명 제한 알림도 없다"); // 덱에 이미 3장인 카드명
+            Assert.IsNull(Find<VisualElement>(RunUi, "deck-side-" + extra), "임시 칸에서 뺀 카드가 남아 있다");
+            Assert.AreEqual("임시 칸 0/5장", Find<Label>(RunUi, "editor-side-temp-count").text, "임시 칸을 비운 뒤 장수");
+            Assert.AreEqual(SideCountText(SidePicks), Find<Label>(RunUi, "editor-side-count").text, "임시 칸을 비운 뒤 영구 칸의 장수");
             Click(Find<Button>(RunUi, "filter-spell"));
             yield return null;
             Assert.IsTrue(Named("pick-").Count > 0, "마법 거르기에 카드가 없다");

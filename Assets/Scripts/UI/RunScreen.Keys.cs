@@ -213,7 +213,7 @@ namespace DuelRoguelike.UI
         static readonly string[] CancelButtons =
         {
             "shop-back", "shop-close", "close-log", "event-close", "rest-close", "coin-close", "recipe-save-cancel",
-            "event-codex-close", "editor-leave-cancel", "start-cancel", "editor-back",
+            "event-codex-close", "editor-leave-cancel", "start-cancel", "editor-back", "gold-disassemble-close", "gold-shop-close",
         };
 
         bool _navOn;

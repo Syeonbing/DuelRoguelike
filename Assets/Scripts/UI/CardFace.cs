@@ -106,15 +106,15 @@ namespace DuelRoguelike.UI
         }
 
         /// <summary>
-        /// 작은 카드 하나. count가 2 이상이면 ×n, tag가 있으면 그림 칸 왼쪽 아래에 짧은 표시.
+        /// 작은 카드 하나. count가 2 이상이면 ×n, tag가 있으면 그림 칸 왼쪽 아래에 짧은 표시 (색은 tagColor, 없으면 오름 색).
         /// stats가 있으면 ATK/DEF를 그 값으로 쓴다 (듀얼 중 바뀐 값).
         /// </summary>
-        public VisualElement Build(uint code, CardFaceSize size, int count = 0, string tag = null, CardStats? stats = null) =>
-            Scaled("card-face", SizeOf(size), BaseCard(code, count, tag, stats));
+        public VisualElement Build(uint code, CardFaceSize size, int count = 0, string tag = null, CardStats? stats = null, Color? tagColor = null) =>
+            Scaled("card-face", SizeOf(size), BaseCard(code, count, tag, stats, tagColor));
 
         /// <summary>폭을 직접 정한 작은 카드 (덱 창의 1.1배 = 119 등). 높이는 카드 비율을 따른다.</summary>
-        public VisualElement Build(uint code, float width, int count = 0, string tag = null, CardStats? stats = null) =>
-            Scaled("card-face", new Vector2(width, width * BaseHeight / BaseWidth), BaseCard(code, count, tag, stats));
+        public VisualElement Build(uint code, float width, int count = 0, string tag = null, CardStats? stats = null, Color? tagColor = null) =>
+            Scaled("card-face", new Vector2(width, width * BaseHeight / BaseWidth), BaseCard(code, count, tag, stats, tagColor));
 
         /// <summary>폭을 직접 정한 카드 뒷면.</summary>
         public VisualElement BuildBack(float width) =>
@@ -143,7 +143,7 @@ namespace DuelRoguelike.UI
             return root;
         }
 
-        VisualElement BaseCard(uint code, int count, string tag, CardStats? stats)
+        VisualElement BaseCard(uint code, int count, string tag, CardStats? stats, Color? tagColor = null)
         {
             var record = _text.Record(code);
             var type = record?.Type ?? OcgCardType.None;
@@ -212,7 +212,7 @@ namespace DuelRoguelike.UI
             }
             if (!string.IsNullOrEmpty(tag))
             {
-                var chip = Chip(tag, 12, UiStyle.Good);
+                var chip = Chip(tag, 12, tagColor ?? UiStyle.Good);
                 chip.style.left = 3;
                 chip.style.bottom = 3;
                 art.Add(chip);
