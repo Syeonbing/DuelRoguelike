@@ -5,7 +5,8 @@
 // - 어느 소리에 어느 파일을 쓰고 얼마나 크게 낼지는 아래 Cues 표 하나에 모았다. 파일을 바꾸거나 음량을 고치려면 표만 고친다.
 // - 음량 설정(효과음·배경음 0~10, 0이면 끔)은 PlayerPrefs에 둔다. 처음 화면·탑 메뉴의 "설정" 창에서 고친다.
 // - 겹쳐서 시끄럽지 않게: 같은 소리는 MinGap 안에 다시 내지 않는다. 동시에 내는 소리는 Voices개까지이고, 넘으면 가장 먼저 낸 것을 끊는다.
-//   듀얼의 건너뛰기 중에는 화면이 소리를 부르지 않고(연출과 같다), 건너뛰기를 시작하면 내던 듀얼 소리를 빨리 줄인다 (Hush).
+// - 듀얼의 가속: 듀얼 화면이 가속하는 동안 듀얼 효과음을 그 배속으로 빠르게 낸다 (Rate). 내던 소리도 그 순간부터 빨라지고 음이 높아진다.
+//   늦게 내기·같은 소리 간격·앞부분만 쓰기도 같은 배속의 시계(DuelClock)로 잰다. 조작음·탑의 소리와 배경음은 그대로다.
 // - 파일마다 크기가 달라서, 처음 불러올 때 가장 큰 순간의 세기(50ms 창의 RMS)를 재고 기준보다 크면 줄인다 (키우지는 않는다).
 using System.Collections.Generic;
 using UnityEngine;
@@ -37,7 +38,7 @@ namespace DuelRoguelike.UI
             public float MaxSeconds;
             /// <summary>같은 소리를 다시 내지 않는 시간 (초).</summary>
             public float MinGap = 0.06f;
-            /// <summary>조작음 (건너뛰기의 Hush에 줄이지 않는다).</summary>
+            /// <summary>조작음·탑의 소리 (듀얼의 가속에 빨라지지 않는다).</summary>
             public bool Ui;
             /// <summary>크기 맞춤의 기준 세기 (RMS). 묵직하게 들려야 하는 소리는 더 크게 둔다.</summary>
             public float Rms = TargetRms;
@@ -142,6 +143,29 @@ namespace DuelRoguelike.UI
         internal static float SfxScale => SfxLevel / (float)MaxLevel;
         internal static float MusicScale => MusicLevel / (float)MaxLevel * MusicBase;
 
+        /// <summary>듀얼 효과음의 시계: 배속(Rate)만큼 빨리 흐른다. 조작음·탑의 소리는 실제 시간으로 잰다.</summary>
+        internal static readonly ScaledClock DuelClock = new ScaledClock();
+
+        /// <summary>
+        /// 듀얼 효과음의 배속 (1이면 보통). 듀얼 화면이 가속하는 동안 올린다. 내던 소리도 그 순간부터 이 배속으로 빨라지고
+        /// (음이 높아진다), 1로 되돌리면 원래 속도로 돌아온다. 조작음·탑의 소리와 배경음은 바뀌지 않는다.
+        /// </summary>
+        public static float Rate
+        {
+            get => DuelClock.Rate;
+            set
+            {
+                if (Mathf.Approximately(value, DuelClock.Rate))
+                    return;
+                DuelClock.Rate = value;
+                if (_player != null)
+                    _player.ApplyRate();
+            }
+        }
+
+        /// <summary>이 소리를 재는 시계의 지금: 듀얼 효과음은 배속 시계, 조작음·탑의 소리는 실제 시간.</summary>
+        internal static float Now(bool ui) => ui ? Time.realtimeSinceStartup : DuelClock.Now;
+
         /// <summary>이 소리를 낸 횟수 (MinGap에 걸러진 것은 세지 않는다). 화면 시험이 본다.</summary>
         public static int Count(Sfx sfx) => Counts.TryGetValue(sfx, out int n) ? n : 0;
 
@@ -164,12 +188,13 @@ namespace DuelRoguelike.UI
 
         /// <summary>
         /// 효과음을 낸다. delay초 뒤에 낸다 (여러 장 드로우처럼 조금씩 늦게 낼 때). pitch·volume은 표의 값에 곱한다.
+        /// 듀얼 효과음의 delay와 MinGap은 배속 시계로 잰다 (가속 중에는 그만큼 짧아진다).
         /// </summary>
         public static void Play(Sfx sfx, float delay = 0f, float pitch = 1f, float volume = 1f)
         {
             if (!Application.isPlaying || !Cues.TryGetValue(sfx, out var cue))
                 return;
-            float now = Time.realtimeSinceStartup;
+            float now = Now(cue.Ui);
             float at = now + Mathf.Max(0f, delay);
             if (LastPlayed.TryGetValue(sfx, out float last) && Mathf.Abs(at - last) < cue.MinGap)
                 return;
@@ -194,13 +219,6 @@ namespace DuelRoguelike.UI
             CurrentMusic = track;
             var clip = track != MusicTrack.None && MusicFiles.TryGetValue(track, out string file) ? Load("Audio/Music/" + file) : null;
             Player().CrossFade(clip);
-        }
-
-        /// <summary>내던 듀얼 효과음을 빨리 줄인다 (건너뛰기를 시작할 때). 조작음과 탑의 소리는 두고.</summary>
-        public static void Hush()
-        {
-            if (_player != null)
-                _player.Hush();
         }
 
         static AudioClip NextClip(Sfx sfx, Cue cue)
@@ -277,12 +295,18 @@ namespace DuelRoguelike.UI
     sealed class SoundPlayer : MonoBehaviour
     {
         const int Voices = 10;
-        const float StopFade = 0.25f, HushFade = 0.12f, MusicFade = 1.2f;
+        const float StopFade = 0.25f, MusicFade = 1.2f;
+        /// <summary>소리통의 재생 속도(AudioSource.pitch)는 3배까지만 올린다. 배속이 그보다 크면 남는 길이는 줄여서 끊긴다.</summary>
+        const float MaxPitch = 3f;
 
         sealed class Voice
         {
             public AudioSource Source;
-            public float Started, BusyUntil, StopAt, BaseVolume;
+            /// <summary>끝나는 때·줄여서 끊는 때. 이 소리의 시계(Sound.Now(Ui))로 잰다: 듀얼 효과음은 배속 시계, 조작음은 실제 시간.</summary>
+            public float BusyUntil, StopAt;
+            /// <summary>낸 때 (실제 시간). 소리통이 모자랄 때 가장 먼저 낸 것을 고른다.</summary>
+            public float StartedReal;
+            public float BaseVolume, BasePitch = 1f;
             public bool Ui;
         }
 
@@ -313,13 +337,15 @@ namespace DuelRoguelike.UI
             }
         }
 
+        /// <summary>delay·maxSeconds와 소리의 길이는 이 소리의 시계로 잰다 (듀얼 효과음은 배속 시계: 가속 중에는 그만큼 빨리 지나간다).</summary>
         public void Play(AudioClip clip, float volume, float pitch, float delay, float maxSeconds, bool ui)
         {
-            float now = Time.realtimeSinceStartup;
+            float now = Sound.Now(ui), real = Time.realtimeSinceStartup;
+            float rate = ui ? 1f : Sound.Rate;
             // 비어 있는 소리통, 없으면 가장 먼저 낸 것을 끊는다
             Voice voice = null;
             foreach (var v in _voices)
-                if (v.BusyUntil <= now)
+                if (v.BusyUntil <= Sound.Now(v.Ui))
                 {
                     voice = v;
                     break;
@@ -328,37 +354,38 @@ namespace DuelRoguelike.UI
             {
                 voice = _voices[0];
                 foreach (var v in _voices)
-                    if (v.Started < voice.Started)
+                    if (v.StartedReal < voice.StartedReal)
                         voice = v;
             }
             float length = clip.length / Mathf.Max(0.05f, pitch);
             if (maxSeconds > 0f)
                 length = Mathf.Min(length, maxSeconds);
-            voice.Started = now + delay;
+            voice.StartedReal = real + delay / rate;
             voice.BusyUntil = now + delay + length;
             voice.StopAt = maxSeconds > 0f && maxSeconds < clip.length / Mathf.Max(0.05f, pitch) ? voice.BusyUntil : 0f;
             voice.BaseVolume = Mathf.Clamp01(volume);
+            voice.BasePitch = pitch;
             voice.Ui = ui;
             var source = voice.Source;
             source.Stop();
             source.clip = clip;
-            source.pitch = pitch;
+            source.pitch = RatedPitch(voice, rate);
             source.volume = voice.BaseVolume * Sound.SfxScale;
             if (delay > 0f)
-                source.PlayDelayed(delay);
+                source.PlayDelayed(delay / rate); // 실제 시간으로는 배속만큼 일찍 낸다
             else
                 source.Play();
         }
 
-        public void Hush()
+        static float RatedPitch(Voice voice, float rate) => Mathf.Min(Mathf.Max(MaxPitch, voice.BasePitch), voice.BasePitch * rate);
+
+        /// <summary>배속이 바뀌었다: 내고 있거나 곧 낼 듀얼 효과음의 재생 속도를 새 배속에 맞춘다.</summary>
+        public void ApplyRate()
         {
-            float now = Time.realtimeSinceStartup;
+            float now = Sound.DuelClock.Now, rate = Sound.Rate;
             foreach (var v in _voices)
                 if (!v.Ui && v.BusyUntil > now)
-                {
-                    v.StopAt = now + HushFade;
-                    v.BusyUntil = v.StopAt;
-                }
+                    v.Source.pitch = RatedPitch(v, rate);
         }
 
         public void CrossFade(AudioClip clip)
@@ -392,9 +419,8 @@ namespace DuelRoguelike.UI
 
         public void ApplyLevels()
         {
-            float now = Time.realtimeSinceStartup;
             foreach (var v in _voices)
-                if (v.BusyUntil > now && v.StopAt <= 0f)
+                if (v.BusyUntil > Sound.Now(v.Ui) && v.StopAt <= 0f)
                     v.Source.volume = v.BaseVolume * Sound.SfxScale;
         }
 
@@ -405,7 +431,7 @@ namespace DuelRoguelike.UI
             {
                 if (v.StopAt <= 0f)
                     continue;
-                float left = v.StopAt - now;
+                float left = v.StopAt - Sound.Now(v.Ui);
                 if (left <= 0f)
                 {
                     v.Source.Stop();

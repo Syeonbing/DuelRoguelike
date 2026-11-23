@@ -1,6 +1,6 @@
 // 듀얼 화면의 키보드 커서. docs/UI.md "키보드" › "듀얼의 키보드 커서".
 // 기본 자리 두 가지를 함께 받는다: 방향키 + Z(결정)·X(취소), W A S D + J(결정)·K(취소). 내가 답할 차례이거나 창·메뉴가 떠 있으면
-// Enter·Space도 결정, Backspace·Esc도 취소다 (진행을 보여 주는 중에는 스페이스·엔터가 넘기기·빨리 넘기기라서 결정으로 쓰지 않는다).
+// Enter·Space도 결정, Backspace·Esc도 취소다 (진행을 보여 주는 중에는 스페이스가 가속이라서 결정으로 쓰지 않는다. 엔터도 그때는 쓰지 않는다).
 // 마우스 우클릭은 체인 확인에 "발동하지 않음"으로 답한다 (OnRightClick).
 // - 필드 커서: 패의 카드 하나 또는 필드의 칸 하나를 가리킨다. 줄은 아래에서부터 패, 내 마법·함정, 내 몬스터, (양끝 열의 제외 칸),
 //   상대 몬스터, 상대 마법·함정. 결정 키는 그 칸을 마우스로 누른 것과 같다 (카드 메뉴, 카드·칸 고르기, 더미의 카드 목록).
@@ -114,6 +114,13 @@ namespace DuelRoguelike.UI
             // 화면을 마우스로 누르면 키보드 커서는 풀린다
             docRoot.RegisterCallback<PointerDownEvent>(_ => _cursorOn = false, TrickleDown.TrickleDown);
             docRoot.RegisterCallback<PointerDownEvent>(OnRightClick, TrickleDown.TrickleDown);
+            // 필드를 누르고 있는 동안의 가속은 어디서든 떼면 끝난다 (DuelScreen.cs의 UpdateAccel)
+            docRoot.RegisterCallback<PointerUpEvent>(e =>
+            {
+                if (e.button == 0)
+                    ReleaseField();
+            }, TrickleDown.TrickleDown);
+            docRoot.RegisterCallback<PointerCancelEvent>(_ => ReleaseField(), TrickleDown.TrickleDown);
         }
 
         /// <summary>

@@ -82,11 +82,11 @@ namespace DuelRoguelike.Tests
         const string ChainPromptPrefKey = "duel.chain-prompt";
         int? _chainPromptPref;
         // 필드 보기는 선택 창(묘지·덱에서 고르기, 예/아니오 등)이 뜰 때만 있어서 기다리지 않는다. 뜨면 확인한다.
-        bool PlaybackAllSeen => _previewSeen && _skipSeen && _chainSeen && _speedSeen && _lpSeen && _enterSeen;
-        bool _enterSeen;
+        bool PlaybackAllSeen => _previewSeen && _noSkipSeen && _chainSeen && _speedSeen && _lpSeen;
         // 체인 목록: 체인 2 이상, "처리 중", 상대가 발동한 줄 (생길 때만 본다)
         bool _chain2Seen, _chainSolvingSeen, _chainOpponentSeen;
-        bool _skipSeen;
+        /// <summary>보여 주는 중에 필드를 한 번 누르거나 엔터를 눌러도 건너뛰지 않는 것을 보았다.</summary>
+        bool _noSkipSeen;
         static readonly bool Thorough = Environment.GetEnvironmentVariable("DUELROGUELIKE_SCREEN_THOROUGH") == "1";
         static readonly int MaxPlaybackTries = Thorough ? 8 : 3;
         bool RareSeen => _chain2Seen && _chainOpponentSeen && _fieldViewSeen && _rightClickSeen;
@@ -1920,7 +1920,7 @@ namespace DuelRoguelike.Tests
                     Debug.Log($"[런 화면 시험] 공격 대상 예상 결과: {note.text.Replace('\n', ' ')}");
                     yield return Shot(DuelUi, "2g-attack-preview");
                 }
-                if (Find<Button>(DuelUi, "skip-playback") != null)
+                if (Playing())
                 {
                     string line = Find<Label>(DuelUi, "prompt-label")?.text ?? "";
                     if (line != "진행 중..." && line != last)
@@ -2000,54 +2000,25 @@ namespace DuelRoguelike.Tests
                     _fieldViewSeen = true;
                     Debug.Log("[런 화면 시험] 선택 창: Esc → 필드 확인 중, Esc → 창 다시 열림, 필드 보기 → 필드 확인 중");
                 }
-                // 상대 공격을 본 뒤: 빨리 넘기기 → 모서리에 "빨리 넘김", 한 번 더 → "건너뜀"
-                var skip = Find<Button>(DuelUi, "skip-playback");
-                if (battle && !_skipSeen && skip != null)
+                // 상대 공격을 본 뒤: 보여 주는 중에 필드를 한 번 눌렀다 떼거나 엔터를 눌러도 건너뛰지 않는다
+                // (건너뛰기는 없다. 가속은 누르고 있는 동안만이다 — 자세한 것은 DuelSpeedUpPlayTest가 본다)
+                if (battle && !_noSkipSeen && Playing())
                 {
-                    Click(skip);
-                    var badge = Find<Label>(DuelUi, "status-badge");
-                    StringAssert.StartsWith("빨리 넘김", badge?.text ?? "", "빨리 넘기기를 눌렀는데 모서리 표시가 다르다");
-                    yield return Shot(DuelUi, "2i0-fast-forward");
-                    skip = Find<Button>(DuelUi, "skip-playback");
-                    if (skip == null) // 그 사이 다음 입력까지 왔다: 다음에 다시 본다
-                        continue;
-                    Click(skip);
-                    StringAssert.StartsWith("건너뜀", badge.text, "빨리 넘기는 중에 한 번 더 눌렀는데 모서리 표시가 다르다");
-                    _skipSeen = true;
-                    yield return Shot(DuelUi, "2i-skip");
-                    // 건너뛰기가 끝나면 표시가 흐려지며 사라진다 (바로 사라지지 않는다).
-                    bool faded = false;
-                    float fadeUntil = Time.realtimeSinceStartup + 5;
-                    while (badge.style.display.value == DisplayStyle.Flex && Time.realtimeSinceStartup < fadeUntil)
-                    {
-                        float alpha = badge.style.opacity.value;
-                        if (!faded && alpha > 0.1f && alpha < 0.9f)
-                        {
-                            faded = true;
-                            yield return Shot(DuelUi, "2j-skip-fade");
-                        }
-                        yield return null;
-                    }
-                    Assert.IsTrue(faded, "건너뜀 표시가 흐려지지 않고 사라졌다");
-                    Assert.AreEqual(DisplayStyle.None, badge.style.display.value, "건너뜀 표시가 사라지지 않는다");
-                }
-                // 건너뛰기를 본 뒤: 보여 주는 중 스페이스를 누르고 있으면 모서리에 "가속 중"
-                if (_skipSeen && !_speedSeen && Find<Button>(DuelUi, "skip-playback") != null)
-                    yield return CheckSpeedUp();
-                // 가속 중을 본 뒤: 보여 주는 중 엔터 → 모서리에 "빨리 넘김" (연출과 효과음은 짧게 계속 나온다)
-                if (_speedSeen && !_enterSeen && Find<Button>(DuelUi, "skip-playback") != null)
-                {
+                    Assert.IsNull(Find<Button>(DuelUi, "skip-playback"), "건너뛰기 버튼이 남아 있다");
+                    var mat = Find<VisualElement>(DuelUi, "field-mat");
+                    SendPointer(mat, EventType.MouseDown, new Vector2(960, 460), 1);
+                    SendPointer(mat, EventType.MouseUp, new Vector2(960, 460), 1);
                     yield return Tap(UnityEngine.InputSystem.Key.Enter);
-                    if (BadgeText().StartsWith("빨리 넘김"))
-                    {
-                        _enterSeen = true;
-                        Debug.Log("[런 화면 시험] 보여 주는 중 엔터 → 빨리 넘김");
-                    }
-                    else // 그 사이 보여 주기가 끝났으면 다음에 다시 본다
-                        Assert.IsNull(Find<Button>(DuelUi, "skip-playback"), "보여 주는 중 엔터를 눌렀는데 모서리에 빨리 넘김이 안 뜬다");
+                    string badge = BadgeText();
+                    Assert.IsFalse(badge.StartsWith("건너뜀") || badge.StartsWith("빨리 넘김"), $"필드를 누르거나 엔터를 눌렀는데 건너뛰기 표시가 떴다: {badge}");
+                    _noSkipSeen = true;
+                    Debug.Log("[런 화면 시험] 보여 주는 중 필드 한 번 누르기·엔터 → 건너뛰지 않음");
                 }
+                // 그 뒤: 보여 주는 중 스페이스를 누르고 있으면 모서리에 "가속 중"
+                if (_noSkipSeen && !_speedSeen && Playing())
+                    yield return CheckSpeedUp();
                 // 체인 확인이 뜨면 (뜰 때만): 우클릭 한 번 → "발동하지 않음"으로 답한다
-                if (!_rightClickSeen && Find<Button>(DuelUi, "skip-playback") == null && (Find<Label>(DuelUi, "prompt-detail")?.text ?? "").Contains("우클릭"))
+                if (!_rightClickSeen && !Playing() && (Find<Label>(DuelUi, "prompt-detail")?.text ?? "").Contains("우클릭"))
                 {
                     string prompt = Find<Label>(DuelUi, "prompt-label").text;
                     int cancels = SoundCount("Cancel");
@@ -2104,6 +2075,9 @@ namespace DuelRoguelike.Tests
             var badge = Find<Label>(DuelUi, "status-badge");
             return badge != null && badge.style.display.value == DisplayStyle.Flex ? badge.text : "";
         }
+
+        /// <summary>듀얼 화면이 진행을 보여 주는 중인지 (가운데 띠 아래에 가속 안내가 있다. DuelScreen.PlayingHint).</summary>
+        static bool Playing() => (Find<Label>(DuelUi, "prompt-detail")?.text ?? "").Contains("누르고 있으면 빨라진다");
 
         /// <summary>체인 목록에 체인 2 이상, "처리 중", 상대가 발동한 줄이 생기면 찍는다 (생길 때만).</summary>
         IEnumerator CheckChainPanel()
@@ -2209,8 +2183,9 @@ namespace DuelRoguelike.Tests
                 Assert.IsTrue(keyboard.spaceKey.isPressed, "가상 키보드의 스페이스 입력이 들어가지 않는다");
                 if (badge == null)
                 {
-                    Assert.IsNull(Find<Button>(DuelUi, "skip-playback"), "보여 주는 중 스페이스를 누르고 있는데 모서리에 가속 중이 안 뜬다");
-                    yield break; // 그 사이 보여 주기가 끝났다. 다음에 다시 본다.
+                    // 그 사이 보여 주기가 끝났거나 공개된 카드 확인 창이 떴으면(창이 떠 있는 동안은 가속하지 않는다) 다음에 다시 본다
+                    Assert.IsTrue(!Playing() || Find<Button>(DuelUi, "reveal-confirm") != null, "보여 주는 중 스페이스를 누르고 있는데 모서리에 가속 중이 안 뜬다");
+                    yield break;
                 }
                 _speedSeen = true;
                 yield return Shot(DuelUi, "2m-speed-up");

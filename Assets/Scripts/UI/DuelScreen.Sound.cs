@@ -1,6 +1,6 @@
 // 듀얼 화면의 소리: 엔진 메시지마다 낼 효과음과 듀얼 배경음. 소리 파일·음량은 Sound.cs의 표에 있다.
-// 연출과 같이 한 단계씩 보여 주는 동안에만 낸다. 건너뛰는 중과 개발용 "자동으로 끝까지"에서는 내지 않고,
-// 건너뛰기를 시작하면 내던 소리를 빨리 줄인다 (BeginSkip → Sound.Hush).
+// 연출과 같이 한 단계씩 보여 주는 동안에만 낸다. 개발용 "자동으로 끝까지"에서는 내지 않는다.
+// 가속하는 동안에는 듀얼 효과음도 같은 배속으로 빨라진다 (DuelScreen.UpdateAccel → Sound.Rate). 늦게 내는 시간(delay)도 그만큼 줄어든다.
 using DuelRoguelike.Engine.Duel;
 using DuelRoguelike.Engine.Ocg;
 using UnityEngine;

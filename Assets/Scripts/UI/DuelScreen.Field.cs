@@ -279,7 +279,7 @@ namespace DuelRoguelike.UI
             }
             FitStage();
 
-            // ---- 가운데: 필드 (판 전체를 덮는 층. 여기를 누르면 보여 주기를 건너뛴다) ----
+            // ---- 가운데: 필드 (판 전체를 덮는 층. 진행을 보여 주는 중에 여기를 누르고 있으면 가속한다) ----
             ClearFx(render: false); // 옛 화면의 연출은 버린다
             var field = _fieldLayer = new VisualElement { name = "field" };
             UiStyle.Place(field, 0, 0, StageWidth, StageHeight);
