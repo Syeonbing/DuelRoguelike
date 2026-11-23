@@ -40,6 +40,7 @@ namespace DuelRoguelike.Dev
                          ("봉인 장수·LP·층 진행", test.ScriptedRun),
                          ("칩교환소", test.ChipExchangeShop),
                          ("재화 수치", test.EconomyValues),
+                         ("골드 상점", test.GoldShop),
                          ("보스 보상과 골드 정산", test.BossBonusAndSettlement),
                          ("코인 토스와 선후공", test.CoinTossAndTurnOrder),
                          ("이벤트 고르기·성향", test.EventPicking),
@@ -396,7 +397,7 @@ namespace DuelRoguelike.Dev
             var loaded = GameSave.Parse(text, _db, _rarities, "시험");
             Expect(loaded.ForfeitedDuel == 1 && loaded.Run.Events.Any(e => e.Kind == RunEventKind.DuelStarted && e.Turn == TurnOrder.Second),
                 "후공 듀얼 중에 꺼짐 → 패배 처리, 선후공 기록은 남음");
-            string v4 = Regex.Replace(text.Replace("format 5\n", "format 4\n"), @" coin=\w+ turn=\w+", "");
+            string v4 = Regex.Replace(text.Replace($"format {GameSave.FormatVersion}\n", "format 4\n").Replace("\nside-limit 3\n", "\n"), @" coin=\w+ turn=\w+", "");
             var old = GameSave.Parse(v4, _db, _rarities, "시험");
             Expect(old.ForfeitedDuel == 1 && old.Run.Events.Where(e => e.Kind == RunEventKind.DuelStarted).All(e => e.Turn == TurnOrder.Unknown),
                 "형식 4 파일 (코인 토스 기록 없음)도 읽음");
@@ -444,8 +445,12 @@ namespace DuelRoguelike.Dev
             var stock = ChipExchange.Stock(77, 25);
             Expect(stock.All(o => o.Price == OfferPrice(o, 25)) && stock[0].Price == 60, $"25층 칩교환소 진열 가격: {string.Join(", ", stock.Select(o => o.Price))}");
 
-            // 골드 가격 ("느림"), 쓰는 기능은 아직 없음.
+            // 골드 가격 ("느림"). 사이드 덱 확장·임시 칸·분해는 골드 상점이 쓴다 ("골드 상점" 시험). 팩·스트럭처 덱·코스트 완화는 가격만 있다.
             Expect(RunRules.PackPrice == 80 && RunRules.StructureDeckPrice == 320, "팩 80, 스트럭처 덱 320");
+            Expect(Enumerable.Range(0, 6).Select(RunRules.RunSideDeckSlotsPrice).SequenceEqual(new[] { 0, 8, 16, 24, 32, 40 }) && RunRules.StartingSideDeckCap == 15
+                   && RunRules.DisassemblyKeep == 3, "사이드 덱 임시 칸 0~5장의 값, 시작 사이드 덱은 많아야 15장, 분해는 3장을 남김");
+            ExpectThrows<ArgumentOutOfRangeException>(() => RunRules.RunSideDeckSlotsPrice(6), "사이드 덱 임시 칸 6장");
+            ExpectThrows<ArgumentOutOfRangeException>(() => RunRules.RunSideDeckSlotsPrice(-1), "사이드 덱 임시 칸 -1장");
             var expansions = Enumerable.Range(1, 7).Select(RunRules.SideDeckExpansionPrice).ToList();
             Expect(RunRules.PermanentSideDeckMax == 10 && expansions.SequenceEqual(new[] { 50, 100, 150, 200, 250, 300, 350 }) && expansions.Sum() == 1400,
                 $"사이드 덱 영구 확장: {string.Join(", ", expansions)}");
@@ -460,6 +465,140 @@ namespace DuelRoguelike.Dev
             var disassembly = Enumerable.Range(0, 5).Select(i => RunRules.DisassemblyGoldFor((Rarity)i)).ToList();
             Expect(reward.SequenceEqual(new[] { 1, 2, 4, 8, 16 }), $"보상 골드: {string.Join(", ", reward)}");
             Expect(disassembly.SequenceEqual(new[] { 1, 2, 4, 8, 160 }), $"분해 골드: {string.Join(", ", disassembly)}");
+        }
+
+        /// <summary>
+        /// 골드 상점 (docs/ECONOMY.md "골드 가격", "카드 → 골드 환산"): 사이드 덱 영구 확장, 런 시작 때의 임시 칸, 컬렉션 분해.
+        /// 골드가 모자라면 살 수 없고, 산 것과 분해한 것은 저장 파일에 남는다.
+        /// 등급은 시험용 표로 정해 둔다 (실제 등급 표가 바뀌어도 기대값이 그대로다).
+        /// </summary>
+        void GoldShop()
+        {
+            GameSave WithGold(GameSave from, int gold) =>
+                GameSave.Parse(new Regex(@"\ngold \d+\n").Replace(from.Write(), $"\ngold {gold}\n", 1), _db, _rarities, "시험");
+
+            // ---- 사이드 덱 영구 확장: n번째 = 50 × n, 3장 → 10장 ----
+            var save = GameSave.NewGame();
+            Expect(save.Gold == 0 && save.SideDeckLimit == 3 && !save.SideDeckLimitMaxed && save.SideDeckExpansionPrice == 50,
+                $"새 게임: 골드 {save.Gold}, 시작 사이드 덱 한도 {save.SideDeckLimit}장, 다음 확장 {save.SideDeckExpansionPrice}");
+            Expect(save.SideDeckExpansionProblem() != null && !save.BuySideDeckExpansion() && save.SideDeckLimit == 3 && save.Gold == 0, "골드 0: 확장을 살 수 없음");
+            save = WithGold(save, 49);
+            Expect(save.SideDeckExpansionProblem()?.Contains("골드가 1 모자람") == true && !save.BuySideDeckExpansion() && save.Gold == 49 && save.SideDeckLimit == 3,
+                $"골드 49: 1 모자라 살 수 없고 아무것도 바뀌지 않음 ({save.SideDeckExpansionProblem()})");
+            save = WithGold(save, 1400 + 7);
+            var paid = new List<int>();
+            while (!save.SideDeckLimitMaxed && paid.Count < 10)
+            {
+                int gold = save.Gold, limit = save.SideDeckLimit;
+                Expect(save.SideDeckExpansionProblem() == null && save.BuySideDeckExpansion() && save.SideDeckLimit == limit + 1, $"확장 {limit}장 → {limit + 1}장");
+                paid.Add(gold - save.Gold);
+            }
+            Expect(paid.SequenceEqual(new[] { 50, 100, 150, 200, 250, 300, 350 }) && save.SideDeckLimit == 10 && save.Gold == 7,
+                $"확장 7번의 값 {string.Join(", ", paid)}, 한도 {save.SideDeckLimit}장, 남은 골드 {save.Gold}");
+            Expect(save.SideDeckLimitMaxed && save.SideDeckExpansionPrice == 0 && save.SideDeckExpansionProblem() != null && !save.BuySideDeckExpansion()
+                   && save.Gold == 7 && save.SideDeckLimit == 10, "10장이면 더 살 수 없음");
+            var reloaded = GameSave.Parse(save.Write(), _db, _rarities, "시험");
+            Expect(save.Write().Contains("\nside-limit 10\n") && reloaded.SideDeckLimit == 10 && reloaded.Gold == 7 && reloaded.Write() == save.Write(),
+                "늘린 한도와 남은 골드가 저장 파일에 남음");
+
+            // ---- 런 시작 때의 임시 칸: 1장 8, 영구 한도를 넘는 카드를 앞에서부터 산 만큼 가져간다 ----
+            var side = KaibaOnly(9);
+            Expect(side.Count == 9, $"시험 준비: 유희 편에 없는 카이바 편 카드 {side.Count}장");
+            var shop = WithGold(GameSave.NewGame(), 20);
+            var yugi = shop.FindRecipe("Yugi");
+            var six = new PlayerRecipe("deck-six", "사이드 6장", yugi.Deck, side.Take(6));
+            Expect(shop.SaveRecipe(six, _db).Count == 0 && RecipeRules.StartProblems(six, _db, shop.Collection, shop.SideDeckLimit).Count == 0,
+                "시작 사이드 덱 6장 (영구 칸 3 + 임시 칸 3) 레시피: 저장되고 시작할 수 있음");
+            Expect(shop.RunSideSlotsMax(six) == 3 && shop.RunSideSlotsAffordable(six) == 2 && shop.RunSideSlotsMax(yugi) == 0 && shop.RunSideSlotsMax(null) == 0,
+                $"임시 칸: 카드 3장, 골드 20으로 살 수 있는 것 {shop.RunSideSlotsAffordable(six)}장");
+            Expect(shop.RunSideSlotsProblem(six, 0) == null && shop.RunSideSlotsProblem(six, 2) == null && shop.RunSideSlotsProblem(six, 3)?.Contains("골드가 4 모자람") == true
+                   && shop.RunSideSlotsProblem(six, 4) != null && shop.RunSideSlotsProblem(six, -1) != null && shop.RunSideSlotsProblem(yugi, 1) != null,
+                "임시 칸을 살 수 없는 까닭: 골드 모자람, 임시 칸의 카드보다 많음, 음수");
+            ExpectThrows<ArgumentException>(() => shop.StartRun(six, 5, StarterDecks.All, _db, _rarities, runSideSlots: 3), "골드가 모자란 임시 칸 3장으로 런 시작");
+            ExpectThrows<ArgumentException>(() => shop.StartRun(six, 5, StarterDecks.All, _db, _rarities, runSideSlots: 4), "임시 칸의 카드보다 많은 4장으로 런 시작");
+            Expect(shop.Run == null && shop.Gold == 20, "시작하지 못하면 런도 골드도 그대로");
+            var run = shop.StartRun(six, 5, StarterDecks.All, _db, _rarities, runSideSlots: 2);
+            Expect(run.SideDeck.SequenceEqual(side.Take(5)) && shop.Gold == 4 && run.Gold == 0 && run.Events[0].SideCount == 5,
+                $"임시 칸 2장을 사서 시작: 사이드 덱 {run.SideDeck.Count}장 (앞의 5장), 골드 20 → {shop.Gold}");
+            var stats = new RunRuleStats();
+            _ = new RunRuleChecker(run, _db, _rarities, stats, "골드 상점", sideDeckLimit: 5);
+            Expect(stats.ViolationCount == 0, "규칙 검사기: 한도 5장으로 시작한 런 " + string.Join(" / ", stats.Violations));
+            var strict = new RunRuleStats();
+            _ = new RunRuleChecker(run, _db, _rarities, strict, "골드 상점");
+            Expect(strict.ViolationCount == 1, $"규칙 검사기: 한도 3장으로 보면 사이드 덱 5장은 위반 ({strict.ViolationCount}건)");
+            var continued = GameSave.Parse(shop.Write(), _db, _rarities, "시험");
+            Expect(continued.Gold == 4 && continued.Run.SideDeck.SequenceEqual(side.Take(5)) && continued.FindRecipe("deck-six").Side.SequenceEqual(side.Take(6))
+                   && continued.Write() == shop.Write(), "임시 칸을 산 런과 남은 골드, 레시피의 사이드 덱 순서가 저장 파일에 남음");
+            shop.AbandonRun();
+            int afterAbandon = shop.Gold;
+            var plain = shop.StartRun(six, 6, StarterDecks.All, _db, _rarities);
+            Expect(plain.SideDeck.SequenceEqual(side.Take(3)) && shop.Gold == afterAbandon, "임시 칸을 사지 않으면 영구 칸의 3장만 가져가고 골드는 그대로");
+            shop.AbandonRun();
+
+            // 영구 한도가 늘면 임시 칸의 카드가 영구 칸으로 들어온다.
+            var wide = WithGold(shop, 58);
+            Expect(wide.BuySideDeckExpansion() && wide.SideDeckLimit == 4 && wide.Gold == 8 && wide.RunSideSlotsMax(wide.FindRecipe("deck-six")) == 2
+                   && wide.RunSideSlotsAffordable(wide.FindRecipe("deck-six")) == 1, "영구 한도 4장: 임시 칸의 카드는 2장, 골드 8로 1장");
+            var wideRun = wide.StartRun(wide.FindRecipe("deck-six"), 7, StarterDecks.All, _db, _rarities, runSideSlots: 1);
+            Expect(wideRun.SideDeck.SequenceEqual(side.Take(5)) && wide.Gold == 0, "영구 한도 4장 + 임시 칸 1장: 사이드 덱 5장, 골드 8 → 0");
+            wide.AbandonRun();
+            // 임시 칸(5장)까지 넘친 레시피는 시작할 수 없다.
+            var nine = new PlayerRecipe("deck-nine", "사이드 9장", yugi.Deck, side);
+            var broke = WithGold(GameSave.NewGame(), 100);
+            ExpectThrows<ArgumentException>(() => broke.StartRun(nine, 8, StarterDecks.All, _db, _rarities, runSideSlots: 5), "영구 칸 3 + 임시 칸 5를 넘는 9장 레시피로 런 시작");
+            Expect(broke.Run == null && broke.Gold == 100, "넘친 레시피: 런도 골드도 그대로");
+
+            // ---- 컬렉션 분해: 카드 ID마다 3장을 넘는 분만, 등급별 골드 (N 1, R 2, SR 4, UR 8, FR 160) ----
+            var fresh = GameSave.NewGame();
+            uint three = fresh.Collection.Cards.OrderBy(p => p.Key).First(p => p.Value == 3).Key;
+            uint one = fresh.Collection.Cards.OrderBy(p => p.Key).First(p => p.Value == 1).Key;
+            uint four = fresh.Collection.Cards.OrderBy(p => p.Key).First(p => p.Value == 4 && p.Key != DarkHole).Key;
+            var table = RarityTable.Parse($"{DarkHole} UR\n{three} SR\n{one} N\n");
+            Expect(fresh.Collection.Count(DarkHole) == 4 && fresh.DisassemblableCount(DarkHole, table) == 1 && GameSave.DisassemblyGold(DarkHole, table) == 8,
+                "블랙홀 4장: 넘는 분 1장, UR 1장에 골드 8");
+            Expect(fresh.DisassemblableCount(three, table) == 0 && fresh.DisassemblableCount(one, table) == 0, "3장 이하인 카드는 분해할 수 없음");
+            Expect(fresh.DisassemblableCount(four, table) == 0 && GameSave.DisassemblyGold(four, table) == 0 && fresh.Disassemble(four, 1, table) == 0
+                   && fresh.Collection.Count(four) == 4, "등급 표에 없는 카드는 4장이어도 분해할 수 없음");
+            Expect(fresh.Disassemblable(table).SequenceEqual(new[] { (DarkHole, 1, 8) }), "분해할 수 있는 카드 목록: 블랙홀 1장");
+            Expect(fresh.Disassemble(DarkHole, 2, table) == 0 && fresh.Disassemble(DarkHole, 0, table) == 0 && fresh.Disassemble(three, 1, table) == 0
+                   && fresh.Collection.Count(DarkHole) == 4 && fresh.Gold == 0, "넘는 분보다 많이, 0장, 3장인 카드: 분해되지 않고 그대로");
+            Expect(fresh.Disassemble(DarkHole, 1, table) == 8 && fresh.Collection.Count(DarkHole) == 3 && fresh.Gold == 8, "블랙홀 1장 분해: 3장 남고 골드 +8");
+            Expect(fresh.Disassemble(DarkHole, 1, table) == 0 && fresh.Collection.Count(DarkHole) == 3 && fresh.Gold == 8 && fresh.Disassemblable(table).Count == 0,
+                "3장 아래로는 분해할 수 없음");
+            fresh.Collection.Add(three, 4);
+            Expect(fresh.Collection.Count(three) == 7 && fresh.DisassemblableCount(three, table) == 4 && fresh.Disassemble(three, 3, table) == 12
+                   && fresh.Collection.Count(three) == 4 && fresh.Gold == 20, "SR 7장에서 3장 분해: 골드 +12");
+            var frTable = RarityTable.Parse($"{three} FR\n");
+            Expect(fresh.Disassemble(three, 1, frTable) == 160 && fresh.Collection.Count(three) == 3 && fresh.Gold == 180, "FR 1장 분해: 골드 +160");
+            var afterDisassembly = GameSave.Parse(fresh.Write(), _db, _rarities, "시험");
+            Expect(afterDisassembly.Gold == 180 && afterDisassembly.Collection.Count(DarkHole) == 3 && afterDisassembly.Collection.Count(three) == 3
+                   && afterDisassembly.Write() == fresh.Write(), "분해한 컬렉션과 골드가 저장 파일에 남음");
+
+            // 전부 분해 (실제 등급 표): 기대값은 컬렉션에서 따로 센다. 분해한 뒤에도 레시피는 시작할 수 있다 (카드 ID마다 3장은 남는다).
+            var all = GameSave.NewGame();
+            all.Collection.Add(one, 5);
+            int expectedCards = 0, expectedGold = 0;
+            foreach (var pair in all.Collection.Cards)
+                if (pair.Value > 3 && _rarities.TryGet(pair.Key, out var rarity))
+                {
+                    expectedCards += pair.Value - 3;
+                    expectedGold += (pair.Value - 3) * RunRules.DisassemblyGoldFor(rarity);
+                }
+            int total = all.Collection.TotalCount;
+            int gained = all.DisassembleAll(_rarities, out int cards);
+            Expect(expectedCards >= 4 && cards == expectedCards && gained == expectedGold && all.Gold == expectedGold && all.Collection.TotalCount == total - expectedCards,
+                $"전부 분해: {cards}장 (기대 {expectedCards}), 골드 +{gained} (기대 {expectedGold})");
+            Expect(all.Collection.Cards.All(p => p.Value <= 3 || !_rarities.TryGet(p.Key, out _)) && all.Collection.Count(one) == 3 && all.Disassemblable(_rarities).Count == 0
+                   && all.DisassembleAll(_rarities, out int again) == 0 && again == 0, "전부 분해한 뒤에는 넘는 카드가 없음");
+            Expect(all.Recipes.All(r => RecipeRules.StartProblems(r, _db, all.Collection, all.SideDeckLimit).Count == 0), "전부 분해해도 스타터 덱 레시피로 런을 시작할 수 있음");
+
+            // 진행 중인 런이 있어도 분해할 수 있고, 런의 덱은 바뀌지 않는다.
+            var during = GameSave.NewGame();
+            var held = during.StartRun(new RunSetup { Seed = 3, StartDeck = StarterDecks.Yugi, SideDeck = new[] { DarkHole, DarkHole } }, _db, _rarities);
+            var deckBefore = held.MainDeck.Concat(held.SideDeck).ToList();
+            Expect(during.Disassemble(DarkHole, 1, table) == 8 && during.Collection.Count(DarkHole) == 3 && held.MainDeck.Concat(held.SideDeck).SequenceEqual(deckBefore)
+                   && held.Phase == RunPhase.Ready, "런 중 분해: 컬렉션만 줄고 런의 덱은 그대로");
+            ExpectThrows<ArgumentOutOfRangeException>(() => during.Collection.Remove(DarkHole, 4), "컬렉션에서 가진 것보다 많이 빼기");
         }
 
         void BossBonusAndSettlement()
@@ -1466,6 +1605,12 @@ namespace DuelRoguelike.Dev
                 "시작 사이드 덱 4장");
             Expect(RunState.CheckSetup(new RunSetup { StartDeck = StarterDecks.Yugi, SideDeck = fourSide.Take(3).ToList() }, _db, collection).Count == 0,
                 "시작 사이드 덱 3장");
+            // 시작 사이드 덱 한도 = 영구 한도 + 이번 런에 산 임시 칸 (3~15장).
+            Expect(RunState.CheckSetup(new RunSetup { StartDeck = StarterDecks.Yugi, SideDeck = fourSide, SideDeckLimit = 4 }, _db, collection).Count == 0,
+                "한도 4장이면 시작 사이드 덱 4장");
+            Expect(RunState.CheckSetup(new RunSetup { StartDeck = StarterDecks.Yugi, SideDeckLimit = 2 }, _db, collection).Any(p => p.Contains("한도 2장")), "한도 2장으로는 시작할 수 없음");
+            Expect(RunState.CheckSetup(new RunSetup { StartDeck = StarterDecks.Yugi, SideDeckLimit = 16 }, _db, collection).Any(p => p.Contains("한도 16장")), "한도 16장으로는 시작할 수 없음");
+            Expect(RunState.CheckSetup(new RunSetup { StartDeck = StarterDecks.Yugi, SideDeckLimit = 15 }, _db, collection).Count == 0, "한도 15장 (영구 10 + 임시 5)");
             // 시작 덱(유희 편: 블랙홀 1장)과 사이드 덱을 합쳐 같은 카드명 3장까지.
             Expect(RunState.CheckSetup(new RunSetup { StartDeck = StarterDecks.Yugi, SideDeck = new[] { DarkHole, DarkHole } }, _db, collection).Count == 0,
                 "시작 덱 1장 + 사이드 덱 2장 = 3장");
@@ -1656,11 +1801,23 @@ namespace DuelRoguelike.Dev
 
             string Replace(string line, string with) => good.Replace("\n" + line + "\n", "\n" + with + "\n");
             Broken("", "빈 파일");
-            Broken(good.Replace("format 5\n", ""), "format 줄 없음");
-            Broken(good.Replace("format 5\n", "format 6\n"), "새 버전 형식");
-            Broken(good.Replace("format 5\n", "format 5\nunknown 3\n"), "모르는 키");
-            Broken(good.Replace("format 5\n", "format 5\nformat 5\n"), "같은 키 두 번");
-            Broken(good.Replace("format 5\n", "format 3\n"), "형식 3에 형식 4의 줄 (floor-kind, chips)");
+            string fmt = $"format {GameSave.FormatVersion}\n";
+            Expect(good.Contains("\n" + fmt), "저장 파일에 지금 형식 번호");
+            Broken(good.Replace(fmt, ""), "format 줄 없음");
+            Broken(good.Replace(fmt, $"format {GameSave.FormatVersion + 1}\n"), "새 버전 형식");
+            Broken(good.Replace(fmt, fmt + "unknown 3\n"), "모르는 키");
+            Broken(good.Replace(fmt, fmt + fmt), "같은 키 두 번");
+            Broken(good.Replace(fmt, "format 3\n"), "형식 3에 형식 4의 줄 (floor-kind, chips)");
+            // 형식 6: 시작 사이드 덱의 영구 한도
+            Expect(good.Contains("\nside-limit 3\n"), "새 게임의 side-limit 줄");
+            Broken(good.Replace(fmt, "format 5\n"), "형식 5에 side-limit");
+            Broken(Replace("side-limit 3", "side-limit 2"), "시작 사이드 덱 한도가 3장보다 적음");
+            Broken(Replace("side-limit 3", "side-limit 11"), "시작 사이드 덱 한도가 10장보다 많음");
+            Broken(Replace("side-limit 3", "side-limit 3 4"), "side-limit 칸 수");
+            Broken(Replace("side-limit 3", "side-limit 셋"), "side-limit가 숫자가 아님");
+            Expect(GameSave.Parse(Replace("side-limit 3", "side-limit 7"), _db, _rarities).SideDeckLimit == 7, "side-limit 줄 읽기");
+            var v5 = GameSave.Parse(good.Replace(fmt, "format 5\n").Replace("\nside-limit 3\n", "\n"), _db, _rarities);
+            Expect(v5.SideDeckLimit == RunRules.StartingSideDeckMax && v5.Run.Floor == 2 && v5.Write() == good, "형식 5 파일 (side-limit 없음)은 한도 3장으로 읽고, 쓰면 지금 형식");
             // 형식 4: 지금 층 종류, 칩, 칩교환소 진열, 이벤트 층의 이벤트, 보스 보상
             string chipsLine = $"chips {run.Chips} {run.ChipsEarned}";
             Expect(run.Chips == RunRules.ChipsForWin(1, false) && good.Contains("\n" + chipsLine + "\n") && good.Contains("\nfloor-kind Battle\n"), "칩·층 종류 줄");
@@ -1702,7 +1859,7 @@ namespace DuelRoguelike.Dev
             Broken(good.Replace("event DuelWon duel=1", "event DuelWon duel=x"), "이벤트 칸 숫자 아님");
             Broken(good.Replace("event DuelWon duel=1", "event DuelWon wins=1 duel=1"), "모르는 이벤트 칸");
             Broken(good.Replace("event DuelWon duel=1 floor=1", "event DuelWon duel=1"), "이벤트에 floor 없음");
-            Broken(good.Replace("format 5\ngold 0\n", "format 5\ngold -1\n"), "골드 음수");
+            Broken(good.Replace(fmt + "gold 0\n", fmt + "gold -1\n"), "골드 음수");
             Broken(good.Replace("\nrecipe Kaiba ", "\nrecipe Yugi "), "레시피 Id 두 번");
             Broken(good.Replace("\nrecipe-side Joey", "\nrecipe-side Nobody"), "recipe 줄에 없는 레시피의 사이드 덱");
             Broken(Regex.Replace(good, @"\nrecipe-deck Pegasus [^\n]*", ""), "recipe-deck 줄 없음");
@@ -1711,7 +1868,7 @@ namespace DuelRoguelike.Dev
             Broken(good.Replace("\nrecipe Yugi ", "\nrecipe Yugi %zz"), "이름의 % 표기 틀림");
             Broken(good.Replace("\nrecipe-deck Yugi ", "\nrecipe-deck Yugi 99999x "), "레시피 카드 코드가 숫자 아님");
             Broken("format 5\nrecipe-deck a 53129443\n", "recipe 없이 recipe-deck");
-            Broken(good.Replace("format 5\n", "format 5\nlast-side-deck Yugi\n"), "형식 4에 last-side-deck");
+            Broken(good.Replace(fmt, fmt + "last-side-deck Yugi\n"), "형식 4에 last-side-deck");
             Broken("format 2\ncard 53129443 0\n", "컬렉션 0장");
             Broken("format 2\ncard 53129443 1\ncard 53129443 2\n", "컬렉션에 같은 카드 두 번");
             Broken("format 2\npoints 1 2 3 4 5\n", "형식 2에 points");
@@ -1747,10 +1904,10 @@ namespace DuelRoguelike.Dev
             Broken(v3Choosing.Replace("\nfloor 2\n", "\nfloor 1\n"), "형식 3의 보상 고르는 중인데 1층");
         }
 
-        /// <summary>형식 4에서 생긴 줄·이벤트·이벤트 칸을 지우고 format 줄을 "format ?"로 바꾼다 (옛 형식의 글을 만들거나 비교할 때).</summary>
+        /// <summary>형식 4 뒤에 생긴 줄(형식 6의 side-limit 포함)·이벤트·이벤트 칸을 지우고 format 줄을 "format ?"로 바꾼다 (옛 형식의 글을 만들거나 비교할 때).</summary>
         static string StripV4(string text)
         {
-            text = Regex.Replace(text, @"\n(floor-kind|chips|shop|floor-event|boss-bonus|reward-bonus|event-seen)( [^\n]*)?(?=\n)", "");
+            text = Regex.Replace(text, @"\n(floor-kind|chips|shop|floor-event|boss-bonus|reward-bonus|event-seen|side-limit)( [^\n]*)?(?=\n)", "");
             text = Regex.Replace(text, @"\n# 이벤트 도감 [^\n]*", "");
             text = Regex.Replace(text, @"\nevent (FloorEntered|ChipsGained|ShopBought|CardUnsealed|UnsealOffered|EventResolved|GoldSettled) [^\n]*", "");
             text = Regex.Replace(text, @" (kind|chips|chips-earned|product|event-id|bonus)=[^ \n]+", "");
@@ -1889,9 +2046,16 @@ namespace DuelRoguelike.Dev
                 threw = true;
             }
             Expect(threw && save.Run == null, "컬렉션 초과 레시피로는 런을 시작할 수 없음");
+            // 시작 사이드 덱: 영구 한도(3장)를 넘는 카드는 임시 칸의 카드라 시작을 막지 않는다. 임시 칸(5장)까지 넘치면 시작만 막는다.
             var sideFour = new PlayerRecipe(save.NewRecipeId(), "사이드 4장", yugi.Deck, outside.Take(4));
             Expect(sideFour.Id == "deck-2" && save.SaveRecipe(sideFour, _db).Count == 0, "시작 사이드 덱 4장: 저장됨");
-            Expect(RecipeRules.StartOnlyProblems(sideFour, _db, collection).Any(p => p.Contains("사이드 덱 4장")), "시작 사이드 덱 4장은 시작만 막음");
+            Expect(RecipeRules.StartOnlyProblems(sideFour, _db, collection).Count == 0 && sideFour.TempSideCards(3) == 1 && sideFour.TempSideCards(4) == 0,
+                "시작 사이드 덱 4장: 4장째는 임시 칸의 카드라 시작을 막지 않음");
+            var sideNine = new PlayerRecipe("deck-x", "사이드 9장", yugi.Deck, outside.Take(9));
+            Expect(RecipeRules.StartOnlyProblems(sideNine, _db, collection).Any(p => p.Contains("사이드 덱 9장")) && RecipeRules.SaveProblems(sideNine, _db).Count == 0
+                   && sideNine.TempSideCards(3) == 5,
+                "시작 사이드 덱 9장 (영구 칸 3 + 임시 칸 5를 넘음)은 시작만 막음");
+            Expect(RecipeRules.StartOnlyProblems(sideNine, _db, collection, sideLimit: 4).Count == 0, "영구 한도가 4장이면 9장도 시작할 수 있음");
 
             // 같은 Id로 저장하면 바꾼다, 지우기.
             var renamed = new PlayerRecipe("deck-2", "사이드 3장", yugi.Deck, outside.Take(3));
@@ -1941,12 +2105,27 @@ namespace DuelRoguelike.Dev
                 "블랙홀 덱 +1, 사이드 +1 (같은 카드명 3장, 컬렉션 1장 남음)");
             Expect(editor.AddReason(DarkHole, false) != null && !editor.Add(DarkHole, true) && editor.NameCopies(DarkHole) == 3,
                 "같은 카드명 4장째는 덱에도 사이드 덱에도 넣을 수 없음");
-            Expect(editor.Add(outside[0], true) && editor.Add(outside[1], true) && editor.Side.Count == 3 && editor.AddReason(outside[2], true) != null,
-                "시작 사이드 덱 3장이 가득 차면 더 못 넣음");
+            Expect(editor.SideLimit == 3 && editor.SideCapacity == 8, "편집기의 시작 사이드 덱: 영구 칸 3 + 임시 칸 5");
+            Expect(editor.Add(outside[0], true) && editor.Add(outside[1], true) && editor.Side.Count == 3 && editor.TempSideCount == 0 && editor.AddReason(outside[2], true) == null,
+                "영구 칸 3장이 차도 임시 칸에 더 넣을 수 있음");
+            for (int i = 2; i <= 6; i++)
+                Expect(editor.Add(outside[i], true), $"임시 칸에 넣기 ({i - 1}번째)");
+            Expect(editor.Side.Count == 8 && editor.TempSideCount == 5 && editor.AddReason(outside[7], true) != null && !editor.Add(outside[7], true),
+                "임시 칸 5장까지 가득 차면 더 못 넣음");
+            Expect(editor.StartOnlyProblems().Count == 0, "임시 칸까지 채운 레시피도 시작할 수 있음: " + string.Join(" / ", editor.StartOnlyProblems()));
+            // 순서: [블랙홀, 바깥0, 바깥1 | 바깥2 … 바깥6]. 앞의 3장이 영구 칸, 뒤의 5장이 임시 칸.
+            Expect(editor.InPermanentSide(outside[1]) && !editor.InTempSide(outside[1]) && editor.InTempSide(outside[6]) && !editor.InPermanentSide(outside[6])
+                   && !editor.IsTempSideSlot(2) && editor.IsTempSideSlot(3), "영구 칸과 임시 칸의 경계");
+            Expect(editor.SideToFront(outside[6]) && editor.Side[0] == outside[6] && editor.InPermanentSide(outside[6]) && editor.InTempSide(outside[1]) && editor.Side.Count == 8,
+                "임시 칸의 카드를 영구 칸으로: 맨 앞으로 오고, 영구 칸의 마지막 카드가 임시 칸으로 밀림");
+            Expect(editor.SideToEnd(outside[6]) && editor.Side.Last() == outside[6] && editor.InTempSide(outside[6]) && editor.InPermanentSide(outside[1]),
+                "영구 칸의 카드를 임시 칸으로: 맨 뒤로 감");
+            Expect(!editor.SideToEnd(outside[6]) && !editor.SideToFront(DarkHole) && !editor.SideToFront(mainOnly[0]),
+                "이미 맨 뒤·맨 앞인 카드와 사이드 덱에 없는 카드는 옮기지 않음");
             Expect(editor.MoveReason(mainOnly[0], true) != null && !editor.Move(mainOnly[0], true), "가득 찬 사이드 덱으로 옮기기 막힘");
-            Expect(editor.Move(outside[0], false) && editor.Side.Count == 2 && editor.MainCount == yugiMain + 2, "사이드 덱 → 덱");
-            Expect(editor.Move(mainOnly[0], true) && editor.Side.Count == 3 && editor.MainCount == yugiMain + 1, "덱 → 사이드 덱");
-            Expect(editor.Remove(mainOnly[0], fromSide: true) && !editor.Remove(mainOnly[0], fromSide: true) && editor.Side.Count == 2, "사이드 덱에서 빼기");
+            Expect(editor.Move(outside[0], false) && editor.Side.Count == 7 && editor.MainCount == yugiMain + 2, "사이드 덱 → 덱");
+            Expect(editor.Move(mainOnly[0], true) && editor.Side.Count == 8 && editor.MainCount == yugiMain + 1, "덱 → 사이드 덱");
+            Expect(editor.Remove(mainOnly[0], fromSide: true) && !editor.Remove(mainOnly[0], fromSide: true) && editor.Side.Count == 7, "사이드 덱에서 빼기");
             uint once = outside.First(c => collection.Count(c) == 1 && editor.NameCopies(c) == 0);
             Expect(editor.Add(once, false) && editor.Add(once, false) && editor.Left(once) == -1 && editor.ShortCards().SequenceEqual(new[] { once }),
                 "컬렉션에 1장인 카드를 2장 넣을 수 있음 (컬렉션 부족으로 표시)");
@@ -1963,6 +2142,17 @@ namespace DuelRoguelike.Dev
             Expect(editor.SaveProblems().Any(p => p.Contains("메인 덱 39장")), "편집 중에는 39장도 둘 수 있고, 저장 규칙이 알려 줌");
             editor.Name = "  ";
             Expect(editor.SaveProblems().Any(p => p.Contains("이름")), "이름을 지우면 저장 규칙이 알려 줌");
+
+            // 시작 사이드 덱은 순서만 바꿔도 바뀐 것으로 친다 (영구 칸·임시 칸이 달라진다). 같은 카드가 두 칸에 다 있으면 임시 칸의 것부터 빠진다.
+            var ordered = new PlayerRecipe("deck-y", "순서", yugi.Deck, outside.Take(4).Append(outside[0]));
+            var orderEditor = new RecipeEditor(ordered, _db, collection, sideLimit: 4);
+            Expect(!orderEditor.IsDirty && orderEditor.SideLimit == 4 && orderEditor.SideCapacity == 9 && orderEditor.TempSideCount == 1
+                   && orderEditor.InPermanentSide(outside[0]) && orderEditor.InTempSide(outside[0]), "영구 한도 4장 편집기: 임시 칸 1장");
+            Expect(orderEditor.SideToFront(outside[3]) && orderEditor.IsDirty
+                   && orderEditor.Build("deck-y").Side.SequenceEqual(new[] { outside[3], outside[0], outside[1], outside[2], outside[0] }),
+                "순서를 바꾸면 바뀐 상태이고, 레시피에 그 순서대로 담김");
+            Expect(orderEditor.Remove(outside[0], fromSide: true) && orderEditor.Side.SequenceEqual(new[] { outside[3], outside[0], outside[1], outside[2] })
+                   && orderEditor.TempSideCount == 0, "같은 카드가 영구 칸과 임시 칸에 있으면 임시 칸의 것부터 뺌");
 
             var blank = new RecipeEditor(null, _db, collection);
             Expect(blank.Id == null && blank.IsDirty && blank.Deck.Count == 0 && blank.Name.Length > 0, "빈 새 레시피");

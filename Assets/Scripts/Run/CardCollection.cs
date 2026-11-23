@@ -1,5 +1,6 @@
 // 컬렉션: 한 번이라도 얻은 카드와 장수. 영구히 유지되고, 얻은 장수만큼 시작 덱(메인·엑스트라·사이드 합)에 넣을 수 있다.
 // 저장은 GameSave가 한다. 카드 코드와 장수만 들고 등급은 들지 않는다 (등급은 바뀔 수 있다).
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using DuelRoguelike.Engine.Data;
@@ -22,6 +23,23 @@ namespace DuelRoguelike.Run
             if (count <= 0)
                 return;
             _counts[code] = Count(code) + count;
+        }
+
+        /// <summary>
+        /// 카드를 count장 뺀다 (분해). 가진 장수보다 많이 빼려 하면 ArgumentOutOfRangeException. 0장이 되면 목록에서 빠진다.
+        /// 얼마나 뺄 수 있는지(3장은 남긴다)는 부르는 쪽(GameSave.Disassemble)이 정한다.
+        /// </summary>
+        public void Remove(uint code, int count = 1)
+        {
+            if (count <= 0)
+                return;
+            int owned = Count(code);
+            if (count > owned)
+                throw new ArgumentOutOfRangeException(nameof(count), count, $"카드 {code}는 {owned}장뿐입니다.");
+            if (owned == count)
+                _counts.Remove(code);
+            else
+                _counts[code] = owned - count;
         }
 
         /// <summary>레시피의 카드를 장수만큼 모두 더한 컬렉션. 첫 버전은 스타터 덱 4개를 지급한 것으로 시작한다 (임시).</summary>

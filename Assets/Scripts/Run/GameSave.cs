@@ -1,6 +1,9 @@
 // 저장 (규칙 결정 문서 "저장·무작위 결과"). 파일 하나에 다음을 담는다:
 // - 컬렉션: 한 번이라도 얻은 카드와 장수 (영구). 처음에는 스타터 덱 4개를 지급한 것으로 시작한다.
-// - 골드: 영구 재화. 끝난 런들에서 얻은 골드(보상 빈 자리·등급 대체 + 런 종료 정산)를 더한 것 (쓰는 곳은 아직 없다).
+// - 골드: 영구 재화. 끝난 런들에서 얻은 골드(보상 빈 자리·등급 대체 + 런 종료 정산)를 더한 것.
+//   쓰는 곳 (골드 상점, docs/ECONOMY.md): 사이드 덱 영구 확장(BuySideDeckExpansion), 런 시작 때의 임시 칸(StartRun의 runSideSlots).
+//   얻는 곳이 하나 더 있다: 컬렉션 분해(Disassemble. 카드 ID마다 3장을 넘는 분만).
+// - 시작 사이드 덱의 영구 한도 (SideDeckLimit, 3 → 10장). 형식 6부터 side-limit 줄에 쓴다. 없으면 3장.
 // - 덱 레시피 (PlayerRecipe): 이름, 메인·엑스트라 덱, 시작 사이드 덱. 새 게임에는 스타터 덱 4개가 레시피로 들어 있다. 마지막으로 런을 시작한 레시피.
 // - 진행 중인 런 (있으면, RunStateSave.cs). 듀얼 중에 저장된 런을 읽으면 그 듀얼을 패배로 처리한다 (ForfeitedDuel).
 // 화면은 층을 오를 때, 듀얼을 시작할 때, 보상 후보를 뽑았을 때(듀얼 결과), 보상을 골랐을 때(컬렉션), 교환·보충마다, 레시피를 저장·지울 때 저장한다.
@@ -9,6 +12,7 @@
 // 형식 1(포인트 대체 횟수, 기절)도 읽는다: 포인트는 골드 환산표로 골드로 바꾸고, 기절은 봉인으로 옮긴다.
 // 형식 2까지(레시피 없음)는 스타터 덱 4개를 레시피로 만들고, 시작 덱별 마지막 시작 사이드 덱(last-side-deck)을 그 레시피의 사이드 덱으로 옮긴다.
 // 형식 3까지(탑 구조·칩 없음)의 런은 칩 0, 지금 층은 전투 층(10층마다 보스 층)으로 읽는다 (RunStateSave.cs).
+// 형식 5까지(side-limit 없음)는 시작 사이드 덱 한도 3장으로 읽는다.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -21,9 +25,10 @@ namespace DuelRoguelike.Run
     public sealed class GameSave
     {
         /// <summary>저장 파일 형식 버전. 형식을 바꾸면 올리고, 이전 버전 파일을 읽는 길을 남긴다.</summary>
-        public const int FormatVersion = 5;
+        public const int FormatVersion = 6;
 
-        static readonly string[] ProfileKeys = { "format", "gold", "last-start-deck" };
+        static readonly string[] ProfileKeys = { "format", "gold", "side-limit", "last-start-deck" };
+        static readonly string[] ProfileKeysV5 = { "format", "gold", "last-start-deck" };
         static readonly string[] RepeatableProfileKeysV2 = { "card", "last-side-deck" };
         static readonly string[] ProfileKeysV1 = { "format", "points", "last-start-deck" };
         static readonly string[] RepeatableProfileKeys = { "card", "recipe", "recipe-deck", "recipe-side", "event-seen" };
@@ -40,8 +45,14 @@ namespace DuelRoguelike.Run
         /// <summary>이벤트 도감 (런을 넘어 모음). 진행 중인 런의 기록은 저장할 때와 런을 정리할 때 더한다.</summary>
         public EventCodex Codex { get; } = new EventCodex();
 
-        /// <summary>골드 누적 (끝난 런의 Gold를 더한 것). 진행 중인 런의 골드는 런이 끝날 때 더한다.</summary>
+        /// <summary>골드 누적 (끝난 런의 Gold를 더한 것). 진행 중인 런의 골드는 런이 끝날 때 더한다. 골드 상점에서 쓰고, 분해로 얻는다.</summary>
         public int Gold { get; private set; }
+
+        /// <summary>
+        /// 시작 사이드 덱의 영구 한도: 런을 시작할 때 사이드 덱에 넣을 수 있는 장수 (RunRules.StartingSideDeckMax ~ PermanentSideDeckMax).
+        /// 골드로 한 장씩 늘린다 (BuySideDeckExpansion). 진행 중인 런에는 영향이 없다 (런 중의 사이드 덱에는 장수 제한이 없다).
+        /// </summary>
+        public int SideDeckLimit { get; private set; } = RunRules.StartingSideDeckMax;
 
         /// <summary>진행 중인 런. 없으면 null. 끝난 런은 CloseEndedRun으로 정리한다.</summary>
         public RunState Run { get; private set; }
@@ -109,9 +120,122 @@ namespace DuelRoguelike.Run
             return Run;
         }
 
-        /// <summary>레시피로 런을 시작한다. 시작할 수 없는 레시피면 ArgumentException (RunState.CheckSetup의 문제 목록).</summary>
-        public RunState StartRun(PlayerRecipe recipe, ulong seed, IReadOnlyList<DeckRecipe> opponents, CardDatabase database, RarityTable rarities) =>
-            StartRun(recipe.ToSetup(seed, opponents), database, rarities);
+        /// <summary>
+        /// 레시피로 런을 시작한다. 시작할 수 없는 레시피면 ArgumentException (RunState.CheckSetup의 문제 목록).
+        /// runSideSlots는 이번 런에 살 사이드 덱 임시 칸 수다 (0 ~ RunSideSlotsMax). 그만큼 임시 칸의 카드를 앞에서부터 가져가고,
+        /// 런이 시작되면 1장에 골드 RunRules.RunSideDeckSlotPrice를 낸다. 살 수 없으면 ArgumentException (RunSideSlotsProblem).
+        /// </summary>
+        public RunState StartRun(PlayerRecipe recipe, ulong seed, IReadOnlyList<DeckRecipe> opponents, CardDatabase database, RarityTable rarities,
+            int runSideSlots = 0)
+        {
+            // 임시 칸까지 넘친 시작 사이드 덱은 여기서 막는다 (ToSetup은 앞에서부터 한도만큼만 가져가므로 CheckSetup은 넘친 것을 모른다).
+            var problems = RecipeRules.StartOnlyProblems(recipe, database, null, SideDeckLimit);
+            string problem = RunSideSlotsProblem(recipe, runSideSlots);
+            if (problem != null)
+                problems.Add(problem);
+            if (problems.Count > 0)
+                throw new ArgumentException("런을 시작할 수 없습니다: " + string.Join("; ", problems));
+            var run = StartRun(recipe.ToSetup(seed, opponents, SideDeckLimit, runSideSlots), database, rarities);
+            Gold -= RunRules.RunSideDeckSlotsPrice(runSideSlots);
+            return run;
+        }
+
+        // ---------------- 골드 상점: 사이드 덱 ----------------
+
+        /// <summary>사이드 덱 영구 확장을 끝까지 샀는지 (10장).</summary>
+        public bool SideDeckLimitMaxed => SideDeckLimit >= RunRules.PermanentSideDeckMax;
+
+        /// <summary>다음 사이드 덱 영구 확장의 값 (n번째 = 50 × n). 끝까지 샀으면 0.</summary>
+        public int SideDeckExpansionPrice =>
+            SideDeckLimitMaxed ? 0 : RunRules.SideDeckExpansionPrice(SideDeckLimit - RunRules.StartingSideDeckMax + 1);
+
+        /// <summary>사이드 덱 영구 확장을 살 수 없는 까닭. 살 수 있으면 null.</summary>
+        public string SideDeckExpansionProblem()
+        {
+            if (SideDeckLimitMaxed)
+                return $"시작 사이드 덱은 {RunRules.PermanentSideDeckMax}장까지";
+            int price = SideDeckExpansionPrice;
+            return Gold < price ? $"골드가 {price - Gold} 모자람" : null;
+        }
+
+        /// <summary>골드를 내고 시작 사이드 덱의 영구 한도를 1장 늘린다. 샀으면 true (못 사면 아무것도 바뀌지 않는다).</summary>
+        public bool BuySideDeckExpansion()
+        {
+            if (SideDeckExpansionProblem() != null)
+                return false;
+            Gold -= SideDeckExpansionPrice;
+            SideDeckLimit++;
+            return true;
+        }
+
+        /// <summary>이 레시피로 런을 시작할 때 살 수 있는 임시 칸의 최대 수: 임시 칸에 든 카드 수 (골드는 보지 않는다).</summary>
+        public int RunSideSlotsMax(PlayerRecipe recipe) => recipe == null ? 0 : recipe.TempSideCards(SideDeckLimit);
+
+        /// <summary>지금 골드로 살 수 있는 임시 칸 수 (RunSideSlotsMax 이하).</summary>
+        public int RunSideSlotsAffordable(PlayerRecipe recipe) => Math.Min(RunSideSlotsMax(recipe), Gold / RunRules.RunSideDeckSlotPrice);
+
+        /// <summary>임시 칸 slots장을 살 수 없는 까닭. 살 수 있으면 null.</summary>
+        public string RunSideSlotsProblem(PlayerRecipe recipe, int slots)
+        {
+            if (slots < 0)
+                return $"사이드 덱 임시 칸 {slots}장";
+            int max = RunSideSlotsMax(recipe);
+            if (slots > max)
+                return $"사이드 덱 임시 칸 {slots}장 (임시 칸에 든 카드는 {max}장)";
+            int price = RunRules.RunSideDeckSlotsPrice(slots);
+            return Gold < price ? $"골드가 {price - Gold} 모자람 (사이드 덱 임시 칸 {slots}장에 골드 {price})" : null;
+        }
+
+        // ---------------- 골드 상점: 컬렉션 분해 ----------------
+
+        /// <summary>이 카드 1장을 분해하면 받는 골드. 등급 표에 없는 카드는 값을 매길 수 없어 0 (분해할 수 없다).</summary>
+        public static int DisassemblyGold(uint code, RarityTable rarities) =>
+            rarities != null && rarities.TryGet(code, out var rarity) ? RunRules.DisassemblyGoldFor(rarity) : 0;
+
+        /// <summary>이 카드에서 분해할 수 있는 장수: 컬렉션에서 RunRules.DisassemblyKeep(3)장을 넘는 분. 등급 표에 없는 카드는 0.</summary>
+        public int DisassemblableCount(uint code, RarityTable rarities) =>
+            DisassemblyGold(code, rarities) > 0 ? Math.Max(0, Collection.Count(code) - RunRules.DisassemblyKeep) : 0;
+
+        /// <summary>분해할 수 있는 카드 전부 (카드 코드 순): 카드, 넘는 장수, 1장의 골드.</summary>
+        public List<(uint Code, int Count, int GoldEach)> Disassemblable(RarityTable rarities)
+        {
+            var list = new List<(uint, int, int)>();
+            foreach (uint code in Collection.Cards.Keys.OrderBy(c => c))
+            {
+                int count = DisassemblableCount(code, rarities);
+                if (count > 0)
+                    list.Add((code, count, DisassemblyGold(code, rarities)));
+            }
+            return list;
+        }
+
+        /// <summary>
+        /// 컬렉션의 카드 count장을 분해해 골드로 바꾼다. 받은 골드를 돌려준다.
+        /// 분해할 수 없으면 (count가 1보다 작음, 3장 아래로 내려감, 등급 표에 없는 카드) 아무것도 바꾸지 않고 0을 돌려준다.
+        /// 진행 중인 런의 덱은 바뀌지 않는다 (런은 시작할 때 덱을 복사해 들고 있다).
+        /// </summary>
+        public int Disassemble(uint code, int count, RarityTable rarities)
+        {
+            if (count < 1 || count > DisassemblableCount(code, rarities))
+                return 0;
+            int gold = DisassemblyGold(code, rarities) * count;
+            Collection.Remove(code, count);
+            Gold += gold;
+            return gold;
+        }
+
+        /// <summary>분해할 수 있는 카드를 모두 분해한다. 받은 골드를 돌려주고, cards에 분해한 장수를 적는다.</summary>
+        public int DisassembleAll(RarityTable rarities, out int cards)
+        {
+            int gold = 0;
+            cards = 0;
+            foreach (var (code, count, _) in Disassemblable(rarities))
+            {
+                gold += Disassemble(code, count, rarities);
+                cards += count;
+            }
+            return gold;
+        }
 
         /// <summary>진행 중인 런을 포기하고 정리한다 (런 종료로 처리). 런이 없으면 아무것도 하지 않는다.</summary>
         public void AbandonRun()
@@ -143,6 +267,7 @@ namespace DuelRoguelike.Run
             w.Comment("DuelRoguelike 저장 파일. 게임이 저절로 쓴다 (직접 고치면 읽지 못할 수 있음).");
             w.Line("format", FormatVersion);
             w.Line("gold", Gold);
+            w.Line("side-limit", SideDeckLimit);
             if (LastStartDeckId != null)
                 w.Line("last-start-deck", LastStartDeckId);
             w.Comment($"덱 레시피 {_recipes.Count}개: recipe Id 이름(공백은 %20) / recipe-deck Id 메인·엑스트라 카드 / recipe-side Id 시작 사이드 덱 카드");
@@ -216,7 +341,8 @@ namespace DuelRoguelike.Run
             if (inRun)
                 throw r.Error(runStart, "end-run이 없음");
 
-            var map = r.Unique(profile, version < 2 ? ProfileKeysV1 : ProfileKeys, version < 3 ? RepeatableProfileKeysV2 : RepeatableProfileKeys);
+            var map = r.Unique(profile, version < 2 ? ProfileKeysV1 : version < 6 ? ProfileKeysV5 : ProfileKeys,
+                version < 3 ? RepeatableProfileKeysV2 : RepeatableProfileKeys);
             var collection = new CardCollection();
             foreach (var line in profile.Where(l => l.Key == "card"))
             {
@@ -239,6 +365,15 @@ namespace DuelRoguelike.Run
             {
                 r.ExpectCount(gold, 1);
                 save.Gold = r.Int(gold, gold.Values[0], 0);
+            }
+            if (map.TryGetValue("side-limit", out var sideLimit))
+            {
+                // 형식 6부터. 없으면 처음 값(3장) 그대로다.
+                r.ExpectCount(sideLimit, 1);
+                int limit = r.Int(sideLimit, sideLimit.Values[0], RunRules.StartingSideDeckMax);
+                if (limit > RunRules.PermanentSideDeckMax)
+                    throw r.Error(sideLimit, $"시작 사이드 덱 한도 {limit}장 ({RunRules.PermanentSideDeckMax}장까지)");
+                save.SideDeckLimit = limit;
             }
             if (map.TryGetValue("last-start-deck", out var lastDeck))
             {
