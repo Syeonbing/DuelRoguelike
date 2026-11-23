@@ -49,7 +49,7 @@ namespace DuelRoguelike.UI
             switch (_run.FloorKind)
             {
                 case FloorKind.Boss:
-                    return $"보스 층: 이기면 칩 {RunRules.ChipsPerBossWin}과 보스 보상 (봉인된 카드가 있으면 1장 봉인 해제, 없으면 승리 보상 1장 더).";
+                    return $"보스 층: 이기면 칩 {RunRules.ChipsForWin(_run.Floor, true)}과 보스 보상 (봉인된 카드가 있으면 1장 봉인 해제, 없으면 승리 보상 1장 더).";
                 case FloorKind.ChipExchange:
                     return "칩교환소: 칩으로 봉인 대상 교체·봉인 해제·아이템 카드를 삽니다. 다 보면 다음 층으로 올라갑니다.";
                 case FloorKind.Rest:
@@ -285,13 +285,22 @@ namespace DuelRoguelike.UI
                 OpenShop();
             }, "X", "K", second ? 112 : 150);
             var grid = OpenCardPick("shop-pick", product == ShopProduct.Unseal ? "봉인 해제" : second ? "대신 봉인할 카드" : "봉인 대상 교체",
-                $"칩 {RunRules.ShopPrice(product)} · " + intro, null, "shop-detail", RenderShopDetail, back, backText);
+                $"칩 {ShopOfferPrice(product)} · " + intro, null, "shop-detail", RenderShopDetail, back, backText);
             foreach (uint candidate in Sorted(candidates))
             {
                 uint code = candidate;
                 grid.Add(PickSlot(pile, code, () => PickShopCard(pile, code)));
             }
             ShowDetail(_selectedPile, _selectedCode, pinned: true);
+        }
+
+        /// <summary>지금 칩교환소에 진열된 이 상품의 가격. 진열할 때 그 층의 가격으로 정해져 저장된 값이다 (층대마다 오른다, docs/ECONOMY.md).</summary>
+        int ShopOfferPrice(ShopProduct product)
+        {
+            foreach (var offer in _run.Shop)
+                if (offer.Product == product)
+                    return offer.Price;
+            return RunRules.ShopPrice(product, _run.Floor);
         }
 
         void RenderShopDetail(VisualElement panel, Pile pile, uint code, bool pinned)
@@ -306,7 +315,7 @@ namespace DuelRoguelike.UI
                 return;
             }
             // 값을 치르는 단계의 버튼에 값을 쓴다
-            string price = $" · 칩 {RunRules.ShopPrice(product)}";
+            string price = $" · 칩 {ShopOfferPrice(product)}";
             string text = second ? "대신 봉인한다" + price
                 : product != ShopProduct.Unseal && ChipExchange.ChoosesNewSeal(product) ? "이 카드의 봉인을 푼다"
                 : "봉인을 푼다" + price;

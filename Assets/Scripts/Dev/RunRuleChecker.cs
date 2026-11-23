@@ -47,6 +47,13 @@ namespace DuelRoguelike.Dev
         public int ChipsSpent;
         public readonly int[] Bought = new int[6];
         public int UnsealStocked;
+        /// <summary>층대별 칩 (1~10, 11~20, …, 51층 이상): 얻음(승리·이벤트), 칩교환소에서 씀, 들어간 칩교환소 수, 칩교환소에 들어갈 때 가진 칩 합.</summary>
+        public const int ChipBands = 6;
+        public readonly int[] BandChipsEarned = new int[ChipBands];
+        public readonly int[] BandChipsSpent = new int[ChipBands];
+        public readonly int[] BandShops = new int[ChipBands];
+        public readonly int[] BandChipsAtShop = new int[ChipBands];
+        public static int Band(int floor) => Math.Min(ChipBands - 1, Math.Max(0, floor - 1) / 10);
         /// <summary>아이템: 칩교환소에 진열된 아이템 카드별 수, 적용한 수, 풀린 수, 적용 중에 한 듀얼 수 (미리보기 늘어남, 코인 토스 승률 오름).</summary>
         public readonly SortedDictionary<uint, int> ItemsStocked = new SortedDictionary<uint, int>();
         public int ItemsApplied, ItemsReleased, DuelsWithPreview, DuelsWithCoinBonus;
@@ -98,12 +105,16 @@ namespace DuelRoguelike.Dev
         /// <summary>등급별 골드 (N, R, SR, UR, FR). 규칙 결정 문서에는 값이 없어서 정한 임시 값 (RunRules.GoldByRarity와 같아야 함).</summary>
         static readonly int[] GoldTable = { 1, 2, 4, 8, 16 };
 
-        /// <summary>칩 (임시 값, RunRules와 같아야 함): 승리 20, 보스 층 승리 50. 칩교환소 가격은 ShopProduct 순서.</summary>
-        const int ChipsPerWin = 20, ChipsPerBossWin = 50;
+        /// <summary>
+        /// 칩 (docs/ECONOMY.md, RunRules와 따로 적는다): 층대 k = (층 − 1) ÷ 10일 때 승리 20 + 10k, 보스 층 승리는 그 2.5배.
+        /// 칩교환소 가격은 1~10층 기본가(ShopProduct 순서, 아이템 카드는 ItemTable) × (1 + 0.5k), 나머지 버림.
+        /// </summary>
+        static int WinChips(int floor, bool boss) { int k = (floor - 1) / 10; return boss ? (20 + 10 * k) * 5 / 2 : 20 + 10 * k; }
+        static int Price(int basePrice, int floor) => basePrice * (2 + (floor - 1) / 10) / 2;
         static readonly int[] PriceTable = { 30, 50, 50, 80, 150 };
 
         /// <summary>
-        /// 아이템 카드 견본 (ItemCards와 따로 적는다): 칩교환소 가격, 효과, 양. 진열은 RunRandom ShopItem(층)의 첫 값 % 2로 이 순서에서 고른다.
+        /// 아이템 카드 견본 (ItemCards와 따로 적는다): 칩교환소 1~10층 기본가, 효과, 양. 진열은 RunRandom ShopItem(층)의 첫 값 % 2로 이 순서에서 고른다.
         /// 고대의 망원경: 미리보기 +1층, 귀속. 천사의 주사위: 코인 토스 +20%p. 둘 다 메인 덱·상점 덱에서 효과, 중첩 안 됨.
         /// </summary>
         static readonly (uint Code, int Price, ItemEffectKind Effect, int Amount, bool Bound)[] ItemTable =
@@ -282,13 +293,13 @@ namespace DuelRoguelike.Dev
                 Expect(lpEvents.Count == 1 && lpEvents[0].LpReason == LpRestoreReason.Win && lpEvents[0].PreviousLp == endLp && lpEvents[0].Lp == endLp + 1000,
                     $"{where}: 승리 LP 이벤트가 이상함");
 
-            // 칩: 승리 20, 보스 층 승리 50 (임시 값).
-            int chips = boss ? ChipsPerBossWin : ChipsPerWin;
+            // 칩: 층대 k마다 승리 20 + 10k, 보스 층 승리는 그 2.5배.
+            int chips = WinChips(b.Floor, boss);
             var gained = events.Where(e => e.Kind == RunEventKind.ChipsGained).ToList();
             Expect(gained.Count == 1 && gained[0].Count == chips && gained[0].Chips == b.Chips + chips, $"{where}: 칩 이벤트가 이상함 (기대 +{chips})");
             Expect(_run.Chips == b.Chips + chips && _run.ChipsEarned == b.ChipsEarned + chips,
                 $"{where}: 칩 {b.Chips} → {_run.Chips}, 얻은 칩 {b.ChipsEarned} → {_run.ChipsEarned} (기대 +{chips})");
-            _stats.ChipsEarned += chips;
+            _stats.ChipsEarned += chips; _stats.BandChipsEarned[RunRuleStats.Band(b.Floor)] += chips;
             if (boss)
                 Expect(duel.IsBossFloor, $"{where}: 보스 층인데 보스 듀얼이 아님");
 
@@ -422,6 +433,7 @@ namespace DuelRoguelike.Dev
             Expect(entered.FloorKind == kind, $"{where}: 층 들어가기 이벤트의 종류 {entered.FloorKind} (런 {kind})");
             _kinds[floor] = kind;
             _stats.FloorVisits[(int)kind]++;
+            if (kind == FloorKind.ChipExchange) { _stats.BandShops[RunRuleStats.Band(floor)]++; _stats.BandChipsAtShop[RunRuleStats.Band(floor)] += _run.Chips; }
             int pos = (floor - 1) % 10 + 1;
             FloorKind? fixedKind = pos == 5 ? FloorKind.ChipExchange : pos == 6 ? FloorKind.Event : pos == 9 ? FloorKind.Rest
                 : pos == 10 ? FloorKind.Boss : (FloorKind?)null;
@@ -448,8 +460,8 @@ namespace DuelRoguelike.Dev
                 var item = ItemTable[RunRandom.For(_run.Seed, floor, RunRandomPurpose.ShopItem).Next(ItemTable.Length)];
                 var last = shop.LastOrDefault();
                 Expect(shop.Take(4).Select(o => o.Product).SequenceEqual(Swaps) && (shop.Count == 5 || unseal)
-                       && shop.Take(shop.Count - 1).All(o => o.Price == PriceTable[(int)o.Product] && !o.Sold)
-                       && last.Product == ShopProduct.ItemCard && last.Card == item.Code && last.Price == item.Price && !last.Sold,
+                       && shop.Take(shop.Count - 1).All(o => o.Price == Price(PriceTable[(int)o.Product], floor) && !o.Sold)
+                       && last.Product == ShopProduct.ItemCard && last.Card == item.Code && last.Price == Price(item.Price, floor) && !last.Sold,
                     $"{where}: 칩교환소 진열이 이상함");
                 if (unseal)
                     _stats.UnsealStocked++;
@@ -762,7 +774,7 @@ namespace DuelRoguelike.Dev
                         {
                             chips += effect.Amount;
                             earned += effect.Amount;
-                            _stats.EventChipsGained += effect.Amount;
+                            _stats.EventChipsGained += effect.Amount; _stats.BandChipsEarned[RunRuleStats.Band(b.Floor)] += effect.Amount;
                         }
                         else
                         {
@@ -800,7 +812,7 @@ namespace DuelRoguelike.Dev
                         {
                             chips += effect.Amount;
                             earned += effect.Amount;
-                            _stats.EventChipsGained += effect.Amount;
+                            _stats.EventChipsGained += effect.Amount; _stats.BandChipsEarned[RunRuleStats.Band(b.Floor)] += effect.Amount;
                         }
                         else if (Next(RunEventKind.CardUnsealed) is RunEvent unsealed)
                         {
@@ -911,9 +923,9 @@ namespace DuelRoguelike.Dev
                 return;
             }
             events = events.Where(e => e.Kind != RunEventKind.ItemReleased).ToList(); // 봉인으로 풀린 아이템은 CheckItems에서 따진다
-            int price = PriceTable[(int)product];
+            int price = Price(PriceTable[(int)product], b.Floor);
             _stats.Bought[(int)product]++;
-            _stats.ChipsSpent += price;
+            _stats.ChipsSpent += price; _stats.BandChipsSpent[RunRuleStats.Band(b.Floor)] += price;
             Expect(offer.Price == price && b.Chips >= price, $"{where}: 가격 {offer.Price} (기대 {price}), 가진 칩 {b.Chips}");
             Expect(_run.Chips == b.Chips - price && _run.ChipsEarned == b.ChipsEarned, $"{where}: 칩 {b.Chips} → {_run.Chips} (기대 -{price})");
             Expect(_run.Shop.Select(o => (o.Product, o.Price, o.Sold)).SequenceEqual(b.Shop.Select(o => (o.Product, o.Price, o.Sold || o.Product == product))),
@@ -975,8 +987,8 @@ namespace DuelRoguelike.Dev
             string where = $"{b.Floor}층 칩교환소 아이템 카드 {card}";
             var item = ItemTable.FirstOrDefault(i => i.Code == card);
             _stats.Bought[(int)ShopProduct.ItemCard]++;
-            _stats.ChipsSpent += price;
-            Expect(item.Code != 0 && price == item.Price && b.Chips >= price, $"{where}: 가격 {price} (기대 {item.Price}), 가진 칩 {b.Chips}");
+            _stats.ChipsSpent += price; _stats.BandChipsSpent[RunRuleStats.Band(b.Floor)] += price;
+            Expect(item.Code != 0 && price == Price(item.Price, b.Floor) && b.Chips >= price, $"{where}: 가격 {price} (기대 {Price(item.Price, b.Floor)}), 가진 칩 {b.Chips}");
             Expect(b.ShopDeck.Count < MaxShopDeck && b.ShopDeck.Count(c => Name(c) == Name(card)) < 3, $"{where}: 상점 덱에 자리가 없는데 삼 ({b.ShopDeck.Count}장)");
             Expect(_run.Chips == b.Chips - price && _run.ChipsEarned == b.ChipsEarned, $"{where}: 칩 {b.Chips} → {_run.Chips} (기대 -{price})");
             Expect(_run.ShopDeck.SequenceEqual(b.ShopDeck.Append(card)), $"{where}: 상점 덱에 1장 더해지지 않음");

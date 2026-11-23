@@ -33,7 +33,7 @@ namespace DuelRoguelike.Run
         /// <summary>메인 덱 / 상점 덱에서 효과가 나는지.</summary>
         public bool InMain { get; }
         public bool InShop { get; }
-        /// <summary>칩교환소 가격 (칩, 임시 값).</summary>
+        /// <summary>칩교환소 1~10층 기본가 (칩). 층대에 따라 RunRules.ScaledShopPrice로 오른다 (docs/ECONOMY.md).</summary>
         public int Price { get; }
 
         internal ItemCard(uint code, string name, ItemEffectKind effect, int amount, bool stacks, bool bound, bool inMain, bool inShop, int price)

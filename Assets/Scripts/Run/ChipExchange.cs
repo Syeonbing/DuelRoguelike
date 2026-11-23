@@ -97,17 +97,17 @@ namespace DuelRoguelike.Run
             return $"봉인된 카드 1장을 골라 풀고(사이드 덱으로), 같은 덱의 {rarity}다른 카드 1장을 {pick} 대신 봉인합니다. 봉인된 장수는 그대로입니다.";
         }
 
-        /// <summary>이 칩교환소(층)의 진열: 봉인 대상 교체 4개는 늘, 봉인 해제는 확률로.</summary>
+        /// <summary>이 칩교환소(층)의 진열: 봉인 대상 교체 4개는 늘, 봉인 해제는 확률로. 가격은 층대에 따라 오른다 (RunRules.ShopPrice).</summary>
         public static List<ShopOffer> Stock(ulong seed, int floor)
         {
             var stock = new List<ShopOffer>();
             foreach (var product in new[] { ShopProduct.SwapSameRarity, ShopProduct.SwapSameRarityChosen, ShopProduct.SwapAny, ShopProduct.SwapAnyChosen })
-                stock.Add(new ShopOffer(product, RunRules.ShopPrice(product)));
+                stock.Add(new ShopOffer(product, RunRules.ShopPrice(product, floor)));
             if (RunRandom.For(seed, floor, RunRandomPurpose.Shop).Next(100) < RunRules.UnsealOfferPercent)
-                stock.Add(new ShopOffer(ShopProduct.Unseal, RunRules.ShopPrice(ShopProduct.Unseal)));
+                stock.Add(new ShopOffer(ShopProduct.Unseal, RunRules.ShopPrice(ShopProduct.Unseal, floor)));
             // 아이템 카드 1장: 목록에서 무작위 (목록·빈도는 견본, 임시)
             var item = ItemCards.All[RunRandom.For(seed, floor, RunRandomPurpose.ShopItem).Next(ItemCards.All.Count)];
-            stock.Add(new ShopOffer(ShopProduct.ItemCard, item.Price, card: item.Code));
+            stock.Add(new ShopOffer(ShopProduct.ItemCard, RunRules.ScaledShopPrice(item.Price, floor), card: item.Code));
             return stock;
         }
     }
