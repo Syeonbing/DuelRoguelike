@@ -25,7 +25,7 @@
 
 ## 소리
 
-효과음은 `Assets/UI/Resources/Audio/Sfx`에, 배경음은 `Assets/UI/Resources/Audio/Music`에 있다. 파일은 고치지 않고 이름만 바꿔 넣었다. 효과음의 길이와 크기는 실행 중에 `Assets/Scripts/UI/Sound.cs`가 줄인다.
+효과음은 `Assets/UI/Resources/Audio/Sfx`에, 배경음은 `Assets/UI/Resources/Audio/Music`에 있다. 파일은 고치지 않고 이름만 바꿔 넣었다. 효과음은 실행 중에 `Assets/Scripts/UI/Sound.cs`가 맞춰서 낸다: 긴 파일은 앞부분만 쓰고, 앞의 무음을 잘라 내고, 한쪽으로 치우친 소리는 가운데로 모으고, 크기를 맞춘다 (`Assets/Scripts/UI/SoundLevel.cs`).
 
 ### 배경음
 
