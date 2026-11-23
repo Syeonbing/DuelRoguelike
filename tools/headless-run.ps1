@@ -159,9 +159,15 @@ $kindNames = '전투', '이벤트', '칩교환소', '휴식', '보스'
 Write-Host ("    탑: 들어간 층 " + ((0..4 | ForEach-Object { "$($kindNames[$_]) $($s.FloorVisits[$_])" }) -join ', '))
 $randomFloors = @(1, 2, 3, 4, 7, 8) | ForEach-Object { "{0}층 {1}/{2}" -f $_, $s.RandomEventFloors[$_], $s.RandomFloorVisits[$_] }
 Write-Host "      확률 이벤트 층 (이벤트/들어감, 규칙 1~3층 10%, 4층 30%, 7~8층 5%): $($randomFloors -join ', ')"
-Write-Host "    칩 (임시 값): 얻음 $($s.ChipsEarned), 씀 $($s.ChipsSpent) / 봉인 해제 진열 $($s.UnsealStocked)곳 (칩교환소 $($s.FloorVisits[2])곳)"
+Write-Host "    칩: 얻음 $($s.ChipsEarned), 씀 $($s.ChipsSpent) / 봉인 해제 진열 $($s.UnsealStocked)곳 (칩교환소 $($s.FloorVisits[2])곳)"
 Write-Host "      구매: 교체(같은 레어도) $($s.Bought[0]), 교체(같은 레어도·직접) $($s.Bought[1]), 교체(레어도 상관없음) $($s.Bought[2]), 교체(레어도 상관없음·직접) $($s.Bought[3]), 봉인 해제 $($s.Bought[4]), 아이템 카드 $($s.Bought[5])"
-Write-Host "      아이템: 진열 $($s.ItemsStockedText), 적용 $($s.ItemsApplied), 풀림 $($s.ItemsReleased), 미리보기 늘린 채 한 듀얼 $($s.DuelsWithPreview), 코인 토스 승률 오른 듀얼 $($s.DuelsWithCoinBonus)"
+$bandNames = '1~10층', '11~20층', '21~30층', '31~40층', '41~50층', '51층~'
+Write-Host '      층대별 (얻음, 씀, 칩교환소 수, 칩교환소에 들어갈 때 평균 가진 칩)'
+for ($i = 0; $i -lt [DuelRoguelike.Dev.RunRuleStats]::ChipBands; $i++) {
+    $avgHeld = if ($s.BandShops[$i] -gt 0) { [math]::Round($s.BandChipsAtShop[$i] / $s.BandShops[$i], 1) } else { '-' }
+    Write-Host ("        {0,-8}: 얻음 {1}, 씀 {2}, 칩교환소 {3}곳, 평균 가진 칩 {4}" -f $bandNames[$i], $s.BandChipsEarned[$i], $s.BandChipsSpent[$i], $s.BandShops[$i], $avgHeld)
+}
+Write-Host "      아이템: 진열$($s.ItemsStockedText), 적용 $($s.ItemsApplied), 풀림 $($s.ItemsReleased), 미리보기 늘린 채 한 듀얼 $($s.DuelsWithPreview), 코인 토스 승률 오른 듀얼 $($s.DuelsWithCoinBonus)"
 Write-Host "    보스 보상: 봉인 해제 $($s.BossUnseals)번, 보상 1장 더 $($s.BossBonusRewards)번 / 런 종료 정산 골드 합 $($s.SettlementGold)"
 Write-Host "    보충: $($s.RefillsRequired)번, $($s.RefillCards)장 / 런 종료 기록 $($s.RunsEnded)번"
 Write-Host '    듀얼 시작 LP별 승률'
