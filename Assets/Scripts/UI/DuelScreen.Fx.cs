@@ -2,7 +2,8 @@
 // 엔진 메시지를 한 단계씩 보여 줄 때(DuelScreen.cs의 "한 단계씩 보여 주기"), 그 단계가 멈춰 있는 동안 연출을 틀어 준다.
 // 상태는 메시지를 받은 시점에 이미 바뀌어 있다 (카드는 벌써 도착한 자리에 있다). 그래서 카드가 날아가는 동안에는
 // 도착한 칸의 카드를 숨기고, 연출 층(fx-layer) 위에서 카드 그림 한 장(ghost)을 출발한 자리에서 도착한 자리로 옮긴다.
-// 시간은 속도 "보통" 기준이고 속도 설정(SpeedFactor)에 따라 함께 줄거나 는다. 건너뛰면 연출을 모두 지우고 결과만 남긴다.
+// 시간은 속도 "보통" 기준이고 속도 설정(SpeedFactor)에 따라 함께 줄거나 는다. 연출은 연출 시계(_clock)로 재므로,
+// 가속하는 동안(필드·스페이스를 누르고 있을 때)에는 틀고 있던 연출까지 그 배속으로 빨라진다. 연출을 지우고 건너뛰는 조작은 없다.
 // "자동으로 끝까지"(개발용)에서는 연출을 틀지 않는다.
 // 조각 연출: 카드 그림을 overflow: hidden 상자 여러 개에 나눠 담고 상자마다 다른 방향으로 옮기고 돌리며 투명하게 만든다.
 using System;
@@ -45,10 +46,10 @@ namespace DuelRoguelike.UI
 
         // ================= 움직임 도구 =================
 
-        /// <summary>delay 뒤에 seconds 동안 step(0→1)을 부른다. 끝나거나 지워질 때 done을 한 번 부른다. 시간은 속도 설정을 따른다.</summary>
+        /// <summary>delay 뒤에 seconds 동안 step(0→1)을 부른다. 끝나거나 지워질 때 done을 한 번 부른다. 시간은 속도 설정을 따르고 연출 시계로 잰다.</summary>
         void Play(float delay, float seconds, Action<float> step, Action done = null, bool linear = false)
         {
-            float k = SpeedFactor, now = Time.realtimeSinceStartup;
+            float k = SpeedFactor, now = _clock.Now;
             _fx.Add(new Fx { Start = now + delay * k, End = now + (delay + seconds) * k, Step = step, Done = done, Linear = linear });
         }
 
@@ -57,7 +58,7 @@ namespace DuelRoguelike.UI
 
         void UpdateFx()
         {
-            float now = Time.realtimeSinceStartup;
+            float now = _clock.Now;
             // 연출이 도는 중에 새 연출이 더해질 수 있어서 개수를 미리 잡아 둔다
             for (int i = 0, n = _fx.Count; i < n; i++)
             {
@@ -82,7 +83,7 @@ namespace DuelRoguelike.UI
                 Render(); // 숨겨 둔 카드를 다시 보인다
         }
 
-        /// <summary>틀고 있던 연출을 모두 지우고 결과만 남긴다 (건너뛰기, 듀얼을 새로 시작할 때, 화면을 다시 지을 때).</summary>
+        /// <summary>틀고 있던 연출을 모두 지우고 결과만 남긴다 (듀얼을 새로 시작하거나 끝낼 때, 개발용 자동 진행, 화면을 다시 지을 때).</summary>
         void ClearFx(bool render = true)
         {
             var running = _fx.ToList();
@@ -224,7 +225,7 @@ namespace DuelRoguelike.UI
         {
             if (loc.Controller > 1 || !(loc.IsOnField || loc.Location == OcgLocation.Hand))
                 return;
-            _hiddenUntil[new CardKey(loc)] = Time.realtimeSinceStartup + seconds * SpeedFactor;
+            _hiddenUntil[new CardKey(loc)] = _clock.Now + seconds * SpeedFactor;
         }
 
         bool IsHidden(CardInfo card) => card != null && _hiddenUntil.Count > 0 && _hiddenUntil.ContainsKey(new CardKey(card.Location));
