@@ -887,7 +887,16 @@ namespace DuelRoguelike.UI
                 }
 
                 int materials = onField ? card.OverlayCodes.Count : 0;
-                string mark = card == null ? null : visible && faceDown ? "세트" : materials > 0 ? $"소재 {materials}" : null;
+                int counters = 0;
+                if (onField)
+                    foreach (var counter in card.Counters)
+                        counters += counter.Count;
+                string mark = card == null ? null
+                    : visible && faceDown ? "세트"
+                    : materials > 0 && counters > 0 ? $"소재 {materials} · 카운터 {counters}"
+                    : materials > 0 ? $"소재 {materials}"
+                    : counters > 0 ? $"카운터 {counters}"
+                    : null;
                 _mark.text = mark ?? "";
                 _markRow.style.display = mark != null ? DisplayStyle.Flex : DisplayStyle.None;
                 _hint.text = card == null ? _emptyText : "";

@@ -101,6 +101,10 @@ namespace DuelRoguelike.UI
                     return $"{_text.Player(m.Player)}: {DuelText.Attribute((OcgAttribute)m.Data)} 선언";
                 case MissedEffectMessage m:
                     return $"{_text.CardName(m.Code)}: 효과 타이밍을 놓쳤다";
+                case CounterMessage m when m.Type == OcgMessageType.AddCounter:
+                    return $"{CardAt(state.Find(m.Card), m.Card)}에 {_text.CounterName(m.CounterType)} {m.Count}개를 놓았다";
+                case CounterMessage m:
+                    return $"{CardAt(state.Find(m.Card), m.Card)}의 {_text.CounterName(m.CounterType)} {m.Count}개를 제거했다";
                 case SimpleMessage m when m.Type == OcgMessageType.Retry:
                     return "엔진이 선택을 받아들이지 않았다. 다시 고른다.";
                 default:
