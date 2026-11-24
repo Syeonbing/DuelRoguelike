@@ -216,6 +216,10 @@ namespace DuelRoguelike.UI
             { "cursed-mirror", "속성:어둠" },
             { "toll-gate", "함정:지속" },
             { "ambush", "함정:일반" },
+            { "wind-nest", "비행야수족" },
+            { "clockwork-soldier", "기계족" },
+            { "blood-contract", "마법:의식" },
+            { "lost-child", "천사족" },
         };
 
         static string EventPictogram(string eventId) =>
