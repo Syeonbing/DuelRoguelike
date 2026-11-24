@@ -30,6 +30,15 @@ namespace DuelRoguelike.UI
         /// <summary>특수 승리 이유 문구. 없으면 null.</summary>
         public string Victory(uint reason) => _strings.Victory(reason);
 
+        /// <summary>
+        /// 카운터 이름 ("마력 카운터" 등). 이름이 없거나 카드 이름을 빌린 것(`카운터("앤틱 기어 캐슬")`)이면 그냥 "카운터"라고 쓴다.
+        /// </summary>
+        public string CounterName(uint type)
+        {
+            string name = _strings.Counter(type);
+            return string.IsNullOrEmpty(name) || name.StartsWith("카운터(") ? "카운터" : name;
+        }
+
         public string Player(byte player) =>
             player == LocalPlayer ? "나" : player == 1 - LocalPlayer ? "상대" : "양쪽";
 
