@@ -1,6 +1,9 @@
 // 탑 이벤트 목록 (견본). 성향마다 몇 개씩, 이벤트 시스템의 형식(사건·선택지·조건·잠긴 선택지·강제 선택·이벤트 전투·
-// 덱 전용·한 번만·이번 런에서 잃음)을 한 번씩은 쓰도록 만든 것이다. 글과 수치는 모두 임시다.
+// 한 번만·이번 런에서 잃음)을 한 번씩은 쓰도록 만든 것이다. 글과 수치는 모두 임시다.
 // 이벤트를 고치거나 더할 때는 이 파일만 고친다. Id는 저장 파일과 도감에 남으므로 바꾸지 않는다 (지운 이벤트는 도감에서 빠진다).
+// 선택지 글에는 할 일만 쓴다. 조건·비용은 If·IfChips로 적으면 화면이 줄 오른쪽 끝에 따로 보여 준다.
+// 덱 전용(ForDeck)은 지금 쓰는 이벤트가 없다. 런의 시작 덱 Id는 레시피 Id라서, 플레이어가 새로 만든 레시피(deck-N)로 한 런에는
+// 나오지 않는다. 특정 덱에 맞춘 이벤트는 카드 보유 조건으로 만든다 (조건을 채우면 등장 가중치도 오른다).
 using System.Collections.Generic;
 using System.Linq;
 using DuelRoguelike.Engine.Data;
@@ -12,7 +15,9 @@ namespace DuelRoguelike.Run
     {
         // 종족·속성 값 (카드 DB의 race·attribute 비트)
         const ulong Dragon = 0x2000;
+        const ulong Machine = 0x20;
         const uint Light = 0x10;
+        const uint Wind = 0x08;
 
         static bool IsMonster(CardRecord r) => (r.Type & OcgCardType.Monster) != 0;
         static bool IsSpell(CardRecord r) => (r.Type & OcgCardType.Spell) != 0;
@@ -25,6 +30,10 @@ namespace DuelRoguelike.Run
         static readonly CardCondition Traps6 = CardCondition.Spec("함정 카드", IsTrap, 6);
         static readonly CardCondition AnySpell = CardCondition.Spec("마법 카드", IsSpell);
         static readonly CardCondition AnyTrap = CardCondition.Spec("함정 카드", IsTrap);
+        static readonly CardCondition AnyMonster = CardCondition.Spec("몬스터 카드", IsMonster);
+        // 시작 덱(스트럭처 덱 3개)에 맞춘 조건: 열풍의 패왕은 바람 속성, 기계의 반란은 기계족이 많다
+        static readonly CardCondition WindMonsters4 = CardCondition.Spec("바람 속성 몬스터", r => IsMonster(r) && r.Data.Attribute == Wind, 4);
+        static readonly CardCondition MachineMonsters5 = CardCondition.Spec("기계족 몬스터", r => IsMonster(r) && (r.Data.Race & Machine) != 0, 5);
 
         /// <summary>아무 일도 없는 이벤트 (꽝). 이벤트를 고를 수 없을 때도 이것이 나온다.</summary>
         public static readonly TowerEvent QuietFloor = TowerEvent.Incident("quiet-floor", "고요한 층",
@@ -41,7 +50,7 @@ namespace DuelRoguelike.Run
             TowerEvent.Choice("dragon-shrine", "용의 사당",
                 "낡은 사당 안쪽에 커다란 용 석상이 잠들어 있다. 제단에는 향이 꺼져 있다.", EventTendency.Positive, 1.5,
                 new EventChoice("용의 힘을 빌려 기도한다", "석상의 눈이 빛나더니 봉인 하나가 풀렸다.", EventEffect.Unseal(60)).If(DragonMonsters2),
-                new EventChoice("시주한다 (칩 30)", "향을 피우고 잠시 쉬었다. 몸이 가벼워졌다.", EventEffect.Chips(-30), EventEffect.Lp(2000)).IfChips(30),
+                new EventChoice("시주한다", "향을 피우고 잠시 쉬었다. 몸이 가벼워졌다.", EventEffect.Chips(-30), EventEffect.Lp(2000)).IfChips(30),
                 new EventChoice("지나간다", "사당을 뒤로하고 계단을 올랐다."))
                 .At(EventSlots.Sixth | EventSlots.Late),
 
@@ -57,7 +66,21 @@ namespace DuelRoguelike.Run
                 new EventChoice("「푸른 눈의 백룡」을 꺼내 보인다", "백룡의 포효가 탑을 울렸다. 벽화 뒤에서 보물이 나왔다.",
                     EventEffect.Gold(5), EventEffect.Chips(80)).If(CardCondition.Named(89631139, "푸른 눈의 백룡")),
                 new EventChoice("지나간다", "벽화를 한 번 더 올려다보고 지나갔다."))
-                .At(EventSlots.Sixth).ForDeck("Kaiba").Once().Holding(HoldScope.Deck),
+                .At(EventSlots.Sixth).Once().Holding(HoldScope.Deck),
+
+            TowerEvent.Choice("wind-nest", "바람의 둥지",
+                "탑 바깥벽에 커다란 새 둥지가 걸려 있다. 둥지 안에서 무언가 반짝인다.", EventTendency.Positive, 0.6,
+                new EventChoice("바람을 타고 날아오른다", "바람이 몸을 들어 올렸다. 둥지 속에 누군가 모아 둔 칩이 가득했다.", EventEffect.Chips(80)).If(WindMonsters4),
+                new EventChoice("벽을 타고 기어오른다", "손바닥이 다 까졌지만 둥지 속 칩을 한 줌 쥐고 내려왔다.", EventEffect.Lp(-1000), EventEffect.Chips(40)),
+                new EventChoice("지나간다", "둥지를 올려다보고 계단을 올랐다."))
+                .At(EventSlots.Early | EventSlots.Late).Holding(HoldScope.Deck),
+
+            TowerEvent.Choice("clockwork-soldier", "멈춘 태엽 병사",
+                "녹슨 기계 병사가 계단참에 멈춰 서 있다. 등에 난 태엽 구멍이 비어 있다.", EventTendency.Positive, 0.8,
+                new EventChoice("부품을 맞춰 고친다", "병사가 삐걱거리며 일어나 품속의 카드를 내밀고는 다시 잠들었다.",
+                    EventEffect.Gain(63995093, "기계 복제술"), EventEffect.Chips(30)).If(MachineMonsters5),
+                new EventChoice("고철로 뜯어 판다", "쓸 만한 부품을 떼어 칩으로 바꿨다.", EventEffect.Chips(50)))
+                .At(EventSlots.Early | EventSlots.Sixth),
 
             // ---------------- 무성향 ----------------
             QuietFloor,
@@ -74,6 +97,20 @@ namespace DuelRoguelike.Run
                 new EventChoice("함정 카드 1장을 내놓는다", "상인이 카드를 받고 칩을 듬뿍 건넸다.", EventEffect.Lose(AnyTrap), EventEffect.Chips(120)).If(Traps5),
                 new EventChoice("거절한다", "상인은 아쉬운 얼굴로 보따리를 쌌다."))
                 .Holding(HoldScope.Deck),
+
+            TowerEvent.Choice("blood-contract", "피의 계약",
+                "검은 옷의 사내가 계약서를 내민다. \"생명력을 조금 나눠 주면 칩을 넉넉히 쳐 주지.\"", EventTendency.Neutral, 0,
+                new EventChoice("계약서에 서명한다", "서명하는 순간 온몸에서 힘이 빠져나갔다. 사내는 약속대로 칩을 내려놓았다.",
+                    EventEffect.Lp(-2000), EventEffect.Chips(80)),
+                new EventChoice("거절한다", "사내는 계약서를 접어 품에 넣고 어둠 속으로 사라졌다."))
+                .At(EventSlots.Early | EventSlots.Late),
+
+            // 잃는 카드는 덱·사이드 덱의 몬스터 중 무작위다 (고를 수 없다). 런의 힘을 골드(영구 재화)로 바꾸는 이벤트.
+            TowerEvent.Choice("lost-child", "길 잃은 아이",
+                "계단참에서 어린 듀얼리스트가 울고 있다. \"카드를 잃어버려서 대회에 못 나가요….\"", EventTendency.Neutral, 0,
+                new EventChoice("카드 1장을 건넨다", "아이가 눈물을 닦고 환하게 웃었다. 뒤따라온 보호자가 사례를 건넸다.",
+                    EventEffect.Lose(AnyMonster), EventEffect.Gold(6)),
+                new EventChoice("달래 주고 지나간다", "아이의 머리를 쓰다듬어 주고 계단을 올랐다.")),
 
             // ---------------- 부정 ----------------
             TowerEvent.Incident("rockfall", "낙석",
@@ -93,7 +130,7 @@ namespace DuelRoguelike.Run
 
             TowerEvent.Choice("toll-gate", "통행세",
                 "험상궂은 문지기가 창을 가로막는다. \"지나가려면 통행세를 내라.\"", EventTendency.Negative, -1,
-                new EventChoice("통행세를 낸다 (칩 60)", "칩을 내고 지나갔다.", EventEffect.Chips(-60)).IfChips(60),
+                new EventChoice("통행세를 낸다", "칩을 내고 지나갔다.", EventEffect.Chips(-60)).IfChips(60),
                 new EventChoice("함정으로 문을 연다", "함정이 문지기의 발을 묶었다. 그 틈에 지나갔다.").If(Traps6),
                 new EventChoice("억지로 지나간다", "문지기에게 붙잡혀 혼쭐이 났다.", EventEffect.Seal(2)).Forced())
                 .At(EventSlots.Early | EventSlots.Sixth).Holding(HoldScope.Deck),

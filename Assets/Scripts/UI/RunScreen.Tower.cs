@@ -458,7 +458,7 @@ namespace DuelRoguelike.UI
 
         /// <summary>
         /// 선택지 글에서 끝의 괄호(비용·조건)를 뗀 것: "시주한다 (칩 30)" → "시주한다".
-        /// 이벤트 자료의 글에는 비용이 괄호로 붙어 있는데, 화면에서는 버튼 오른쪽 끝에 따로 보여 준다.
+        /// 이벤트 자료의 글에는 괄호를 쓰지 않지만(조건은 If·IfChips), 괄호가 붙은 글이 들어와도 화면에서는 버튼 오른쪽 끝에 따로 보여 준다.
         /// </summary>
         static string ChoiceTitle(string label)
         {
