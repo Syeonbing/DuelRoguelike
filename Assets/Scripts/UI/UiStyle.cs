@@ -373,9 +373,28 @@ namespace DuelRoguelike.UI
             p.Stroke();
         }
 
+        static PanelTextSettings _textSettings;
+
+        /// <summary>
+        /// 모든 화면이 함께 쓰는 글자 설정. 유니티 기본값(설정이 없을 때 쓰는 빈 PanelTextSettings)과 같고,
+        /// 한글을 낱말 단위로 줄바꿈하는 것만 켠다. 이것이 꺼져 있으면 한글을 한자·가나처럼 아무 글자 사이에서나 끊는다.
+        /// </summary>
+        static PanelTextSettings SharedTextSettings
+        {
+            get
+            {
+                if (_textSettings != null)
+                    return _textSettings;
+                _textSettings = ScriptableObject.CreateInstance<PanelTextSettings>();
+                _textSettings.name = "DuelTextSettings";
+                _textSettings.lineBreakingRules.useModernHangulLineBreakingRules = true;
+                return _textSettings;
+            }
+        }
+
         /// <summary>
         /// 화면 하나(UIDocument)를 parent 아래 게임 오브젝트로 만들고 루트를 돌려준다. 화면마다 따로 만들고, 숨길 때는 루트의 display를 끈다.
-        /// 기준 해상도 1920×1080, 유니티 기본 런타임 테마, 글꼴 Pretendard.
+        /// 기준 해상도 1920×1080, 유니티 기본 런타임 테마, 글꼴 Pretendard, 한글은 낱말 단위 줄바꿈.
         /// </summary>
         public static VisualElement CreateDocument(Transform parent, string name)
         {
@@ -389,6 +408,7 @@ namespace DuelRoguelike.UI
             panel.themeStyleSheet = Resources.Load<ThemeStyleSheet>("DuelTheme");
             if (panel.themeStyleSheet == null)
                 Debug.LogWarning("Assets/UI/Resources/DuelTheme.tss를 찾지 못했습니다.");
+            panel.textSettings = SharedTextSettings;
 
             var go = new GameObject(name);
             go.SetActive(false);
