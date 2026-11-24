@@ -6,7 +6,8 @@
 1. 어셈블리를 컴파일하고 불러온다 (tools/headless-common.ps1, headless-duel.ps1과 같다).
 2. 등급 표(Assets/StreamingAssets/Data/rarity.txt)를 읽고 확인한다: 상대 덱의 모든 카드에 등급이 있는지, 덱마다 SR·UR이 있는지.
 3. 엔진 없이 런 규칙 시험(RunRuleSelfTest)을 돌린다: 정해 둔 승패로 런을 진행해 기대값과 비교한다.
-4. 런을 돌린다 (HeadlessRunTest). 플레이어 0(-Player)이 시작 덱(-StartDeck)으로 런을 하고, 층마다 WindBot이 무작위 상대 덱을 맡는다.
+4. 런을 돌린다 (HeadlessRunTest). 플레이어 0(-Player)이 시작 덱(-StartDeck)으로 런을 하고, 층마다 WindBot이 무작위 상대 덱을 맡는다
+   (상대 덱 = DeckCatalog.Opponents: 스타터 덱 4개 + 스트럭처 덱 원래 구성 3개). 스트럭처 덱의 시작 덱 판으로 하는 런은 그 덱 하나만 지급한 새 게임에서 시작한다.
    시작 덱마다 시드 FirstSeed ~ FirstSeed+Runs-1의 런을 하나씩 돌린다. 승리 보상(후보 3자리)과 보충할 카드는 무작위로 고른다.
 통과 조건 (종료 코드 0):
 - 등급 표 문제 0, 규칙 시험 실패 0
@@ -24,6 +25,9 @@ PowerShell 7(pwsh)에서 실행한다.
 pwsh -File C:\Dev\DuelRoguelike\tools\headless-run.ps1 -Runs 10 -Player WindBot -StartDeck All
 
 .EXAMPLE
+pwsh -File C:\Dev\DuelRoguelike\tools\headless-run.ps1 -Runs 10 -Player WindBot -StartDeck Start
+
+.EXAMPLE
 pwsh -File C:\Dev\DuelRoguelike\tools\headless-run.ps1 -CheckOnly
 
 .EXAMPLE
@@ -36,7 +40,7 @@ param(
     [int]$FirstSeed = 1,
     [ValidateSet('Auto', 'WindBot', 'Interaction')]
     [string]$Player = 'WindBot',
-    # 시작 덱: Yugi, Kaiba, Joey, Pegasus, All (쉼표로 여러 개)
+    # 시작 덱: 덱 Id(Yugi, LordOfTheStormStart 등)나 All(스타터 덱 4개), Start(스트럭처 덱의 시작 덱 판 3개) 등 (쉼표로 여러 개, Resolve-Decks)
     [string[]]$StartDeck = @('All'),
     # 런 하나의 듀얼 수 상한 (넘으면 끝나지 않은 런으로 실패)
     [int]$MaxDuels = 400,
@@ -64,13 +68,22 @@ $failed = $false
 Write-Step '등급 표 확인'
 if (-not $RarityFile) { $RarityFile = Join-Path $Root 'Assets\StreamingAssets\Data\rarity.txt' }
 $rarities = [DuelRoguelike.Run.RarityTable]::Load($RarityFile)
-$starters = [DuelRoguelike.Engine.Data.StarterDecks]::All
+$opponents = [DuelRoguelike.Engine.Data.DeckCatalog]::Opponents
+$allDecks = [DuelRoguelike.Engine.Data.DeckCatalog]::All
 Write-Host "    $RarityFile : 카드 $($rarities.Count)장"
-foreach ($deck in $starters) {
+foreach ($deck in $allDecks) {
     $c = $rarities.CountByRarity($deck)
-    Write-Host ("    {0}: N {1}, R {2}, SR {3}, UR {4}, FR {5}" -f $deck.Name, $c[0], $c[1], $c[2], $c[3], $c[4])
+    $role = if ($opponents.Contains($deck)) { '상대' } else { '시작' }
+    Write-Host ("    [{0}] {1}: N {2}, R {3}, SR {4}, UR {5}, FR {6}" -f $role, $deck.Name, $c[0], $c[1], $c[2], $c[3], $c[4])
 }
-$rarityProblems = $rarities.Check($starters, $db)
+# 상대 덱은 모든 카드에 등급이 있고 SR·UR이 있어야 한다. 시작 덱 판은 등급이 빠진 카드만 본다 (분해·상점 값에 쓴다).
+$rarityProblems = [Collections.Generic.List[string]]$rarities.Check($opponents, $db)
+foreach ($deck in $allDecks | Where-Object { -not $opponents.Contains($_) }) {
+    foreach ($entry in $deck.Entries) {
+        $grade = [DuelRoguelike.Run.Rarity]::N
+        if (-not $rarities.TryGet($entry.Item1, [ref]$grade)) { $rarityProblems.Add("$($deck.Name): $($entry.Item1) $($db.GetName($entry.Item1))의 등급이 없음") }
+    }
+}
 foreach ($p in $rarityProblems) { Write-Host "      $p" -ForegroundColor Red }
 if ($rarityProblems.Count -gt 0) { $failed = $true } else { Write-Host '    문제 없음' }
 
@@ -90,8 +103,8 @@ if ($CheckOnly) {
 $log = [Action[string]] { param($line) Write-Host $line }
 $duelRun = [DuelRoguelike.Dev.HeadlessDuelRun]::new($cardData, $log)
 
-Write-Step '스타터 덱 레시피 확인'
-foreach ($recipe in $starters) {
+Write-Step '덱 레시피 확인 (스타터 덱, 스트럭처 덱과 그 시작 덱 판)'
+foreach ($recipe in $allDecks) {
     $problems = $duelRun.CheckRecipe($recipe)
     foreach ($p in $problems) { Write-Host "      $($recipe.Id): $p" -ForegroundColor Red }
     if ($problems.Count -gt 0) { $failed = $true }

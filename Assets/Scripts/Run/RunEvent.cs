@@ -243,7 +243,7 @@ namespace DuelRoguelike.Run
         }
 
         /// <summary>스타터 덱이면 표시 이름, 아니면 Id 그대로.</summary>
-        static string DeckNameOf(string id) => StarterDecks.Find(id ?? "")?.Name ?? id;
+        static string DeckNameOf(string id) => DeckCatalog.Find(id ?? "")?.Name ?? id;
 
         public static string PileName(RunPile pile) =>
             pile == RunPile.Main ? "메인 덱" : pile == RunPile.Extra ? "엑스트라 덱" : pile == RunPile.Shop ? "상점 덱" : "사이드 덱";

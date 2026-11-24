@@ -65,6 +65,7 @@ namespace DuelRoguelike.Dev
                          ("옛 저장 파일 (형식 1)", test.SaveFormatV1),
                          ("옛 저장 파일 (형식 2)", test.SaveFormatV2),
                          ("덱 레시피", test.DeckRecipes),
+                         ("스트럭처 덱과 공통 시작 덱", test.StructureDeckRecipes),
                          ("저장 파일 위치·깨진 파일", test.SaveFiles),
                      })
             {
@@ -1487,7 +1488,7 @@ namespace DuelRoguelike.Dev
                 $"대체 골드 = 등급별 골드, 런 골드 {run.Gold}");
             Expect(run.SideDeck.Count == gained.Count, "사이드 덱 장수 = 얻은 카드 수");
             Expect(gained.All(e => run.Collection.Count(e.Code) >= 2), "얻은 카드는 컬렉션에 더해짐");
-            var opponentOf = run.Events.Where(e => e.Kind == RunEventKind.DuelStarted).ToDictionary(e => e.DuelNumber, e => StarterDecks.Find(e.DeckId));
+            var opponentOf = run.Events.Where(e => e.Kind == RunEventKind.DuelStarted).ToDictionary(e => e.DuelNumber, e => DeckCatalog.Find(e.DeckId));
             Expect(offered.All(e => e.Codes.All(c => opponentOf[e.DuelNumber].Entries.Any(x => x.Code == c))), "후보는 그 듀얼 상대 덱의 카드");
 
             // 표를 런 도중에 바꾸면 다음 보상부터 바로 반영된다 (런은 등급을 저장하지 않는다).
@@ -1994,7 +1995,7 @@ namespace DuelRoguelike.Dev
             var save = GameSave.NewGame();
             var collection = save.Collection;
             Expect(save.Recipes.Select(r => r.Id).SequenceEqual(StarterDecks.All.Select(d => d.Id))
-                   && save.Recipes.All(r => r.Name == StarterDecks.Find(r.Id).Name && r.Side.Count == 0 && r.Deck.SequenceEqual(StarterDecks.Find(r.Id).ToCardList())),
+                   && save.Recipes.All(r => r.Name == DeckCatalog.Find(r.Id).Name && r.Side.Count == 0 && r.Deck.SequenceEqual(DeckCatalog.Find(r.Id).ToCardList())),
                 "새 게임: 스타터 덱 4개가 레시피 (사이드 덱 없음)");
             Expect(save.Recipes.All(r => RecipeRules.StartProblems(r, _db, collection).Count == 0), "스타터 덱 레시피로 런을 시작할 수 있음");
 
@@ -2164,6 +2165,63 @@ namespace DuelRoguelike.Dev
             Expect(!blank.IsDirty && blank.Id == built.Id, "저장한 뒤에는 바뀌지 않은 상태, Id가 정해짐");
             blank.Name = built.Name + " ";
             Expect(!blank.IsDirty, "이름 앞뒤 공백만 바꾼 것은 바뀐 것이 아님");
+        }
+
+        /// <summary>스트럭처 덱: 덱 규칙, 덱 목록과 Id 찾기, 시작 덱 판의 바꾼 카드, 그 덱 하나만 지급한 새 게임, 스트럭처 덱 상대가 든 런의 저장.</summary>
+        void StructureDeckRecipes()
+        {
+            Expect(DeckCatalog.All.All(d => d.Validate(_db).Count == 0), "모든 덱 레시피가 덱 규칙에 맞음: "
+                + string.Join(" / ", DeckCatalog.All.SelectMany(d => d.Validate(_db).Select(p => $"{d.Id} {p}"))));
+            Expect(DeckCatalog.All.Select(d => d.Id.ToLowerInvariant()).Distinct().Count() == DeckCatalog.All.Count
+                   && DeckCatalog.All.All(d => DeckCatalog.Find(d.Id.ToUpperInvariant()) == d) && DeckCatalog.Find("Nope") == null,
+                "덱 Id가 겹치지 않고 대소문자 없이 찾음");
+            Expect(DeckCatalog.Opponents.SequenceEqual(StarterDecks.All.Concat(StructureDecks.Originals))
+                   && !StructureDecks.StartVersions.Any(DeckCatalog.Opponents.Contains), "상대 덱 = 스타터 덱 4개 + 스트럭처 덱 원래 구성 3개 (시작 덱 판은 빠짐)");
+            Expect(StructureDecks.Originals.Concat(StructureDecks.StartVersions).All(d => d.CardCount == 40), "스트럭처 덱과 시작 덱 판은 40장");
+
+            // 시작 덱 판 = 원래 구성에서 아래 카드를 1장씩 바꾼 것 (레시피를 만드는 Variant와 따로 적은 기대값).
+            const uint heavyStorm = 19613556, mst = 5318639, avarice = 67169062, offering = 80604091, cylinder = 62279055;
+            const uint catastrophe = 1224927, trunade = 42703248, dustTornado = 60082869, jarOfGreed = 83968380, jarOfAvarice = 98954106,
+                doubleSummon = 43422537, dimensionWall = 67095270;
+            var swaps = new (DeckRecipe Start, DeckRecipe Original, uint[] Out, uint[] In)[]
+            {
+                (StructureDecks.LordOfTheStormStart, StructureDecks.LordOfTheStorm, new[] { heavyStorm, mst }, new[] { catastrophe, dustTornado }),
+                (StructureDecks.MachineReVoltStart, StructureDecks.MachineReVolt, new[] { heavyStorm, mst, avarice, offering }, new[] { trunade, dustTornado, jarOfGreed, doubleSummon }),
+                (StructureDecks.CurseOfDarknessStart, StructureDecks.CurseOfDarkness, new[] { heavyStorm, mst, avarice, cylinder }, new[] { catastrophe, dustTornado, jarOfAvarice, dimensionWall }),
+            };
+            foreach (var (start, original, outCodes, inCodes) in swaps)
+            {
+                var removed = original.ToCardList();
+                foreach (uint c in start.ToCardList())
+                    removed.Remove(c);
+                var added = start.ToCardList();
+                foreach (uint c in original.ToCardList())
+                    added.Remove(c);
+                Expect(removed.OrderBy(c => c).SequenceEqual(outCodes.OrderBy(c => c)) && added.OrderBy(c => c).SequenceEqual(inCodes.OrderBy(c => c)),
+                    $"{start.Id}: 뺀 카드 {string.Join(",", removed)}, 넣은 카드 {string.Join(",", added)}");
+            }
+            Expect(StructureDecks.LordOfTheStormStart.Entries.Count(e => e.Code == dustTornado && e.Count == 2) == 1
+                   && StructureDecks.CurseOfDarknessStart.Entries.Count(e => e.Code == dimensionWall && e.Count == 3) == 1,
+                "이미 있던 카드로 바꾸면 그 줄의 장수가 늘어남 (더스트 토네이도 2장, 디멘션 월 3장)");
+
+            // 공통 시작 덱을 고른 새 게임: 그 덱 하나만 컬렉션과 레시피로 받는다.
+            var deck = StructureDecks.CurseOfDarknessStart;
+            var save = GameSave.NewGame(deck);
+            Expect(save.Collection.Cards.Sum(p => p.Value) == 40
+                   && deck.Entries.All(e => save.Collection.Count(e.Code) == e.Count)
+                   && save.Recipes.Count == 1 && save.Recipes[0].Id == deck.Id && save.Recipes[0].Name == deck.Name
+                   && save.Recipes[0].Deck.SequenceEqual(deck.ToCardList()), "시작 덱 하나만 지급: 컬렉션 40장, 레시피 1개");
+            Expect(GameSave.NewGame().Recipes.Count == 4 && GameSave.NewGame(null).Collection.Cards.Sum(p => p.Value) == 200, "덱을 주지 않으면 지금처럼 스타터 덱 4개");
+            var run = save.StartRun(save.Recipes[0], PlainSeed, DeckCatalog.Opponents, _db, _rarities);
+            var structureIds = new HashSet<string>(StructureDecks.Originals.Select(d => d.Id));
+            for (int i = 0; i < 30 && !run.Events.Any(e => e.Kind == RunEventKind.DuelStarted && structureIds.Contains(e.DeckId)); i++)
+                Play(run, DuelResult.Win, 8000);
+            Expect(run.Events.Any(e => e.Kind == RunEventKind.DuelStarted && structureIds.Contains(e.DeckId)), "스트럭처 덱 상대와 듀얼함");
+            string text = save.Write();
+            var loaded = GameSave.Parse(text, _db, _rarities, "시험");
+            Expect(loaded.Write() == text && loaded.Run.Opponents.Select(d => d.Id).SequenceEqual(DeckCatalog.Opponents.Select(d => d.Id))
+                   && loaded.Run.StartDeckId == deck.Id && loaded.Run.StartDeckName == deck.Name,
+                "스트럭처 덱 상대와 시작 덱 판이 든 런의 저장 쓰고 읽기: " + FirstDifference(text, loaded.Write()));
         }
 
         static string FirstDifference(string a, string b)

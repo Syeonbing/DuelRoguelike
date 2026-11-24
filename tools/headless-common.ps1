@@ -80,18 +80,32 @@ function Initialize-Headless([string]$UnityEditor) {
     foreach ($asm in $assemblies) { Add-Type -Path (Join-Path $OutDir "$($asm.Name).dll") }
 
     Write-Step '카드 데이터 읽는 중'
-    $cardData = [DuelRoguelike.Engine.Data.CardDataSet]::Load((Join-Path $Root 'External'))
-    Write-Host "    카드 $($cardData.CardCount)장, 한글 $($cardData.LocalizedCount)장"
+    $cardData = [DuelRoguelike.Engine.Data.CardDataSet]::Load((Join-Path $Root 'External'),
+        (Join-Path $Root 'Assets\StreamingAssets\Data\card-names.txt'))
+    Write-Host "    카드 $($cardData.CardCount)장, 한글 $($cardData.LocalizedCount)장, 카드명 덮어쓰기 $($cardData.NameOverrideCount)장"
     return $cardData
 }
 
-# -File로 실행하면 쉼표 목록이 문자열 하나로 들어오므로 직접 나눈다. 이름은 Yugi, Kaiba, Joey, Pegasus, All.
+# -File로 실행하면 쉼표 목록이 문자열 하나로 들어오므로 직접 나눈다.
+# 이름은 DeckCatalog의 덱 Id(Yugi, Kaiba, Joey, Pegasus, LordOfTheStorm, MachineReVolt, CurseOfDarkness,
+# LordOfTheStormStart, MachineReVoltStart, CurseOfDarknessStart)와 묶음 All(스타터 덱 4개), Structure(스트럭처 덱 원래 구성 3개),
+# Start(스트럭처 덱의 시작 덱 판 3개), Opponents(상대 덱 7개).
 function Resolve-Decks([string[]]$names, [string]$param) {
+    $groups = @{
+        All       = [DuelRoguelike.Engine.Data.StarterDecks]::All
+        Structure = [DuelRoguelike.Engine.Data.StructureDecks]::Originals
+        Start     = [DuelRoguelike.Engine.Data.StructureDecks]::StartVersions
+        Opponents = [DuelRoguelike.Engine.Data.DeckCatalog]::Opponents
+    }
     $ids = foreach ($n in ($names | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
-        if ($n -eq 'All') { [DuelRoguelike.Engine.Data.StarterDecks]::All | ForEach-Object Id; continue }
-        $recipe = [DuelRoguelike.Engine.Data.StarterDecks]::Find($n)
-        if (-not $recipe) { throw "-$param 에 모르는 덱: $n (Yugi, Kaiba, Joey, Pegasus, All)" }
+        $group = $groups.Keys | Where-Object { $_ -eq $n } | Select-Object -First 1
+        if ($group) { $groups[$group] | ForEach-Object Id; continue }
+        $recipe = [DuelRoguelike.Engine.Data.DeckCatalog]::Find($n)
+        if (-not $recipe) {
+            $known = @([DuelRoguelike.Engine.Data.DeckCatalog]::All | ForEach-Object Id) + @($groups.Keys | Sort-Object)
+            throw "-$param 에 모르는 덱: $n ($($known -join ', '))"
+        }
         $recipe.Id
     }
-    @($ids | Select-Object -Unique | ForEach-Object { [DuelRoguelike.Engine.Data.StarterDecks]::Find($_) })
+    @($ids | Select-Object -Unique | ForEach-Object { [DuelRoguelike.Engine.Data.DeckCatalog]::Find($_) })
 }

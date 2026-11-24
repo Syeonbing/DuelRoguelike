@@ -142,7 +142,7 @@ namespace DuelRoguelike.Run
             r.ExpectAtLeast(opponentsLine, 1);
             var opponents = new List<DeckRecipe>();
             foreach (string id in opponentsLine.Values)
-                opponents.Add(StarterDecks.Find(id) ?? throw r.Error(opponentsLine, $"모르는 상대 덱 \"{id}\""));
+                opponents.Add(DeckCatalog.Find(id) ?? throw r.Error(opponentsLine, $"모르는 상대 덱 \"{id}\""));
 
             string deckName = null; // 형식 2까지는 없다: 스타터 덱 이름이나 Id
             if (map.TryGetValue("start-deck-name", out var deckNameLine))

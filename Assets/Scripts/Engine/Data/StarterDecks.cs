@@ -175,7 +175,7 @@ namespace DuelRoguelike.Engine.Data
             (31122090, 1),  // SDK-K011 역전의 여신 (Gyakutenno Megami)
             (68516705, 1),  // SDK-K012 켄타우로스 (Mystic Horseman)
             (63308047, 1),  // SDK-K013 마인 테라 (Terra the Terrible)
-            (89494469, 1),  // SDK-K014 악몽의 암흑 마신 (Dark Titan of Terror)
+            (89494469, 1),  // SDK-K014 악몽의 악흑 마신 (Dark Titan of Terror). 한글 DB에는 「악몽의 암흑 마신」으로 잘못 들어 있어 card-names.txt로 고친다
             (41949033, 1),  // SDK-K015 어둠의 암살자 (Dark Assailant)
             (75499502, 1),  // SDK-K016 마스터 & 엑스퍼트 (Master & Expert)
             (97360116, 1),  // SDK-K017 악의 무명전사 (Unknown Warrior of Fiend)

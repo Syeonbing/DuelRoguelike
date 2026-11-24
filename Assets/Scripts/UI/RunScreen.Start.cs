@@ -793,7 +793,7 @@ namespace DuelRoguelike.UI
                 Debug.Log($"[런] 포기: {old.StartDeckName}, {old.Floor}층, 듀얼 {old.DuelsPlayed}판, 시드 {old.Seed}");
                 _save.AbandonRun();
             }
-            _run = _save.StartRun(recipe, seed, StarterDecks.All, _data.Database, _rarities, sideSlots);
+            _run = _save.StartRun(recipe, seed, DeckCatalog.Opponents, _data.Database, _rarities, sideSlots);
             _forfeitNotice = null;
             _recipeWindow = RecipeWindow.Closed;
             _runSideSlots = -1;

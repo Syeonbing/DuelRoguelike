@@ -94,6 +94,37 @@ namespace DuelRoguelike.Engine.Data
             return applied;
         }
 
+        /// <summary>
+        /// 카드명 덮어쓰기 표(StreamingAssets/Data/card-names.txt)를 입힌다. 한글 DB의 카드명이 공식 한글 카드명과 다를 때 쓴다.
+        /// 한 줄에 카드 하나: "카드코드 카드명" (카드코드 뒤 첫 공백·탭 다음부터 줄 끝까지가 카드명). # 으로 시작하는 줄은 주석이고 빈 줄은 건너뛴다.
+        /// 카드명만 바꾸고 효과문·BaseName은 그대로 둔다. LoadLocale 다음에 부른다.
+        /// 형식이 틀린 줄, DB에 없는 카드, 같은 카드가 두 번 나오면 FormatException (줄 번호 포함).
+        /// </summary>
+        /// <returns>이름을 바꾼 카드 수</returns>
+        public int ApplyNameOverrides(string text, string sourceName = "card-names.txt")
+        {
+            var seen = new HashSet<uint>();
+            string[] lines = text.Split('\n');
+            for (int i = 0; i < lines.Length; i++)
+            {
+                string line = lines[i].Trim();
+                if (line.Length == 0 || line[0] == '#')
+                    continue;
+                int split = line.IndexOfAny(new[] { ' ', '\t' });
+                string name = split < 0 ? "" : line.Substring(split + 1).Trim();
+                if (split < 0 || name.Length == 0
+                    || !uint.TryParse(line.Substring(0, split), System.Globalization.NumberStyles.None,
+                        System.Globalization.CultureInfo.InvariantCulture, out uint code))
+                    throw new System.FormatException($"{sourceName} {i + 1}번째 줄: \"카드코드 카드명\" 형식이 아닙니다: {line}");
+                if (!_cards.TryGetValue(code, out var record))
+                    throw new System.FormatException($"{sourceName} {i + 1}번째 줄: 카드 DB에 없는 카드코드입니다: {code}");
+                if (!seen.Add(code))
+                    throw new System.FormatException($"{sourceName} {i + 1}번째 줄: 카드 {code}의 이름이 이미 앞에 있습니다.");
+                record.Name = name;
+            }
+            return seen.Count;
+        }
+
         public bool TryGet(uint code, out CardRecord record) => _cards.TryGetValue(code, out record);
 
         /// <summary>읽은 카드 전부 (순서 없음).</summary>

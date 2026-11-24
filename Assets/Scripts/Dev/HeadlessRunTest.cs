@@ -91,8 +91,8 @@ namespace DuelRoguelike.Dev
         {
             report.Runs++;
             string runTag = $"[런 {startDeck.Id} 시드 {seed}]";
-            var setup = new RunSetup { Seed = (ulong)seed, StartDeck = startDeck, Opponents = StarterDecks.All };
-            var save = GameSave.NewGame();
+            var setup = new RunSetup { Seed = (ulong)seed, StartDeck = startDeck, Opponents = DeckCatalog.Opponents };
+            var save = NewSave(startDeck);
             var run = save.StartRun(setup, _db, _rarities);
             var checker = new RunRuleChecker(run, _db, _rarities, report.Rules, runTag);
             CheckSaveRoundTrip(report, save, runTag);
@@ -272,6 +272,13 @@ namespace DuelRoguelike.Dev
         }
 
         /// <summary>
+        /// 런을 시작할 새 저장: 스타터 덱이면 지금 게임처럼 스타터 덱 4개를 지급하고,
+        /// 그 밖의 덱(스트럭처 덱의 시작 덱 판)이면 그 덱 하나만 지급한다 (공통 시작 덱을 고른 새 게임).
+        /// </summary>
+        static GameSave NewSave(DeckRecipe startDeck) =>
+            StarterDecks.Find(startDeck.Id) != null ? GameSave.NewGame() : GameSave.NewGame(startDeck);
+
+        /// <summary>
         /// 칩교환소: 살 수 있는 상품이 있으면 반쯤의 확률로 하나를 무작위로 고른다 (풀 카드·새로 봉인할 카드도 무작위). 사지 않으면 null.
         /// </summary>
         static (ShopProduct Product, uint Release, uint NewSeal)? PickPurchase(RunState run, RunRandom picks)
@@ -316,7 +323,7 @@ namespace DuelRoguelike.Dev
         /// <summary>같은 시드·같은 듀얼 결과·같은 고르기로 런 규칙만 다시 돌려, 이벤트가 모두 같은지 본다.</summary>
         void CheckRuleReplay(Report report, RunSetup setup, RunState original, List<Action<RunState>> steps, string runTag)
         {
-            var replay = RunState.Start(setup, _db, _rarities, CardCollection.FromRecipes(StarterDecks.All));
+            var replay = RunState.Start(setup, _db, _rarities, NewSave(setup.StartDeck).Collection);
             string failed = Replay(() => replay, steps);
             if (failed != null)
             {
@@ -401,7 +408,7 @@ namespace DuelRoguelike.Dev
         {
             if (original.Run.Phase == RunPhase.InDuel)
                 return; // 듀얼이 끝나지 않아 멈춘 런 (따로 중단으로 센다)
-            var save = GameSave.NewGame();
+            var save = NewSave(setup.StartDeck);
             save.StartRun(setup, _db, _rarities);
             string failed;
             try
