@@ -181,7 +181,7 @@ namespace DuelRoguelike.Run
         public string DescribeEffects()
         {
             string effects = Effects.Count == 0 ? "아무 일 없음" : string.Join(", ", Effects.Select(e => e.Describe()));
-            return IsBattle ? $"이벤트 전투 (상대 {StarterDecks.Find(BattleDeckId)?.Name ?? BattleDeckId}) — 이기면 {effects}" : effects;
+            return IsBattle ? $"이벤트 전투 (상대 {DeckCatalog.Find(BattleDeckId)?.Name ?? BattleDeckId}) — 이기면 {effects}" : effects;
         }
     }
 
@@ -251,7 +251,7 @@ namespace DuelRoguelike.Run
             if ((Slots & EventSlots.Sixth) != 0) slots.Add("6층");
             if ((Slots & EventSlots.Late) != 0) slots.Add("7~8층");
             string depth = MaxFloor > 0 ? $"{MinFloor}~{MaxFloor}층" : MinFloor > 1 ? $"{MinFloor}층부터" : "모든 층";
-            string deck = DeckId == null ? "" : $", {StarterDecks.Find(DeckId)?.Name ?? DeckId}로 한 런에서만";
+            string deck = DeckId == null ? "" : $", {DeckCatalog.Find(DeckId)?.Name ?? DeckId}로 한 런에서만";
             return $"자리 {string.Join("·", slots)} (10층 묶음 안), {depth}{deck}{(Repeatable ? "" : ", 한 런에 한 번")}";
         }
 

@@ -8,8 +8,8 @@
    DuelRoguelike.Engine → WindBot.Ignite → DuelRoguelike.AI → DuelRoguelike.Run → DuelRoguelike.UI → DuelRoguelike.Dev
    (.NET Standard 2.1, 유니티 엔진 DLL 참조, 에디터와 같이 DEBUG 정의). 결과는 tools/.cache/headless에 둔다.
 3. ocgcore.dll, sqlite3.dll(Assets/Plugins/x86_64)을 같은 폴더에 복사하고, PowerShell에서 불러 HeadlessDuelRun을 돌린다.
-4. 스타터 덱 4개 레시피(StarterDecks)가 덱 규칙에 맞고 카드 스크립트가 모두 있는지 먼저 확인한다.
-덱은 -Deck0(플레이어 0), -Deck1(플레이어 1)로 고른다: Yugi, Kaiba, Joey, Pegasus, All.
+4. 모든 덱 레시피(DeckCatalog: 스타터 덱 4개, 스트럭처 덱 3개와 그 시작 덱 판)가 덱 규칙에 맞고 카드 스크립트가 모두 있는지 먼저 확인한다.
+덱은 -Deck0(플레이어 0), -Deck1(플레이어 1)로 고른다: 덱 Id(Yugi, LordOfTheStorm, CurseOfDarknessStart 등)나 All(스타터 덱 4개), Structure, Start, Opponents (headless-common.ps1의 Resolve-Decks).
 쉼표로 여러 개를 주면 모든 조합을 차례로 돌린다 (All,All이면 4×4 = 16조합).
 모든 조합에서 모든 판이 끝나고 엔진 오류·예외·대체 응답(화면 조작 모델, WindBot)·엔진이 거절한 응답·해석하지 않은 메시지가 0건이면 종료 코드 0이다.
 화면에서 사람이 고를 수 없는 선택(순서 정하기, 카운터 분배, 카드 선언)은 통과 조건에 넣지 않고 따로 보고한다.
@@ -34,7 +34,7 @@ param(
     [string]$Player0 = 'Auto',
     [ValidateSet('Auto', 'WindBot')]
     [string]$Player1 = 'WindBot',
-    # 플레이어 0·1의 덱: Yugi, Kaiba, Joey, Pegasus, All (쉼표로 여러 개, 모든 조합을 돌린다)
+    # 플레이어 0·1의 덱: 덱 Id나 All·Structure·Start·Opponents (쉼표로 여러 개, 모든 조합을 돌린다, Resolve-Decks)
     [string[]]$Deck0 = @('Yugi'),
     [string[]]$Deck1 = @('Yugi'),
     # 이 시드의 듀얼은 로그를 모두 출력한다 (WindBot 내부 로그 포함)
@@ -57,9 +57,9 @@ $cardData = Initialize-Headless $UnityEditor
 $log = [Action[string]] { param($line) Write-Host $line }
 $run = [DuelRoguelike.Dev.HeadlessDuelRun]::new($cardData, $log)
 
-Write-Step '스타터 덱 레시피 확인'
+Write-Step '덱 레시피 확인 (스타터 덱, 스트럭처 덱과 그 시작 덱 판)'
 $recipeProblems = 0
-foreach ($recipe in [DuelRoguelike.Engine.Data.StarterDecks]::All) {
+foreach ($recipe in [DuelRoguelike.Engine.Data.DeckCatalog]::All) {
     $problems = $run.CheckRecipe($recipe)
     Write-Host "    $($recipe.Id) ($($recipe.Name)): $($recipe.CardCount)장, 문제 $($problems.Count)건"
     foreach ($p in $problems) { Write-Host "      $p" -ForegroundColor Red }

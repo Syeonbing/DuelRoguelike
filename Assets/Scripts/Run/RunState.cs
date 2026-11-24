@@ -75,7 +75,10 @@ namespace DuelRoguelike.Run
         /// </summary>
         public int SideDeckLimit = RunRules.StartingSideDeckMax;
 
-        /// <summary>층마다 무작위로 고를 상대 덱. 첫 버전은 스타터 덱 4개.</summary>
+        /// <summary>
+        /// 층마다 무작위로 고를 상대 덱. 기본값은 스타터 덱 4개(규칙 시험용)이고,
+        /// 게임 화면과 화면 밖 런 시험은 DeckCatalog.Opponents(스타터 덱 4개 + 스트럭처 덱 3개)를 넘긴다.
+        /// </summary>
         public IReadOnlyList<DeckRecipe> Opponents = StarterDecks.All;
     }
 
@@ -235,7 +238,7 @@ namespace DuelRoguelike.Run
         public IReadOnlyList<DeckRecipe> Opponents { get; }
 
         /// <summary>이름을 모르는 시작 덱(형식 2 이전 저장)의 표시 이름: 스타터 덱이면 그 이름, 아니면 Id.</summary>
-        internal static string DefaultDeckName(string id) => StarterDecks.Find(id ?? "")?.Name ?? id;
+        internal static string DefaultDeckName(string id) => DeckCatalog.Find(id ?? "")?.Name ?? id;
 
         /// <summary>런에서 얻은 카드가 더해지는 컬렉션. 없으면(null) 더하지 않는다.</summary>
         public CardCollection Collection { get; }
@@ -407,7 +410,7 @@ namespace DuelRoguelike.Run
         /// <summary>듀얼 번호로 상대와 엔진 시드를 정한다 (같은 런 시드·번호면 늘 같다). 저장 파일의 "듀얼 중" 런을 읽을 때도 쓴다.</summary>
         internal RunDuel CreateDuel(int number, bool playerGoesFirst)
         {
-            var opponent = EventBattlePending ? StarterDecks.Find(PendingEventBattle.BattleDeckId) : OpponentFor(number);
+            var opponent = EventBattlePending ? DeckCatalog.Find(PendingEventBattle.BattleDeckId) : OpponentFor(number);
             var random = RunRandom.For(Seed, number, RunRandomPurpose.Duel);
             var engineSeed = new ulong[4];
             for (int i = 0; i < engineSeed.Length; i++)

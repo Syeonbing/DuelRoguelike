@@ -71,11 +71,15 @@ namespace DuelRoguelike.Run
 
         public PlayerRecipe FindRecipe(string id) => _recipes.FirstOrDefault(r => r.Id == id);
 
-        /// <summary>처음 하는 플레이어의 저장: 스타터 덱 4개를 지급한 컬렉션, 스타터 덱 4개의 레시피, 진행 중인 런 없음.</summary>
-        public static GameSave NewGame()
+        /// <summary>
+        /// 처음 하는 플레이어의 저장: 진행 중인 런 없음. startDeck이 null이면 스타터 덱 4개를 지급한 컬렉션과 그 4개의 레시피,
+        /// 아니면 그 덱 하나(예: 고른 공통 시작 덱 StructureDecks.StartVersions)만 지급한 컬렉션과 그 레시피.
+        /// </summary>
+        public static GameSave NewGame(DeckRecipe startDeck = null)
         {
-            var save = new GameSave(CardCollection.FromRecipes(StarterDecks.All));
-            save._recipes.AddRange(StarterDecks.All.Select(d => PlayerRecipe.FromStarter(d)));
+            var decks = startDeck == null ? StarterDecks.All : new[] { startDeck };
+            var save = new GameSave(CardCollection.FromRecipes(decks));
+            save._recipes.AddRange(decks.Select(d => PlayerRecipe.FromStarter(d)));
             return save;
         }
 

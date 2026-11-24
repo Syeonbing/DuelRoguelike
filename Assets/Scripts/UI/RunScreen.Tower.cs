@@ -424,7 +424,7 @@ namespace DuelRoguelike.UI
                 if (option.IsBattle || known)
                 {
                     var info = RowLabel(known ? "전에 골라 봤다 · " + option.DescribeEffects()
-                        : $"이벤트 전투 · 상대 {StarterDecks.Find(option.BattleDeckId)?.Name ?? option.BattleDeckId} · 지면 일반 패배처럼 봉인된다", 17, UiStyle.TextDim);
+                        : $"이벤트 전투 · 상대 {DeckCatalog.Find(option.BattleDeckId)?.Name ?? option.BattleDeckId} · 지면 일반 패배처럼 봉인된다", 17, UiStyle.TextDim);
                     info.name = $"event-choice-info-{i}";
                     info.style.whiteSpace = WhiteSpace.Normal;
                     texts.Add(info);
