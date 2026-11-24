@@ -112,7 +112,8 @@ namespace DuelRoguelike.UI
             _detail = null;
             _renderDetail = null;
             _startDeckRow = null;
-            _startDeckLayer = OpenStageLayer("start-deck-layer", 0.72f);
+            // 선형 색 공간에서는 어두운 덮개가 옅게 보여서 시안(66%)보다 진하게 덮는다 (돌판 창 OpenSlab과 같은 90%)
+            _startDeckLayer = OpenStageLayer("start-deck-layer", 0.9f);
             if (_startDeckView == StartDeckView.Cards)
                 _startDeckLayer.Add(StartDeckList());
             else
@@ -542,7 +543,7 @@ namespace DuelRoguelike.UI
             var deck = StartDeck;
             var overlay = new VisualElement { name = "start-deck-confirm-layer" };
             UiStyle.Place(overlay, 0, 0, StageWidth, StageHeight);
-            overlay.style.backgroundColor = UiStyle.Alpha(UiStyle.Stone9, 0.8f);
+            overlay.style.backgroundColor = UiStyle.Alpha(UiStyle.Stone9, 0.87f); // 시안의 60%를 선형 색 공간에 맞춘 값
             overlay.style.alignItems = Align.Center;
             overlay.style.justifyContent = Justify.Center;
 
