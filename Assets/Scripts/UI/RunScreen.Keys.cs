@@ -157,6 +157,12 @@ namespace DuelRoguelike.UI
                 RewardKey(nav);
                 return;
             }
+            if (modal && StartDeckOpen)
+            {
+                _navOn = false;
+                StartDeckKey(nav); // 시작 덱 고르기 (고르기 창, 카드 40장 창, 확인 창)
+                return;
+            }
             if (modal && RecipeWindowOpen)
             {
                 _navOn = false;

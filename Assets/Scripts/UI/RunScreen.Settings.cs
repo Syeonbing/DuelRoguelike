@@ -304,6 +304,8 @@ namespace DuelRoguelike.UI
             _seedText = NewSeed().ToString();
             _confirmAbandon = false;
             _recipeWindow = RecipeWindow.Closed;
+            _startDeckView = StartDeckView.Closed;
+            _offerStartDeck = _save.NeedsStartDeck; // 새 저장: 시작 덱 고르기 창을 바로 띄운다
             CloseModal();
             ShowStart();
         }

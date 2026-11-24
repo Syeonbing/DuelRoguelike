@@ -66,6 +66,7 @@ namespace DuelRoguelike.Dev
                          ("옛 저장 파일 (형식 2)", test.SaveFormatV2),
                          ("덱 레시피", test.DeckRecipes),
                          ("스트럭처 덱과 공통 시작 덱", test.StructureDeckRecipes),
+                         ("시작 덱 고르기", test.ChooseStartDeck),
                          ("저장 파일 위치·깨진 파일", test.SaveFiles),
                      })
             {
@@ -2224,6 +2225,49 @@ namespace DuelRoguelike.Dev
                 "스트럭처 덱 상대와 시작 덱 판이 든 런의 저장 쓰고 읽기: " + FirstDifference(text, loaded.Write()));
         }
 
+        void ChooseStartDeck()
+        {
+            // 새 저장: 시작 덱을 고르기 전 (빈 컬렉션, 레시피 없음, 골드 0)
+            var blank = GameSave.Blank();
+            Expect(blank.NeedsStartDeck && blank.Collection.TotalCount == 0 && blank.Recipes.Count == 0 && blank.Gold == 0 && blank.Run == null,
+                "새 저장은 시작 덱을 고르기 전");
+            Expect(!GameSave.NewGame().NeedsStartDeck && !GameSave.NewGame(StructureDecks.MachineReVoltStart).NeedsStartDeck, "덱을 지급한 저장은 고를 것이 없음");
+            string text = blank.Write();
+            var loaded = GameSave.Parse(text, _db, _rarities, "시험");
+            Expect(loaded.NeedsStartDeck && loaded.Write() == text, "고르기 전 저장 쓰고 읽기: " + FirstDifference(text, loaded.Write()));
+
+            // 고르기: 그 덱의 40장과 레시피 하나. 나머지 두 덱의 카드는 받지 않는다.
+            foreach (var deck in StructureDecks.StartVersions)
+            {
+                var save = GameSave.Blank();
+                save.ChooseStartDeck(deck);
+                var others = StructureDecks.StartVersions.Where(d => d != deck).SelectMany(d => d.Entries.Select(e => e.Code))
+                    .Where(c => deck.Entries.All(e => e.Code != c)).ToList();
+                Expect(!save.NeedsStartDeck && save.Collection.TotalCount == 40 && deck.Entries.All(e => save.Collection.Count(e.Code) == e.Count)
+                       && others.All(c => save.Collection.Count(c) == 0),
+                    $"{deck.Id}: 그 덱의 카드 40장만 받음");
+                Expect(save.Recipes.Count == 1 && save.Recipes[0].Id == deck.Id && save.Recipes[0].Name == deck.Name
+                       && save.Recipes[0].Deck.SequenceEqual(deck.ToCardList()) && save.Gold == 0,
+                    $"{deck.Id}: 레시피 하나, 골드 0");
+                Expect(RecipeRules.StartProblems(save.Recipes[0], _db, save.Collection, save.SideDeckLimit).Count == 0, $"{deck.Id}: 받은 레시피로 런을 시작할 수 있음");
+                Expect(save.Write() == GameSave.NewGame(deck).Write(), $"{deck.Id}: 고른 저장 = 그 덱을 지급한 새 게임");
+                var again = GameSave.Parse(save.Write(), _db, _rarities, "시험");
+                Expect(!again.NeedsStartDeck && again.Write() == save.Write(), $"{deck.Id}: 고른 뒤 저장 쓰고 읽기");
+                ExpectThrows<InvalidOperationException>(() => save.ChooseStartDeck(deck), $"{deck.Id}: 두 번 고를 수 없음");
+            }
+            ExpectThrows<ArgumentException>(() => GameSave.Blank().ChooseStartDeck(StarterDecks.Yugi), "공통 시작 덱이 아닌 덱(스타터 덱)은 고를 수 없음");
+            ExpectThrows<ArgumentException>(() => GameSave.Blank().ChooseStartDeck(StructureDecks.LordOfTheStorm), "스트럭처 덱 원래 판은 고를 수 없음");
+            ExpectThrows<InvalidOperationException>(() => GameSave.NewGame().ChooseStartDeck(StructureDecks.LordOfTheStormStart), "옛 저장(스타터 덱 4개)에는 시작 덱을 더 주지 않음");
+
+            // 고른 덱으로 런: 상대는 스타터 덱 4개 + 스트럭처 덱 원래 판 3개
+            var chosen = GameSave.Blank();
+            chosen.ChooseStartDeck(StructureDecks.LordOfTheStormStart);
+            var run = chosen.StartRun(chosen.Recipes[0], PlainSeed, DeckCatalog.Opponents, _db, _rarities);
+            Expect(run.Opponents.Select(d => d.Id).SequenceEqual(StarterDecks.All.Concat(StructureDecks.Originals).Select(d => d.Id)) && run.Opponents.Count == 7,
+                "상대 7개: 스타터 덱 4개 + 스트럭처 덱 원래 판 3개");
+            Expect(!chosen.NeedsStartDeck, "런을 시작해도 고를 것이 없음");
+        }
+
         static string FirstDifference(string a, string b)
         {
             var x = a.Split('\n');
@@ -2243,8 +2287,8 @@ namespace DuelRoguelike.Dev
             try
             {
                 var empty = GameSaveFile.Load(dir, _db, _rarities, out string notice);
-                Expect(empty.Run == null && notice == null && empty.Collection.TotalCount == CardCollection.FromRecipes(StarterDecks.All).TotalCount,
-                    "파일이 없으면 새 게임");
+                Expect(empty.Run == null && notice == null && empty.NeedsStartDeck && empty.Recipes.Count == 0,
+                    "파일이 없으면 시작 덱을 고르기 전의 새 저장");
 
                 var save = GameSave.NewGame();
                 save.StartRun(new RunSetup { Seed = 11, StartDeck = StarterDecks.Joey }, _db, _rarities);
@@ -2267,7 +2311,8 @@ namespace DuelRoguelike.Dev
                 File.WriteAllText(GameSaveFile.FilePath(dir), "엉망");
                 File.WriteAllText(GameSaveFile.BackupPath(dir), "엉망");
                 loaded = GameSaveFile.Load(dir, _db, _rarities, out notice);
-                Expect(notice != null && loaded.Run == null && Directory.GetFiles(dir, "save-broken-*.txt").Length == 2, "둘 다 깨졌으면 새 게임");
+                Expect(notice != null && loaded.Run == null && loaded.NeedsStartDeck && Directory.GetFiles(dir, "save-broken-*.txt").Length == 2,
+                    "둘 다 깨졌으면 시작 덱을 고르기 전의 새 저장");
 
                 // 하드 리셋: 골드·사이드 덱 한도·레시피·런이 있는 저장 두 번(.bak까지) + 깨진 파일 2개 → save.txt 하나만, 새 게임
                 var rich = GameSave.Parse(new Regex(@"\ngold \d+\n").Replace(GameSave.NewGame().Write(), "\ngold 500\n", 1), _db, _rarities, "시험");
@@ -2280,13 +2325,14 @@ namespace DuelRoguelike.Dev
                 File.WriteAllText(GameSaveFile.FilePath(dir) + ".tmp", "쓰다 만 파일");
                 Expect(File.Exists(GameSaveFile.BackupPath(dir)), "리셋 전: .bak이 있음");
                 var reset = GameSaveFile.Reset(dir);
-                string fresh = GameSave.NewGame().Write();
-                Expect(reset.Write() == fresh, "리셋이 돌려준 저장 = 새 게임");
+                string fresh = GameSave.Blank().Write();
+                Expect(reset.Write() == fresh && reset.NeedsStartDeck, "리셋이 돌려준 저장 = 시작 덱을 고르기 전의 새 저장");
                 var files = Directory.GetFiles(dir).Select(Path.GetFileName).OrderBy(f => f).ToArray();
                 Expect(files.Length == 1 && files[0] == GameSaveFile.FileName, $"리셋 뒤에는 save.txt 하나만 남음 ({string.Join(", ", files)})");
                 loaded = GameSaveFile.Load(dir, _db, _rarities, out notice);
-                Expect(notice == null && loaded.Write() == fresh && loaded.Run == null && loaded.Gold == 0 && loaded.SideDeckLimit == RunRules.StartingSideDeckMax,
-                    "리셋 뒤 읽기: 골드 0, 사이드 덱 한도 처음, 런 없음, 새 게임과 같음");
+                Expect(notice == null && loaded.Write() == fresh && loaded.Run == null && loaded.Gold == 0 && loaded.SideDeckLimit == RunRules.StartingSideDeckMax
+                       && loaded.NeedsStartDeck && loaded.Recipes.Count == 0 && loaded.Codex.SeenCount == 0,
+                    "리셋 뒤 읽기: 골드 0, 사이드 덱 한도 처음, 런 없음, 레시피 없음, 시작 덱을 고르기 전");
 
                 // 저장 파일이 없는 폴더에서도 리셋할 수 있다
                 Directory.Delete(dir, true);

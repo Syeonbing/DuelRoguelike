@@ -1,6 +1,6 @@
 // 플레이 모드 시험 (짧은 전용 시험): 골드 상점. docs/UI.md "나머지 창 > 골드 상점", docs/ECONOMY.md "골드 가격".
 // Run 씬의 처음 화면에서 버튼과 가상 키보드만으로 골드 상점을 다뤄 본다. 듀얼은 하지 않는다.
-// 1. 새 게임 (골드 0): 메뉴의 "골드 상점", 사이드 덱 확장 줄은 골드가 모자라 꺼져 있고, 팩·스트럭처 덱은 "준비 중"으로 꺼져 있다.
+// 1. 스타터 덱 4개를 가진 새 게임 (골드 0. 시험 폴더에 써 둔다: TestSaves): 메뉴의 "골드 상점", 사이드 덱 확장 줄은 골드가 모자라 꺼져 있고, 팩·스트럭처 덱은 "준비 중"으로 꺼져 있다.
 // 2. 컬렉션 분해: 3장을 넘게 가진 카드만 나온다. 금색 버튼과 결정 키로 1장씩 분해 → 골드가 늘고 저장 파일에 남는다.
 //    "전부 분해"는 한 번 묻는다 (처음에는 "그만둔다": 결정 키로는 분해되지 않는다). 분해하면 띠 알림이 뜨고, 넘는 카드가 없어진다.
 // 3. 저장 파일을 고쳐 골드 130, 유희 편 레시피의 시작 사이드 덱 5장(영구 칸 3 + 임시 칸 2)으로 다시 켠다.
@@ -51,6 +51,7 @@ namespace DuelRoguelike.Tests
         {
             _saveDir = Path.Combine(Path.GetTempPath(), "DuelRoguelike-goldshop-" + Guid.NewGuid().ToString("N"));
             Environment.SetEnvironmentVariable(SaveDirVariable, _saveDir);
+            TestSaves.WriteStarterSave(_saveDir); // 스타터 덱 4개를 가진 새 게임 (4장인 카드가 있어 분해할 수 있다)
             _listenerVolume = AudioListener.volume;
             AudioListener.volume = 0f;
         }

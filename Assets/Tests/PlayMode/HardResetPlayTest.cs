@@ -4,9 +4,11 @@
 //    탑(허브)에서 연 설정 창에는 초기화 줄이 없다.
 // 2. 다시 켠 처음 화면의 설정 창: 아래 키로 초기화 줄을 고르고 결정 키 → 확인 창 (지우는 것에 골드와 진행 중인 런).
 //    처음에는 "그만둔다"가 골라져 있어 결정 키로는 지워지지 않고 설정 창의 초기화 줄로 돌아온다. 취소 키도 같다.
-// 3. "초기화한다"를 누르면 처음 화면: 초기화 알림, 이어하기 없음, 골드 0. 저장 폴더에는 save.txt 하나만 남고
-//    (바로 전 저장, 깨진 저장 파일도 지움) 컬렉션은 새 게임과 같다.
-// 4. 씬을 다시 불러도(게임을 다시 켠 것처럼) 새 게임 그대로다.
+// 3. "초기화한다"를 누르면 시작 덱을 고르기 전의 새 저장: 처음 화면 위에 시작 덱 고르기 창이 초기화 알림과 함께 바로 뜬다.
+//    저장 폴더에는 save.txt 하나만 남고(바로 전 저장, 깨진 저장 파일도 지움) 컬렉션은 비고 골드 0, 런 없음.
+//    창을 닫으면 처음 화면의 메뉴는 "시작 덱 고르기"뿐이다 (새 런 없음). 시작 덱 고르기 자체는 StartDeckPlayTest가 본다.
+// 4. 씬을 다시 불러도(게임을 다시 켠 것처럼) 시작 덱을 고르기 전 그대로라 고르기 창이 다시 뜬다.
+// 처음에는 스타터 덱 4개를 가진 저장을 시험 폴더에 써 둔다 (TestSaves).
 // 소리는 끈다 (AudioListener.volume = 0). 저장 폴더는 시험마다 새 임시 폴더라 실제 저장 파일은 건드리지 않는다.
 // 환경 변수 DUELROGUELIKE_SCREENSHOT_DIR에 폴더를 주면 화면마다 1920×1080 PNG로 저장한다 (화면 모양 확인용).
 // 시험 어셈블리는 화면 어셈블리를 참조하지 않으므로 화면의 것은 이름으로 부른다 (RunScreenPlayTest와 같다).
@@ -33,8 +35,6 @@ namespace DuelRoguelike.Tests
         const string RunUi = "RunUI";
         const string SaveDirVariable = "DUELROGUELIKE_SAVE_DIR";
         const float LoadTimeout = 120;
-        /// <summary>새 게임의 컬렉션 장수: 스타터 덱 4개 × 50장.</summary>
-        const int NewGameCards = 200;
 
         readonly HashSet<string> _shots = new HashSet<string>();
         string _saveDir;
@@ -47,6 +47,7 @@ namespace DuelRoguelike.Tests
         {
             _saveDir = Path.Combine(Path.GetTempPath(), "DuelRoguelike-hardreset-" + Guid.NewGuid().ToString("N"));
             Environment.SetEnvironmentVariable(SaveDirVariable, _saveDir);
+            TestSaves.WriteStarterSave(_saveDir); // 스타터 덱 4개를 가진 새 게임 (분해할 카드와 유희 편 레시피가 있다)
             _listenerVolume = AudioListener.volume;
             AudioListener.volume = 0f;
         }
@@ -125,24 +126,30 @@ namespace DuelRoguelike.Tests
             Click(Find<Button>("settings-reset-open"));
             yield return null;
             Click(Find<Button>("hard-reset-confirm-button"));
-            yield return WaitFor(() => Find<Button>("title-new-run") != null, 10, "처음 화면");
+            yield return WaitFor(() => Find<VisualElement>("start-deck") != null, 10, "시작 덱 고르기 창");
             Assert.IsNull(Find<VisualElement>("hard-reset-confirm"), "초기화한 뒤에도 확인 창이 남아 있다");
-            StringAssert.Contains("초기화했습니다", Text("reset-notice") ?? "", "초기화 알림이 없다");
-            Assert.IsNull(Find<Button>("continue-run"), "초기화했는데 이어하기가 있다");
-            Assert.AreEqual("골드 0", Text("title-gold"), "초기화한 뒤 메뉴의 골드");
-            yield return Shot("reset-2-title");
+            StringAssert.Contains("초기화했습니다", Text("start-deck-notice") ?? "", "시작 덱 고르기 창에 초기화 알림이 없다");
+            yield return Shot("reset-2-start-deck");
             var files = Directory.GetFiles(_saveDir).Select(Path.GetFileName).ToArray();
             Assert.AreEqual(new[] { "save.txt" }, files, "초기화한 뒤 저장 폴더에는 save.txt만 남아야 한다");
             Assert.AreEqual(0, SavedGold(), "초기화한 뒤 저장 파일의 골드");
             Assert.IsFalse(SaveText().Contains("\nrun\n"), "초기화한 뒤 저장 파일에 런이 남아 있다");
-            Assert.AreEqual(NewGameCards, SavedCollection().Values.Sum(), "초기화한 뒤 컬렉션 장수 (새 게임)");
+            Assert.AreEqual(0, SavedCollection().Count, "초기화한 뒤 컬렉션 (시작 덱을 고르기 전이라 비어 있다)");
+            Assert.IsFalse(SaveText().Contains("\nrecipe "), "초기화한 뒤 저장 파일에 레시피가 남아 있다");
+            yield return Tap(Key.X);
+            Assert.IsNull(Find<VisualElement>("start-deck"), "취소 키로 시작 덱 고르기 창이 닫히지 않았다");
+            Assert.IsNotNull(Find<Button>("title-start-deck"), "고르기 전의 처음 화면에 시작 덱 고르기가 없다");
+            Assert.IsNull(Find<Button>("title-new-run"), "시작 덱을 고르기 전인데 새 런이 있다");
+            Assert.IsNull(Find<Button>("continue-run"), "초기화했는데 이어하기가 있다");
+            StringAssert.Contains("초기화했습니다", Text("reset-notice") ?? "", "처음 화면에 초기화 알림이 없다");
+            yield return Shot("reset-3-title");
 
-            // ---- 4. 다시 켜도 새 게임 ----
+            // ---- 4. 다시 켜도 시작 덱을 고르기 전 ----
             yield return LoadTitle();
-            Assert.AreEqual("골드 0", Text("title-gold"), "다시 켠 뒤의 골드");
-            Assert.IsNull(Find<Button>("continue-run"), "다시 켠 뒤에 이어하기가 있다");
-            Assert.IsNull(Find<Label>("reset-notice"), "다시 켠 뒤에도 초기화 알림이 남아 있다");
-            Debug.Log("[하드 리셋 시험] 통과: 탑에는 없음, 확인 창 그만두기, 초기화, 다시 켜기");
+            Assert.IsNotNull(Find<VisualElement>("start-deck"), "다시 켰는데 시작 덱 고르기 창이 뜨지 않았다");
+            Assert.IsNull(Find<Label>("start-deck-notice"), "다시 켠 뒤에도 초기화 알림이 남아 있다");
+            Assert.AreEqual(0, SavedCollection().Count, "다시 켠 뒤의 컬렉션");
+            Debug.Log("[하드 리셋 시험] 통과: 탑에는 없음, 확인 창 그만두기, 초기화(시작 덱을 고르기 전), 다시 켜기");
         }
 
         // ================= 도우미 (GoldShopPlayTest와 같다) =================
@@ -152,7 +159,8 @@ namespace DuelRoguelike.Tests
             SceneManager.LoadScene("Run");
             yield return null;
             yield return null;
-            yield return WaitFor(() => Find<Button>("title-new-run") != null, LoadTimeout, "처음 화면");
+            // 시작 덱을 고른 저장은 처음 화면의 새 런, 고르기 전의 저장은 시작 덱 고르기 창
+            yield return WaitFor(() => Find<Button>("title-new-run") != null || Find<VisualElement>("start-deck") != null, LoadTimeout, "처음 화면");
         }
 
         static string Text(string name) => Find<Label>(name)?.text;
