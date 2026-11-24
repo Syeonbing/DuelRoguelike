@@ -22,8 +22,8 @@ namespace DuelRoguelike.AI
             public const int TrapHole = 4206964;             // 함정 속으로
             public const int DragonCaptureJar = 50045299;    // 드래곤족 봉인항아리
             public const int Raigeki = 12580477;             // 번개
-            public const int HeavyStorm = 19613556;          // 대폭풍
-            public const int MysticalSpaceTyphoon = 5318639; // 사이크론
+            public const int HeavyStorm = 19613556;          // 태풍
+            public const int MysticalSpaceTyphoon = 5318639; // 싸이크론
         }
 
         /// <summary>죽은 자의 소생으로 되살릴 만한 최소 공격력.</summary>

@@ -176,6 +176,7 @@ namespace DuelRoguelike.UI
             {
                 GameSaveFile.Save(_save, _saveDir);
                 _saveNotice = null;
+                _resetNotice = null;
             }
             catch (Exception e)
             {
