@@ -144,7 +144,7 @@ namespace DuelRoguelike.UI
         {
             // 에디터에서는 저장소의 External 폴더를 바로 읽는다 (DuelScreen과 같다). 실행 파일 빌드용 경로는 나중에 정한다.
             string externalRoot = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "External"));
-            _data = CardDataSet.Load(externalRoot);
+            _data = CardDataSet.Load(externalRoot, Path.Combine(Application.streamingAssetsPath, CardDataSet.NameOverridesRelativePath));
             _text = new DuelText(_data.Database, _data.Strings, 0);
             _rarities = RarityTable.Load(Path.Combine(Application.streamingAssetsPath, RarityTable.DefaultRelativePath));
             _images = CardImages.FromGameFolder();

@@ -836,12 +836,12 @@ namespace DuelRoguelike.UI
         {
             // 에디터에서는 저장소의 External 폴더를 바로 읽는다. 실행 파일 빌드용 경로는 나중에 정한다.
             string externalRoot = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "External"));
-            var data = CardDataSet.Load(externalRoot);
+            var data = CardDataSet.Load(externalRoot, Path.Combine(Application.streamingAssetsPath, CardDataSet.NameOverridesRelativePath));
             _db = data.Database;
             _scripts = data.Scripts;
             _text = new DuelText(_db, data.Strings, Me);
             _logFormatter = new DuelLogFormatter(_text);
-            Debug.Log($"[듀얼] 카드 {data.CardCount}장, 한글 {data.LocalizedCount}장, 시스템 문구 {data.Strings.Count}개, 스크립트 {_scripts.Count}개");
+            Debug.Log($"[듀얼] 카드 {data.CardCount}장, 한글 {data.LocalizedCount}장, 카드명 덮어쓰기 {data.NameOverrideCount}장, 시스템 문구 {data.Strings.Count}개, 스크립트 {_scripts.Count}개");
         }
 
         /// <summary>혼자 듀얼: 인스펙터의 고정 덱과 시드로 시작한다.</summary>

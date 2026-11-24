@@ -80,8 +80,9 @@ function Initialize-Headless([string]$UnityEditor) {
     foreach ($asm in $assemblies) { Add-Type -Path (Join-Path $OutDir "$($asm.Name).dll") }
 
     Write-Step '카드 데이터 읽는 중'
-    $cardData = [DuelRoguelike.Engine.Data.CardDataSet]::Load((Join-Path $Root 'External'))
-    Write-Host "    카드 $($cardData.CardCount)장, 한글 $($cardData.LocalizedCount)장"
+    $cardData = [DuelRoguelike.Engine.Data.CardDataSet]::Load((Join-Path $Root 'External'),
+        (Join-Path $Root 'Assets\StreamingAssets\Data\card-names.txt'))
+    Write-Host "    카드 $($cardData.CardCount)장, 한글 $($cardData.LocalizedCount)장, 카드명 덮어쓰기 $($cardData.NameOverrideCount)장"
     return $cardData
 }
 
