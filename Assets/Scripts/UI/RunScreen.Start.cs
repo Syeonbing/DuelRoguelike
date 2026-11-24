@@ -1,6 +1,8 @@
 // 런 화면: 처음 화면과 레시피 창(새 런, 덱 편집). docs/UI.md "나머지 창 > 처음 화면, 새 런". RunScreen.cs의 머리말 참고.
 // - 처음 화면: 탑 장면 위에 제목, 오른쪽 아래 명령 메뉴(이어하기, 새 런, 덱 편집, 골드 상점, 이벤트 도감, 끝내기),
 //   왼쪽 아래 판(이어 할 런, 컬렉션, 골드). 골드 상점은 RunScreen.GoldShop.cs.
+//   시작 덱을 고르기 전(새 저장)에는 메뉴가 시작 덱 고르기(title-start-deck), 설정, 끝내기뿐이고, 처음 화면 위에 시작 덱 고르기 창이
+//   바로 뜬다 (RunScreen.StartDeck.cs). 왼쪽 아래 판은 "아직 시작 덱을 고르지 않았다."(title-no-deck).
 // - 레시피 창(recipe-window): 처음 화면 위에 뜨는 큰 돌판. 왼쪽 레시피 목록(recipe-<Id>), 가운데 고른 레시피의 카드(탭),
 //   오른쪽 상세 카드(start-card-detail)·시드·시작. "새 런"으로 열면 금색 버튼이 "이 덱으로 시작"이고,
 //   "덱 편집"으로 열면 "이 레시피를 편집"이다.
@@ -89,6 +91,20 @@ namespace DuelRoguelike.UI
 
             var stage = NewStage("title-stage");
             stage.Add(new TowerScene { Marker = 0, Opponent = 0 });
+            if (!_save.NeedsStartDeck)
+                _startDeckView = StartDeckView.Closed;
+            else if (_offerStartDeck)
+            {
+                // 새 저장: 처음 화면 위에 시작 덱 고르기 창을 바로 띄운다 (한 번. 닫으면 메뉴의 "시작 덱 고르기"로 다시 연다)
+                _offerStartDeck = false;
+                _startDeckView = StartDeckView.Choose;
+            }
+            if (_startDeckView != StartDeckView.Closed)
+            {
+                // 시작 덱 고르기 창은 탑 장면만 깔고 뜬다 (처음 화면의 제목·메뉴·판은 닫을 때 다시 그린다)
+                DrawStartDeck();
+                return;
+            }
             var title = UiStyle.Box("title-name");
             title.pickingMode = PickingMode.Ignore;
             title.style.position = Position.Absolute;
@@ -147,6 +163,20 @@ namespace DuelRoguelike.UI
                 reset.style.marginBottom = 8;
                 panel.Add(reset);
             }
+            if (_save.NeedsStartDeck)
+            {
+                var none = UiStyle.Label("아직 시작 덱을 고르지 않았다.", 27, UiStyle.Text, bold: true);
+                none.name = "title-no-deck";
+                none.style.whiteSpace = WhiteSpace.NoWrap;
+                panel.Add(none);
+                var opens = Text("시작 덱을 고르면 새 런, 덱 편집, 골드 상점이 열린다.", 19, UiStyle.TextDim, top: 4);
+                opens.style.whiteSpace = WhiteSpace.Normal;
+                panel.Add(opens);
+                var where = Text("저장: " + GameSaveFile.FilePath(_saveDir), 13, UiStyle.TextDim, top: 10);
+                where.style.whiteSpace = WhiteSpace.Normal;
+                panel.Add(where);
+                return panel;
+            }
             var run = _save.Run;
             if (run != null)
             {
@@ -184,12 +214,21 @@ namespace DuelRoguelike.UI
             panel.style.paddingBottom = 14;
             var menu = new MenuList();
             var run = _save.Run;
-            if (run != null)
-                menu.Add("continue-run", "이어하기", ContinueRun, $"{run.Floor}층 · 듀얼 {run.DuelsPlayed}판");
-            menu.Add("title-new-run", "새 런", () => OpenRecipes(RecipeWindow.NewRun));
-            menu.Add("title-edit", "덱 편집", () => OpenRecipes(RecipeWindow.Edit), $"레시피 {_save.Recipes.Count}개");
-            menu.Add("open-gold-shop", "골드 상점", OpenGoldShop, $"골드 {_save.Gold}", subName: "title-gold");
-            menu.Add("open-codex", "이벤트 도감", OpenCodex, $"{_save.Codex.SeenCount} / {TowerEventList.All.Count}");
+            if (_save.NeedsStartDeck)
+            {
+                // 시작 덱을 고르기 전: 고르기, 설정(음량), 끝내기만 있다
+                var pick = menu.Add("title-start-deck", "시작 덱 고르기", OpenStartDeck);
+                pick.Add(NewBadge("처음"));
+            }
+            else
+            {
+                if (run != null)
+                    menu.Add("continue-run", "이어하기", ContinueRun, $"{run.Floor}층 · 듀얼 {run.DuelsPlayed}판");
+                menu.Add("title-new-run", "새 런", () => OpenRecipes(RecipeWindow.NewRun));
+                menu.Add("title-edit", "덱 편집", () => OpenRecipes(RecipeWindow.Edit), $"레시피 {_save.Recipes.Count}개");
+                menu.Add("open-gold-shop", "골드 상점", OpenGoldShop, $"골드 {_save.Gold}", subName: "title-gold");
+                menu.Add("open-codex", "이벤트 도감", OpenCodex, $"{_save.Codex.SeenCount} / {TowerEventList.All.Count}");
+            }
             menu.Add("open-settings", "설정", OpenSettings);
             menu.Add("title-quit", "끝내기", () => Application.Quit());
             menu.Select(Mathf.Clamp(_titleMenuIndex, 0, menu.Count - 1));
@@ -200,6 +239,21 @@ namespace DuelRoguelike.UI
             hints.style.paddingLeft = 10;
             panel.Add(hints);
             return panel;
+        }
+
+        /// <summary>메뉴 항목 이름 옆의 작은 금색 꼬리표 ("처음").</summary>
+        static Label NewBadge(string text)
+        {
+            var badge = UiStyle.Label(text, 15, GoldInk, bold: true);
+            badge.name = "title-badge";
+            badge.pickingMode = PickingMode.Ignore;
+            badge.style.whiteSpace = WhiteSpace.NoWrap;
+            badge.style.backgroundColor = UiStyle.Gold;
+            badge.style.marginLeft = 10;
+            badge.style.paddingLeft = badge.style.paddingRight = 7;
+            badge.style.paddingTop = badge.style.paddingBottom = 1;
+            UiStyle.Radius(badge, 4);
+            return badge;
         }
 
         void TitleKey(Nav nav)

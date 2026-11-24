@@ -3,7 +3,9 @@
     "rootNamespace": "DuelRoguelike.Tests",
     "references": [
         "UnityEngine.TestRunner",
-        "Unity.InputSystem"
+        "Unity.InputSystem",
+        "DuelRoguelike.Engine",
+        "DuelRoguelike.Run"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

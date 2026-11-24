@@ -1,10 +1,12 @@
 // 저장 (규칙 결정 문서 "저장·무작위 결과"). 파일 하나에 다음을 담는다:
-// - 컬렉션: 한 번이라도 얻은 카드와 장수 (영구). 처음에는 스타터 덱 4개를 지급한 것으로 시작한다.
+// - 컬렉션: 한 번이라도 얻은 카드와 장수 (영구). 새 저장(Blank)은 비어 있고, 플레이어가 고른 공통 시작 덱 하나(StructureDecks.StartVersions)의
+//   40장을 지급받아 시작한다 (ChooseStartDeck). 시작 덱을 고르기 전에는 NeedsStartDeck이다.
+//   스타터 덱 4개를 지급한 NewGame()은 시험·헤드리스 실행과 이전 저장 형식 읽기에 남겨 둔다.
 // - 골드: 영구 재화. 끝난 런들에서 얻은 골드(보상 빈 자리·등급 대체 + 런 종료 정산)를 더한 것.
 //   쓰는 곳 (골드 상점, docs/ECONOMY.md): 사이드 덱 영구 확장(BuySideDeckExpansion), 런 시작 때의 임시 칸(StartRun의 runSideSlots).
 //   얻는 곳이 하나 더 있다: 컬렉션 분해(Disassemble. 카드 ID마다 3장을 넘는 분만).
 // - 시작 사이드 덱의 영구 한도 (SideDeckLimit, 3 → 10장). 형식 6부터 side-limit 줄에 쓴다. 없으면 3장.
-// - 덱 레시피 (PlayerRecipe): 이름, 메인·엑스트라 덱, 시작 사이드 덱. 새 게임에는 스타터 덱 4개가 레시피로 들어 있다. 마지막으로 런을 시작한 레시피.
+// - 덱 레시피 (PlayerRecipe): 이름, 메인·엑스트라 덱, 시작 사이드 덱. 고른 시작 덱이 첫 레시피가 된다. 마지막으로 런을 시작한 레시피.
 // - 진행 중인 런 (있으면, RunStateSave.cs). 듀얼 중에 저장된 런을 읽으면 그 듀얼을 패배로 처리한다 (ForfeitedDuel).
 // 화면은 층을 오를 때, 듀얼을 시작할 때, 보상 후보를 뽑았을 때(듀얼 결과), 보상을 골랐을 때(컬렉션), 교환·보충마다, 레시피를 저장·지울 때 저장한다.
 // 그래서 무작위 결과(상대, 보상 후보, 봉인할 카드)를 다시 켜서 다시 뽑을 수 없다.
@@ -72,7 +74,7 @@ namespace DuelRoguelike.Run
         public PlayerRecipe FindRecipe(string id) => _recipes.FirstOrDefault(r => r.Id == id);
 
         /// <summary>
-        /// 처음 하는 플레이어의 저장: 진행 중인 런 없음. startDeck이 null이면 스타터 덱 4개를 지급한 컬렉션과 그 4개의 레시피,
+        /// 시작 덱을 지급한 저장 (시험·헤드리스 실행용. 게임이 새로 만드는 저장은 Blank다): 진행 중인 런 없음. startDeck이 null이면 스타터 덱 4개를 지급한 컬렉션과 그 4개의 레시피,
         /// 아니면 그 덱 하나(예: 고른 공통 시작 덱 StructureDecks.StartVersions)만 지급한 컬렉션과 그 레시피.
         /// </summary>
         public static GameSave NewGame(DeckRecipe startDeck = null)
@@ -81,6 +83,30 @@ namespace DuelRoguelike.Run
             var save = new GameSave(CardCollection.FromRecipes(decks));
             save._recipes.AddRange(decks.Select(d => PlayerRecipe.FromStarter(d)));
             return save;
+        }
+
+        /// <summary>
+        /// 게임이 새로 만드는 저장 (저장 파일이 없을 때, 하드 리셋): 시작 덱을 아직 고르지 않았다 (빈 컬렉션, 레시피 없음, 골드 0).
+        /// 화면은 NeedsStartDeck이면 시작 덱 고르기 창을 띄우고, 고른 덱을 ChooseStartDeck으로 지급한다.
+        /// </summary>
+        public static GameSave Blank() => new GameSave(new CardCollection());
+
+        /// <summary>시작 덱을 아직 고르지 않았는지: 컬렉션이 비어 있다 (분해는 카드마다 3장을 남기므로 고른 뒤에는 비지 않는다).</summary>
+        public bool NeedsStartDeck => Collection.TotalCount == 0 && Run == null;
+
+        /// <summary>
+        /// 시작 덱을 고른다: 그 덱(공통 시작 덱 StructureDecks.StartVersions 중 하나)의 카드를 컬렉션에 넣고 그 레시피를 더한다.
+        /// 시작 덱을 이미 받았거나(NeedsStartDeck이 아님) 공통 시작 덱이 아니면 InvalidOperationException·ArgumentException.
+        /// </summary>
+        public void ChooseStartDeck(DeckRecipe deck)
+        {
+            if (!NeedsStartDeck)
+                throw new InvalidOperationException("시작 덱을 이미 받았습니다. 다시 고르려면 게임 데이터를 초기화하세요.");
+            if (deck == null || !StructureDecks.StartVersions.Contains(deck))
+                throw new ArgumentException("공통 시작 덱(StructureDecks.StartVersions)이 아닙니다: " + (deck?.Id ?? "null"), nameof(deck));
+            foreach (var (code, count) in deck.Entries)
+                Collection.Add(code, count);
+            _recipes.Add(PlayerRecipe.FromStarter(deck));
         }
 
         /// <summary>새 레시피에 줄 Id: deck-번호 (지금 있는 deck-번호 중 가장 큰 것 + 1).</summary>
@@ -473,8 +499,8 @@ namespace DuelRoguelike.Run
         public static string BackupPath(string directory) => FilePath(directory) + ".bak";
 
         /// <summary>
-        /// 저장을 읽는다. 파일이 없으면 새 게임(notice는 null).
-        /// 파일이 깨져서 못 읽으면 save-broken-날짜.txt로 옮겨 두고, 바로 전 저장(.bak)을 읽을 수 있으면 그것으로, 아니면 새 게임으로 시작한다.
+        /// 저장을 읽는다. 파일이 없으면 시작 덱을 고르기 전의 새 저장(GameSave.Blank, notice는 null).
+        /// 파일이 깨져서 못 읽으면 save-broken-날짜.txt로 옮겨 두고, 바로 전 저장(.bak)을 읽을 수 있으면 그것으로, 아니면 새 저장(Blank)으로 시작한다.
         /// 그때 notice에 무슨 일이 있었는지 적는다 (화면에 보여 준다).
         /// </summary>
         public static GameSave Load(string directory, CardDatabase database, RarityTable rarities, out string notice)
@@ -482,7 +508,7 @@ namespace DuelRoguelike.Run
             notice = null;
             string path = FilePath(directory);
             if (!File.Exists(path))
-                return GameSave.NewGame();
+                return GameSave.Blank();
             try
             {
                 return GameSave.Parse(File.ReadAllText(path, Encoding.UTF8), database, rarities, FileName);
@@ -505,7 +531,7 @@ namespace DuelRoguelike.Run
                     }
                 }
                 notice = $"저장 파일을 읽지 못해 {Path.GetFileName(broken)}(으)로 옮겨 두고 새로 시작합니다. ({e.Message})";
-                return GameSave.NewGame();
+                return GameSave.Blank();
             }
         }
 
@@ -524,13 +550,13 @@ namespace DuelRoguelike.Run
         }
 
         /// <summary>
-        /// 하드 리셋: 새 게임을 저장하고, 예전 게임이 남은 파일(바로 전 저장 .bak, 쓰다 남은 .tmp, 깨진 저장 save-broken-*.txt)을 모두 지운다.
+        /// 하드 리셋: 시작 덱을 고르기 전의 새 저장(GameSave.Blank)을 저장하고, 예전 게임이 남은 파일(바로 전 저장 .bak, 쓰다 남은 .tmp, 깨진 저장 save-broken-*.txt)을 모두 지운다.
         /// .bak을 남기면 새 save.txt가 깨졌을 때 예전 게임으로 돌아가므로 함께 지운다. 음량 등 설정(PlayerPrefs)은 저장 파일 밖이라 그대로다.
         /// 새 save.txt를 먼저 다 쓴 뒤에 지우므로, 도중에 꺼져도 save.txt는 예전 것이거나 새 것 중 하나다.
         /// </summary>
         public static GameSave Reset(string directory)
         {
-            var save = GameSave.NewGame();
+            var save = GameSave.Blank();
             Directory.CreateDirectory(directory);
             string path = FilePath(directory);
             string temp = path + ".tmp";

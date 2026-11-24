@@ -1,5 +1,6 @@
 // 로그라이크 런 화면 (UI Toolkit). 설계 문서 "로그라이크 진행".
 // 화면: 런 시작 → 층 사이 화면 ⇄ 듀얼 화면(DuelScreen) → … → 런 종료 → 런 시작.
+// - 시작 덱 고르기 (RunScreen.StartDeck.cs): 새 저장(처음 켰을 때, 게임 데이터 초기화 뒤)은 공통 시작 덱 셋 중 하나를 골라 첫 컬렉션으로 받는다.
 // - 런 시작 (RunScreen.Start.cs): 진행 중인 런이 있으면 "이어하기". 새 런은 덱 레시피(메인·엑스트라·시작 사이드 덱)와 시드를 고른다.
 //   진행 중인 런이 있을 때 새 런을 시작하려면 한 번 더 눌러 포기를 확인한다.
 // - 덱 편집 (RunScreen.Deck.cs): 런 시작 화면에서 레시피를 열어 컬렉션의 카드로 고치고 저장한다 (규칙은 RecipeEditor·RecipeRules).
@@ -67,6 +68,8 @@ namespace DuelRoguelike.UI
             Unseal,
             /// <summary>골드 상점의 분해 창: 컬렉션에서 3장을 넘게 가진 카드</summary>
             Disassemble,
+            /// <summary>시작 덱 고르기의 카드 40장 창: 고른 공통 시작 덱의 카드</summary>
+            StartDeck,
         }
 
         static readonly Color Positive = UiStyle.Hex(0x5ee07a);
@@ -162,6 +165,7 @@ namespace DuelRoguelike.UI
                 Persist();
             }
             _startRecipeId = _save.LastStartDeckId;
+            _offerStartDeck = _save.NeedsStartDeck; // 새 저장: 처음 화면 위에 시작 덱 고르기 창을 바로 띄운다
             Debug.Log($"[런] 카드 {_data.CardCount}장, 한글 {_data.LocalizedCount}장, 등급 표 {_rarities.Count}장, " +
                       $"카드 그림 폴더 {_images.Folder}{(_images.FolderExists ? "" : " (없음)")}, " +
                       $"저장 {GameSaveFile.FilePath(_saveDir)}: 컬렉션 {_collection.Cards.Count}종 {_collection.TotalCount}장, " +

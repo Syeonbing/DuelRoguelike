@@ -323,8 +323,18 @@ namespace DuelRoguelike.UI
             UiStyle.Place(layer, 0, 0, StageWidth, StageHeight);
             layer.style.transformOrigin = new TransformOrigin(Length.Percent(0), Length.Percent(0));
             layer.AddToClassList(FitLayerClass);
+            var banner = BannerStrip("gold-banner", text);
+            layer.Add(banner);
+            _modalLayer.Add(layer);
+            FitLayer(layer);
+            StartCoroutine(GoldBannerRoutine(layer, banner));
+        }
+
+        /// <summary>띠 알림의 띠: 무대 가운데를 가로지르는 어두운 띠와 큰 글 (이름은 name, 글은 name-text).</summary>
+        static VisualElement BannerStrip(string name, string text)
+        {
             var banner = Row();
-            banner.name = "gold-banner";
+            banner.name = name;
             banner.pickingMode = PickingMode.Ignore;
             UiStyle.Place(banner, 0, 482, StageWidth, 116);
             banner.style.alignItems = Align.Center;
@@ -334,14 +344,11 @@ namespace DuelRoguelike.UI
             banner.style.borderTopColor = banner.style.borderBottomColor = UiStyle.GoldDeep;
             var label = UiStyle.Label(text, 48);
             UiStyle.Black(label);
-            label.name = "gold-banner-text";
+            label.name = name + "-text";
             label.pickingMode = PickingMode.Ignore;
             label.style.whiteSpace = WhiteSpace.NoWrap;
             banner.Add(label);
-            layer.Add(banner);
-            _modalLayer.Add(layer);
-            FitLayer(layer);
-            StartCoroutine(GoldBannerRoutine(layer, banner));
+            return banner;
         }
 
         IEnumerator GoldBannerRoutine(VisualElement layer, VisualElement banner)

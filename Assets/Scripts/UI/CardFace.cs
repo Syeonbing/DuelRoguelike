@@ -493,7 +493,8 @@ namespace DuelRoguelike.UI
             return emblem;
         }
 
-        static Color AttributeColor(string attribute)
+        /// <summary>속성 문장의 색 (속성 이름: 빛, 어둠, 땅, 물, 화염, 바람, 신).</summary>
+        public static Color AttributeColor(string attribute)
         {
             switch (attribute)
             {

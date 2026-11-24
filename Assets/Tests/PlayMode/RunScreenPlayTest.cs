@@ -1,7 +1,7 @@
 // 플레이 모드 시험: Run 씬을 열고 화면의 버튼만 눌러 로그라이크 런을 처음부터 끝까지 간다.
 // 덱 편집(레시피 고치기·저장·지우기) → 런 시작(레시피·시드) → [층 사이 화면(탑) → "N층으로 올라간다" → 듀얼 창의 "듀얼 시작" → 코인 토스 → 듀얼 화면 "자동으로 끝까지" → "결과 보기" → (승리 보상 고르기·보충 고르기)] 반복
 // → 런 종료 → 새 런. 듀얼은 사람 대신 임시 자동 응답(개발용 버튼)이 답하고, 상대는 WindBot이다.
-// 저장도 본다 (저장 폴더는 시험마다 새 임시 폴더라 실제 저장 파일은 건드리지 않는다):
+// 저장도 본다 (저장 폴더는 시험마다 새 임시 폴더라 실제 저장 파일은 건드리지 않는다. 처음에 스타터 덱 4개를 가진 저장을 써 둔다: TestSaves):
 // - "처음 화면으로" → "이어하기", 씬을 다시 불러(게임을 다시 켠 것처럼) "이어하기"를 해도 층 사이 화면과 저장 파일이 그대로인지
 // - 듀얼을 시작하면 듀얼 중 상태로 저장되고, 듀얼 도중에 씬을 다시 부르면 그 듀얼이 패배로 처리되며 알림이 한 번 나오는지
 // - 런이 끝나면 진행 중인 런이 없어지고, 마지막으로 시작한 레시피(시작 사이드 덱 포함)가 다음 런에 그대로 골라져 있는지
@@ -93,12 +93,15 @@ namespace DuelRoguelike.Tests
         bool RareSeen => _chain2Seen && _chainOpponentSeen && _fieldViewSeen && _rightClickSeen;
 
         string SaveFile => Path.Combine(_saveDir, "save.txt");
+        /// <summary>SetUp이 시험 폴더에 써 둔 저장 (스타터 덱 4개).</summary>
+        string _starterSave;
 
         [SetUp]
         public void SetUp()
         {
             _saveDir = Path.Combine(Path.GetTempPath(), "DuelRoguelike-playtest-" + Guid.NewGuid().ToString("N"));
             Environment.SetEnvironmentVariable(SaveDirVariable, _saveDir);
+            _starterSave = TestSaves.WriteStarterSave(_saveDir); // 스타터 덱 4개를 가진 새 게임 (시작 덱 고르기는 StartDeckPlayTest)
             _chainPromptPref = PlayerPrefs.HasKey(ChainPromptPrefKey) ? PlayerPrefs.GetInt(ChainPromptPrefKey) : (int?)null;
             // 시험 중에는 소리를 내지 않는다 (재생 횟수는 그대로 센다).
             _listenerVolume = AudioListener.volume;
@@ -125,7 +128,8 @@ namespace DuelRoguelike.Tests
         {
             yield return LoadRunScene();
             Assert.IsNull(Find<Button>(RunUi, "continue-run"), "처음 켰는데 진행 중인 런이 있다");
-            Assert.IsFalse(File.Exists(SaveFile), "아무것도 안 했는데 저장 파일이 있다");
+            Assert.AreEqual(_starterSave, File.ReadAllText(SaveFile), "아무것도 안 했는데 저장 파일이 바뀌었다");
+            Assert.IsNull(Find<VisualElement>(RunUi, "start-deck"), "스타터 덱을 가진 저장인데 시작 덱 고르기 창이 떴다");
             yield return CardGallery();
             yield return SoundAndSettings();
 
