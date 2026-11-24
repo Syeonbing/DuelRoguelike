@@ -2210,6 +2210,30 @@ namespace DuelRoguelike.Dev
                 File.WriteAllText(GameSaveFile.BackupPath(dir), "엉망");
                 loaded = GameSaveFile.Load(dir, _db, _rarities, out notice);
                 Expect(notice != null && loaded.Run == null && Directory.GetFiles(dir, "save-broken-*.txt").Length == 2, "둘 다 깨졌으면 새 게임");
+
+                // 하드 리셋: 골드·사이드 덱 한도·레시피·런이 있는 저장 두 번(.bak까지) + 깨진 파일 2개 → save.txt 하나만, 새 게임
+                var rich = GameSave.Parse(new Regex(@"\ngold \d+\n").Replace(GameSave.NewGame().Write(), "\ngold 500\n", 1), _db, _rarities, "시험");
+                Expect(rich.BuySideDeckExpansion(), "리셋 전: 사이드 덱 확장");
+                var kaiba = PlayerRecipe.FromStarter(StarterDecks.Kaiba);
+                Expect(rich.SaveRecipe(new PlayerRecipe(rich.NewRecipeId(), "리셋 시험 덱", kaiba.Deck, kaiba.Side), _db).Count == 0, "리셋 전: 레시피 하나 더");
+                rich.StartRun(new RunSetup { Seed = 12, StartDeck = StarterDecks.Yugi }, _db, _rarities);
+                GameSaveFile.Save(rich, dir);
+                GameSaveFile.Save(rich, dir);
+                File.WriteAllText(GameSaveFile.FilePath(dir) + ".tmp", "쓰다 만 파일");
+                Expect(File.Exists(GameSaveFile.BackupPath(dir)), "리셋 전: .bak이 있음");
+                var reset = GameSaveFile.Reset(dir);
+                string fresh = GameSave.NewGame().Write();
+                Expect(reset.Write() == fresh, "리셋이 돌려준 저장 = 새 게임");
+                var files = Directory.GetFiles(dir).Select(Path.GetFileName).OrderBy(f => f).ToArray();
+                Expect(files.Length == 1 && files[0] == GameSaveFile.FileName, $"리셋 뒤에는 save.txt 하나만 남음 ({string.Join(", ", files)})");
+                loaded = GameSaveFile.Load(dir, _db, _rarities, out notice);
+                Expect(notice == null && loaded.Write() == fresh && loaded.Run == null && loaded.Gold == 0 && loaded.SideDeckLimit == RunRules.StartingSideDeckMax,
+                    "리셋 뒤 읽기: 골드 0, 사이드 덱 한도 처음, 런 없음, 새 게임과 같음");
+
+                // 저장 파일이 없는 폴더에서도 리셋할 수 있다
+                Directory.Delete(dir, true);
+                GameSaveFile.Reset(dir);
+                Expect(File.Exists(GameSaveFile.FilePath(dir)) && Directory.GetFiles(dir).Length == 1, "빈 폴더에서 리셋: save.txt만 생김");
             }
             finally
             {

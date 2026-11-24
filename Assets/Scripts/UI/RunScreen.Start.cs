@@ -139,6 +139,14 @@ namespace DuelRoguelike.UI
                 forfeit.style.marginBottom = 8;
                 panel.Add(forfeit);
             }
+            if (_resetNotice != null)
+            {
+                var reset = Text(_resetNotice, 17, UiStyle.Good);
+                reset.name = "reset-notice";
+                reset.style.whiteSpace = WhiteSpace.Normal;
+                reset.style.marginBottom = 8;
+                panel.Add(reset);
+            }
             var run = _save.Run;
             if (run != null)
             {

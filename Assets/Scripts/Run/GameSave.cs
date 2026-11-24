@@ -519,6 +519,29 @@ namespace DuelRoguelike.Run
                 File.Move(temp, path);
         }
 
+        /// <summary>
+        /// 하드 리셋: 새 게임을 저장하고, 예전 게임이 남은 파일(바로 전 저장 .bak, 쓰다 남은 .tmp, 깨진 저장 save-broken-*.txt)을 모두 지운다.
+        /// .bak을 남기면 새 save.txt가 깨졌을 때 예전 게임으로 돌아가므로 함께 지운다. 음량 등 설정(PlayerPrefs)은 저장 파일 밖이라 그대로다.
+        /// 새 save.txt를 먼저 다 쓴 뒤에 지우므로, 도중에 꺼져도 save.txt는 예전 것이거나 새 것 중 하나다.
+        /// </summary>
+        public static GameSave Reset(string directory)
+        {
+            var save = GameSave.NewGame();
+            Directory.CreateDirectory(directory);
+            string path = FilePath(directory);
+            string temp = path + ".tmp";
+            File.WriteAllText(temp, save.Write(), new UTF8Encoding(false));
+            if (File.Exists(path))
+                File.Replace(temp, path, null);
+            else
+                File.Move(temp, path);
+            if (File.Exists(BackupPath(directory)))
+                File.Delete(BackupPath(directory));
+            foreach (string broken in Directory.GetFiles(directory, "save-broken-*.txt"))
+                File.Delete(broken);
+            return save;
+        }
+
         static string BrokenPath(string directory)
         {
             string stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
