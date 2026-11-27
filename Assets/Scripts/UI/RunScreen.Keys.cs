@@ -141,6 +141,8 @@ namespace DuelRoguelike.UI
                 }
                 else if (_deckOpen)
                     DeckKey(nav);
+                else if (ShopShown)
+                    ShopKey(nav); // 칩교환소 장면
                 else
                     HubKey(nav);
                 return;
@@ -173,6 +175,12 @@ namespace DuelRoguelike.UI
             {
                 _navOn = false;
                 TitleKey(nav); // 처음 화면의 명령 메뉴
+                return;
+            }
+            if (!modal && GoldShopOpen)
+            {
+                _navOn = false;
+                GoldShopKey(nav); // 골드 상점 (처음 화면에서 넘어온 화면)
                 return;
             }
             if (modal && LogOpen)

@@ -74,6 +74,7 @@ namespace DuelRoguelike.UI
             _standFloor = _run.Phase != RunPhase.Ready || dueled ? _run.Floor : _run.Floor - 1;
             _duelShownFloor = _standFloor == _run.Floor ? _run.Floor : 0;
             _deckOpen = _deckFromDuel = false;
+            ForgetShop();
             _deckTab = Pile.Main;
             _deckCursor = -1;
             _deckActions = false;
@@ -103,6 +104,11 @@ namespace DuelRoguelike.UI
                 _scenePosition = _standFloor;
                 _sceneOpponent = Arrived && BattleNow && _run.Phase == RunPhase.Ready ? 1 : 0;
             }
+            // 칩교환소: 그 층에 처음 올라섰을 때 한 번 저절로 편다. 다른 층에서는 접는다.
+            if (_run.FloorKind != FloorKind.ChipExchange || !Arrived)
+                ForgetShop();
+            else if (!_shopOpen && !_climbing && !_deckOpen && _run.Phase == RunPhase.Ready && _eventResult == null && _shopShownFloor != _run.Floor)
+                BeginShop();
 
             _stage = new VisualElement { name = "hub-stage" };
             UiStyle.Place(_stage, 0, 0, StageWidth, StageHeight);
@@ -120,11 +126,12 @@ namespace DuelRoguelike.UI
             _stage.Add(_scene);
             AddPlaques();
             // 덱 창이 열려 있으면 그 뒤에 비쳐 보이는 것들(높이 자, 직전 듀얼 판, 명령 메뉴)은 만들지 않는다
-            bool deck = _deckOpen && !_climbing;
-            if (!deck)
+            // 칩교환소 장면이 펴져 있으면 탑 대신 그 장면이 화면을 채운다 (위 막대만 그대로)
+            bool deck = _deckOpen && !_climbing, shop = ShopShown;
+            if (!deck && !shop)
                 _stage.Add(HeightGauge());
             _stage.Add(HubTopBar());
-            if (!_climbing && !deck)
+            if (!_climbing && !deck && !shop)
             {
                 _stage.Add(LastDuelPanel());
                 _stage.Add(HubMenuPanel());
@@ -135,6 +142,8 @@ namespace DuelRoguelike.UI
                 _stage.Add(ClimbSkip());
             if (_deckOpen && !_climbing)
                 _stage.Add(DeckWindow());
+            if (shop)
+                _stage.Add(ShopLayer());
             ApplyKeyCaps();
 
             if (_eventResult != null)
@@ -162,8 +171,7 @@ namespace DuelRoguelike.UI
             }
             else if (_run.FloorKind == FloorKind.Rest && _restShownFloor != _run.Floor)
                 OpenRest(); // 휴식 층도 처음 올라섰을 때 한 번
-            else if (_run.FloorKind == FloorKind.ChipExchange && _shopShownFloor != _run.Floor)
-                OpenShop(); // 칩교환소도 처음 올라섰을 때 한 번
+            // 칩교환소는 창이 아니라 무대에 얹는 장면이다 (위에서 폈다)
         }
 
         /// <summary>1920×1080 판을 화면 안에 꽉 차게 맞춰 가운데에 놓는다 (16:9가 아니면 남는 쪽에 여백).</summary>
@@ -930,6 +938,7 @@ namespace DuelRoguelike.UI
                 return false;
             _deckOpen = _deckFromDuel = false;
             _deckScroll = null;
+            ForgetShop();
             _climbing = true;
             // 두 층 넘게 벌어져 있으면 (없어야 하지만) 마지막 한 층만 보여 준다
             _scenePosition = Mathf.Max(_standFloor, _run.Floor - 1);

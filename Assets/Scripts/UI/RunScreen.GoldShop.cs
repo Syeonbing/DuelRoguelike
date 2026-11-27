@@ -1,16 +1,17 @@
-// 런 화면: 골드 상점 (처음 화면의 명령 메뉴 "골드 상점"). docs/UI.md "나머지 창 > 골드 상점". RunScreen.cs의 머리말 참고.
-// 골드(영구 재화)를 쓰는 곳과 카드를 골드로 바꾸는 곳을 한 창에 모은다. 규칙과 값은 GameSave·RunRules(Run 어셈블리)가 정하고,
+// 런 화면: 골드 상점 (처음 화면의 명령 메뉴 "골드 상점"). docs/UI.md "상점 > 골드 상점". RunScreen.cs의 머리말 참고.
+// 골드(영구 재화)를 쓰는 곳과 카드를 골드로 바꾸는 곳을 한 화면에 모은다. 규칙과 값은 GameSave·RunRules(Run 어셈블리)가 정하고,
 // 화면은 값과 살 수 없는 까닭을 보여 준다. 런 시작 때의 사이드 덱 임시 칸은 새 런 창에서 산다 (RunScreen.Start.cs).
-// - 골드 상점 창(gold-shop): 칩교환소와 같은 틀의 목록. 사이드 덱 확장(gold-shop-side), 컬렉션 분해(gold-shop-disassemble),
-//   카드 팩(gold-shop-pack)·스트럭처 덱(gold-shop-structure)은 아직 없어서 "준비 중"으로 꺼져 있다.
-//   닫으면(gold-shop-close) 처음 화면을 다시 그린다 (메뉴와 왼쪽 판의 골드).
-// - 구매 확인 창(gold-shop-confirm): 사이드 덱 확장은 되돌릴 수 없어서 한 번 묻는다. "산다"(gold-shop-buy)가 금색이고 처음에 골라져 있다.
-// - 컬렉션 분해 창(gold-disassemble): 카드 고르기 창과 같은 틀과 키보드. 3장을 넘게 가진 카드만 나온다.
-//   결정 키·두 번 누르기·금색 버튼(disassemble-one)은 1장씩 바로 분해한다 (다시 묻지 않는다). 넘는 분이 없어진 카드는 격자에서 빠진다.
-//   "전부 분해"(disassemble-all)만 한 번 묻는다 (gold-disassemble-confirm, 처음에는 "그만둔다"가 골라져 있다).
-// - 띠 알림(gold-banner): 사거나 전부 분해한 뒤 창 위에 잠깐 뜬다. 누를 필요가 없다.
+// 창이 아니라 화면 전체를 쓰는 장면이다 (gold-shop): 탑 앞 노점(ShopScene.cs)의 좌판에 물건을 놓고, 아래 판에 가진 골드와 설명을 모은다.
+// 부품은 칩교환소와 같다 (RunScreen.Shop.cs). 닫으면(gold-shop-close) 처음 화면으로 돌아간다.
+// - 두 창구를 Q·E(또는 팻말 gold-tab-buy, gold-tab-disassemble)로 바꾼다.
+// - 산다: 좌판에 사이드 덱 확장(gold-shop-side), 카드 팩(gold-shop-pack), 스트럭처 덱(gold-shop-structure). 뒤의 둘은 아직 없어서 "입고 예정"이다.
+//   사이드 덱 확장을 가리키면 아래 판에 칸 10개와 앞으로의 값이 나오고, 아래 줄의 금색 "산다"(gold-shop-buy)로 산다.
+//   확인 창은 따로 없다: 결정 키가 좌판에서 "산다"로 내려가고, 한 번 더 눌러야 산다. 사면 띠 알림(gold-banner)이 뜬다.
+// - 분해: 3장을 넘게 가진 카드(card-disassemble-코드)가 좌판에 깔린다. 결정 키나 금색 버튼(disassemble-one)은 1장씩 바로 분해한다 (다시 묻지 않는다).
+//   남는 카드가 없어진 카드는 좌판에서 빠진다. "전부 분해"(disassemble-all)만 아래 판에서 한 번 묻는다
+//   (gold-disassemble-confirm. 처음에는 "그만둔다"가 골라져 있다).
+// - 키보드: 좌우로 좌판의 물건, 아래로 버튼 줄, 결정 키, 취소 키는 한 줄 위로 (좌판에서는 닫기).
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using DuelRoguelike.Run;
@@ -21,182 +22,353 @@ namespace DuelRoguelike.UI
 {
     public sealed partial class RunScreen
     {
-        const float DisassembleDetailHeight = 560;
+        enum GoldTab
+        {
+            Buy,
+            Disassemble,
+        }
 
-        /// <summary>골드 상점 창에서 가리키던 줄 (다른 창에 다녀와도 같은 자리에 서게).</summary>
-        int _goldShopIndex;
-        /// <summary>분해 창 아래의 알림 (방금 분해한 것). 없으면 null.</summary>
+        const float GoldCardWidth = 142;
+        static readonly Color StallInk = UiStyle.Hex(0xf3d9b0);
+
+        /// <summary>골드 상점 화면의 무대 (열려 있지 않으면 null).</summary>
+        VisualElement _goldStage;
+        GoldTab _goldTab;
+        /// <summary>아래 버튼 줄을 가리키는 중인지 (아니면 좌판).</summary>
+        bool _goldButtons;
+        /// <summary>좌판에서 가리키는 것: 산다 쪽의 상품, 분해 쪽의 카드.</summary>
+        int _goldItem, _goldCard;
+        int _goldButton;
+        /// <summary>"전부 분해"를 묻는 중인지.</summary>
+        bool _goldConfirmAll;
+        /// <summary>분해 쪽 아래 판의 알림 (방금 분해한 것). 없으면 null.</summary>
         string _disassembleNotice;
+        readonly List<(VisualElement Frame, Button Button)> _goldNavButtons = new List<(VisualElement, Button)>();
 
-        // ================= 골드 상점 창 =================
+        bool GoldShopOpen => _goldStage != null && _goldStage.panel != null && _goldStage == _stage;
+
+        // ================= 골드 상점 화면 =================
 
         void OpenGoldShop()
         {
             if (_titleMenu != null && _titleMenu.Root.panel != null)
                 _titleMenuIndex = _titleMenu.Index; // 닫으면 메뉴의 "골드 상점"에 그대로 선다
-            var panel = OpenSlab("gold-shop", 1260);
-            var head = Row();
-            head.style.alignItems = Align.FlexEnd;
-            var titles = UiStyle.Box();
-            titles.Add(WindowTitle("골드 상점"));
-            titles.Add(Text("골드는 런이 끝나도 남는다. 여기서 사거나 바꾼 것도 계속 남는다.", 19, UiStyle.TextDim, top: 4));
-            head.Add(titles);
-            head.Add(GoldCounter("gold-shop-gold"));
-            panel.Add(head);
-
-            var menu = new MenuList();
-            menu.Root.style.marginTop = 14;
-            GoldShopSideRow(menu);
-            GoldShopDisassembleRow(menu);
-            GoldShopSoonRow(menu, "gold-shop-pack", "상점:팩", "카드 팩", "팩 구성이 정해지면 열린다.", RunRules.PackPrice);
-            GoldShopSoonRow(menu, "gold-shop-structure", "상점:스트럭처 덱", "스트럭처 덱", "덱 목록이 정해지면 열린다.", RunRules.StructureDeckPrice);
-            panel.Add(menu.Root);
-            menu.SelectEnabled(_goldShopIndex);
-            _windowMenu = menu;
-
-            panel.Add(WindowFooter(Hints(("↑", "W", null), ("↓", "S", "고르기"), ("Z", "J", "결정"), ("X", "K", "닫기")),
-                KeyButton("gold-shop-close", "닫기", CloseGoldShop, "X", "K", 112)));
-            _windowCancel = CloseGoldShop;
-            ApplyKeyCaps();
+            Sound.Play(Sfx.WindowOpen);
+            _goldTab = GoldTab.Buy;
+            _goldButtons = false;
+            _goldItem = _goldCard = 0;
+            _goldConfirmAll = false;
+            _disassembleNotice = null;
+            ShowGoldShop();
         }
 
-        /// <summary>골드 상점을 닫는다: 처음 화면을 다시 그려 메뉴와 왼쪽 판의 골드를 맞춘다.</summary>
+        /// <summary>골드 상점을 닫는다: 처음 화면을 다시 그린다 (메뉴와 왼쪽 판의 골드가 맞는다).</summary>
         void CloseGoldShop()
         {
+            _goldStage = null;
             _disassembleNotice = null;
+            _goldConfirmAll = false;
             ShowStart();
         }
 
-        /// <summary>창 머리 오른쪽의 가진 골드 (칩교환소의 가진 칩과 같은 자리).</summary>
-        VisualElement GoldCounter(string name)
+        /// <summary>분해할 수 있는 카드 (화면 순서: 몬스터 → 마법 → 함정 → 엑스트라, 카드명 순).</summary>
+        List<uint> DisassembleCodes() => Sorted(_save.Disassemblable(_rarities).Select(x => x.Code)).ToList();
+
+        /// <summary>골드 상점 화면을 지금 상태로 (다시) 그린다.</summary>
+        void ShowGoldShop()
         {
-            var box = UiStyle.Box("gold-counter");
-            box.pickingMode = PickingMode.Ignore;
-            box.style.marginLeft = StyleKeyword.Auto;
-            box.style.alignItems = Align.FlexEnd;
-            box.style.flexShrink = 0;
-            box.Add(Text("가진 골드", 17, UiStyle.TextDim));
-            var number = UiStyle.Label(_save.Gold.ToString(), 44, UiStyle.Gold);
-            UiStyle.Black(number);
-            number.name = name;
-            number.style.whiteSpace = WhiteSpace.NoWrap;
-            number.style.marginTop = -6;
-            box.Add(number);
-            return box;
+            BeginScreen();
+            _goldNavButtons.Clear();
+            var stage = NewStage("gold-shop");
+            _goldStage = stage;
+            stage.Add(new ShopScene(ShopScene.Kind.GoldStall));
+            stage.Add(ShopNameBoard("골드 상점", 810, 84, 300));
+
+            var excess = _save.Disassemblable(_rarities);
+            int excessCards = excess.Sum(x => x.Count), excessGold = excess.Sum(x => x.Count * x.GoldEach);
+            var buyTab = GoldTabSign("gold-tab-buy", "산다", null, "Q", _goldTab == GoldTab.Buy, () => SetGoldTab(GoldTab.Buy), keyFirst: true);
+            UiStyle.Place(buyTab, 286, 204);
+            stage.Add(buyTab);
+            var sellTab = GoldTabSign("gold-tab-disassemble", "분해", excessCards > 0 ? $"남는 카드 {excessCards}장" : "남는 카드 없음", "E",
+                _goldTab == GoldTab.Disassemble, () => SetGoldTab(GoldTab.Disassemble), keyFirst: false);
+            UiStyle.Place(sellTab, 446, 204);
+            stage.Add(sellTab);
+            stage.Add(ShopBubble(_goldTab == GoldTab.Disassemble ? (excessCards > 0 ? "남는 카드는 내가 사 주지." : "남는 카드가 없군.") : "어서 오게.", 1056, 234));
+
+            var slab = ShopSlab("gold-shop-slab", 746, 310, out var body, out var foot);
+            body.Add(CurrencyBox("gold-counter", "가진 골드", "재화:골드", UiStyle.Gold, _save.Gold, "gold-shop-gold", "gold-shop-after",
+                "골드와 여기서 산 것은\n런이 끝나도 남는다."));
+            body.Add(ShopDivider());
+            var center = UiStyle.Box("gold-shop-center");
+            center.style.flexGrow = 1;
+            center.style.flexShrink = 1;
+            body.Add(center);
+            var hints = Row();
+            hints.name = "gold-shop-hints";
+            hints.style.alignItems = Align.Center;
+            foot.Add(hints);
+            var gap = new VisualElement();
+            gap.style.flexGrow = 1;
+            foot.Add(gap);
+            foot.Add(KeyButton("gold-shop-close", "닫기", CloseGoldShop, "X", "K", 112));
+
+            string after = "";
+            if (_goldTab == GoldTab.Buy)
+                AddGoldBuy(stage, center, foot, ref after);
+            else
+                AddGoldDisassemble(stage, center, foot, excessCards, excessGold, ref after);
+            stage.Add(slab);
+
+            if (_goldNavButtons.Count == 0 || !_goldNavButtons.Any(b => b.Button.enabledSelf))
+                _goldButtons = false;
+            else if (!_goldNavButtons[Mathf.Clamp(_goldButton, 0, _goldNavButtons.Count - 1)].Button.enabledSelf)
+                _goldButton = _goldNavButtons.FindLastIndex(b => b.Button.enabledSelf);
+            _goldButton = Mathf.Clamp(_goldButton, 0, Mathf.Max(0, _goldNavButtons.Count - 1));
+            for (int i = 0; i < _goldNavButtons.Count; i++)
+                SetFocusFrame(_goldNavButtons[i].Frame, _goldButtons && i == _goldButton);
+            var afterLabel = slab.Q<Label>("gold-shop-after");
+            if (afterLabel != null)
+                afterLabel.text = after;
+
+            hints.Add(_goldConfirmAll ? Hints(("←", "A", null), ("→", "D", "고르기"), ("Z", "J", "결정"), ("X", "K", "그만둔다"))
+                : _goldButtons ? Hints(("←", "A", null), ("→", "D", "고르기"), ("Z", "J", "결정"), ("↑", "W", "위 줄로"), ("X", "K", "뒤로"))
+                : _goldTab == GoldTab.Buy ? Hints(("Q", "Q", null), ("E", "E", "산다 · 분해"), ("←", "A", null), ("→", "D", "고르기"), ("Z", "J", "결정"), ("X", "K", "닫기"))
+                : Hints(("Q", "Q", null), ("E", "E", "산다 · 분해"), ("←", "A", null), ("→", "D", "카드 고르기"), ("Z", "J", "1장 분해"), ("↓", "S", "아래 줄로"), ("X", "K", "닫기")));
+            ApplyKeyCaps();
+        }
+
+        void SetGoldTab(GoldTab tab)
+        {
+            _goldTab = tab;
+            _goldButtons = false;
+            _goldConfirmAll = false;
+            ShowGoldShop();
+        }
+
+        /// <summary>창구를 바꾸는 팻말: 나무 판에 이름과 키 표시. 고른 쪽은 금색.</summary>
+        Button GoldTabSign(string name, string text, string small, string key, bool on, Action click, bool keyFirst)
+        {
+            var sign = BareButton(name, click);
+            sign.style.flexDirection = FlexDirection.Row;
+            sign.style.alignItems = Align.Center;
+            sign.style.height = 54;
+            sign.style.paddingLeft = sign.style.paddingRight = 16;
+            sign.style.backgroundColor = on ? UiStyle.Gold : SignWood;
+            UiStyle.BorderColor(sign, on ? UiStyle.Hex(0x5f4519) : SignEdge, 3);
+            sign.style.borderTopColor = on ? UiStyle.Hex(0xf6dc9b) : SignTop;
+            UiStyle.Radius(sign, 6);
+            var cap = KeyCap(key, key);
+            cap.pickingMode = PickingMode.Ignore;
+            if (keyFirst)
+            {
+                cap.style.marginRight = 10;
+                sign.Add(cap);
+            }
+            var label = UiStyle.Label(text, 26, on ? GoldInk : UiStyle.Hex(0xc9b890), bold: true);
+            label.pickingMode = PickingMode.Ignore;
+            label.style.whiteSpace = WhiteSpace.NoWrap;
+            sign.Add(label);
+            if (small != null)
+            {
+                var note = UiStyle.Label(small, 19, on ? GoldInk : UiStyle.Hex(0xc9b890));
+                note.name = name + "-note";
+                note.pickingMode = PickingMode.Ignore;
+                note.style.whiteSpace = WhiteSpace.NoWrap;
+                note.style.marginLeft = 10;
+                sign.Add(note);
+            }
+            if (!keyFirst)
+            {
+                cap.style.marginLeft = 10;
+                sign.Add(cap);
+            }
+            sign.EnableInClassList("selected", on);
+            return sign;
+        }
+
+        /// <summary>아래 줄에 키보드로 고를 버튼을 더한다 (금색 테를 두를 수 있게 감싼다).</summary>
+        Button AddGoldNavButton(VisualElement foot, string name, string text, Action run, float width, bool gold = false, bool enabled = true)
+        {
+            var button = UiStyle.StoneButton(text, run, gold, small: true);
+            button.name = name;
+            button.style.width = width;
+            button.SetEnabled(enabled);
+            var frame = FocusFrame(button);
+            foot.Add(frame);
+            _goldNavButtons.Add((frame, button));
+            return button;
+        }
+
+        // ================= 산다 =================
+
+        static readonly (string Name, string Pictogram, string Title)[] GoldGoods =
+        {
+            ("gold-shop-side", "상점:사이드 덱", "사이드 덱 확장"),
+            ("gold-shop-pack", "상점:팩", "카드 팩"),
+            ("gold-shop-structure", "상점:스트럭처 덱", "스트럭처 덱"),
+        };
+
+        void AddGoldBuy(VisualElement stage, VisualElement center, VisualElement foot, ref string after)
+        {
+            _goldItem = Mathf.Clamp(_goldItem, 0, GoldGoods.Length - 1);
+            int limit = _save.SideDeckLimit, price = _save.SideDeckExpansionPrice;
+            bool maxed = _save.SideDeckLimitMaxed, canBuy = _save.SideDeckExpansionProblem() == null;
+            for (int i = 0; i < GoldGoods.Length; i++)
+            {
+                int index = i;
+                bool on = i == _goldItem, soon = i > 0;
+                var (name, pictogram, title) = GoldGoods[i];
+                VisualElement tag;
+                if (i == 0)
+                    tag = maxed ? PriceTag(name + "-price", null, Color.clear, "다 늘렸다", UiStyle.Stone4, 19)
+                        : PriceTag(name + "-price", "재화:골드", UiStyle.Gold, price.ToString(), canBuy ? UiStyle.Gold : UiStyle.Bad);
+                else
+                    tag = SoonTag(name, i == 1 ? RunRules.PackPrice : RunRules.StructureDeckPrice);
+                var good = GoldGood(name, pictogram, i == 0 ? UiStyle.Gold : UiStyle.Stone4, title, tag, on, soon, () =>
+                {
+                    _goldItem = index;
+                    _goldButtons = false;
+                    ShowGoldShop();
+                });
+                UiStyle.Place(good, 330 + i * 520, 414);
+                stage.Add(good);
+            }
+
+            if (_goldItem == 0)
+            {
+                center.Add(ShopHeadLine("사이드 덱 확장", $"임시 칸은 새 런을 시작할 때 산다 · 1장 골드 {RunRules.RunSideDeckSlotPrice}",
+                    (maxed ? "영구 · 끝까지 늘렸다" : $"영구 · {limit + 1}장째", UiStyle.Gold, true)));
+                var row = Row();
+                row.style.alignItems = Align.Center;
+                row.style.marginTop = 12;
+                row.Add(SideSlots("gold-shop-side-slots", limit, canBuy ? limit + 1 : 0));
+                var texts = UiStyle.Box();
+                texts.style.marginLeft = 30;
+                texts.style.flexShrink = 1;
+                var change = Row();
+                change.name = "gold-shop-side-change";
+                change.style.alignItems = Align.Center;
+                Label Big(string text, Color color)
+                {
+                    var label = UiStyle.Label(text, 44, color);
+                    UiStyle.Black(label);
+                    label.style.whiteSpace = WhiteSpace.NoWrap;
+                    return label;
+                }
+                if (maxed)
+                    change.Add(Big($"{limit}장", UiStyle.Gold));
+                else
+                {
+                    change.Add(Big($"{limit}장", UiStyle.TextDim));
+                    var arrow = Big("→", UiStyle.TextDim);
+                    arrow.style.marginLeft = arrow.style.marginRight = 14;
+                    change.Add(arrow);
+                    change.Add(Big($"{limit + 1}장", UiStyle.Good));
+                }
+                texts.Add(change);
+                string note = maxed ? $"시작 사이드 덱이 {limit}장이다. 더 늘릴 수 없다."
+                    : !canBuy ? $"골드가 {price - _save.Gold} 모자라다."
+                    : "런을 시작할 때 사이드 덱에 넣는 장수. 다음에 시작하는 런부터 쓴다. 되돌릴 수 없다.";
+                var noteLabel = Text(note, 17, !canBuy && !maxed ? UiStyle.Bad : UiStyle.TextDim, top: 2);
+                noteLabel.name = "gold-shop-side-note";
+                noteLabel.style.whiteSpace = WhiteSpace.Normal;
+                texts.Add(noteLabel);
+                row.Add(texts);
+                center.Add(row);
+                AddGoldNavButton(foot, "gold-shop-buy", maxed ? "산다" : $"산다 · 골드 {price}", BuySideDeckExpansion, 280, gold: true, enabled: canBuy);
+                if (canBuy && _goldButtons)
+                    after = $"사면 {_save.Gold - price}";
+            }
+            else
+            {
+                center.Add(ShopHeadLine(GoldGoods[_goldItem].Title, null, ("입고 예정", UiStyle.TextDim, true)));
+                var note = Text(_goldItem == 1 ? "팩 구성이 정해지면 열린다." : "덱 목록이 정해지면 열린다.", 24, UiStyle.TextDim, top: 10);
+                note.name = GoldGoods[_goldItem].Name + "-note";
+                center.Add(note);
+            }
+        }
+
+        /// <summary>"입고 예정 · (골드) 80": 아직 없는 상품의 딱지.</summary>
+        static VisualElement SoonTag(string name, int price)
+        {
+            var tag = Row();
+            tag.pickingMode = PickingMode.Ignore;
+            tag.style.height = 42;
+            tag.style.alignItems = Align.Center;
+            tag.style.alignSelf = Align.Center;
+            tag.style.paddingLeft = tag.style.paddingRight = 13;
+            tag.style.backgroundColor = UiStyle.Stone9;
+            UiStyle.BorderColor(tag, UiStyle.Stone5, 2);
+            UiStyle.Radius(tag, 7);
+            var soon = UiStyle.Label("입고 예정", 19, UiStyle.Stone4, bold: true);
+            soon.name = name + "-tag";
+            soon.style.whiteSpace = WhiteSpace.NoWrap;
+            tag.Add(soon);
+            var icon = Picto("재화:골드", 18, UiStyle.Stone4);
+            icon.style.marginLeft = 10;
+            icon.style.marginRight = 5;
+            tag.Add(icon);
+            var number = UiStyle.Label(price.ToString(), 19, UiStyle.Stone4, bold: true);
+            number.name = name + "-price";
+            tag.Add(number);
+            return tag;
         }
 
         /// <summary>
-        /// 골드 상점의 한 줄: 아이콘(56), 이름(26 Bold)과 꼬리표, 그 아래 설명 한 줄(18). 칩교환소의 상품 줄과 같은 꼴이다.
-        /// 줄을 돌려준다 (오른쪽 끝에 붙일 값은 부른 쪽이 더한다).
+        /// 좌판의 상품 하나 (누르면 가리킨다): 그림 칸(186×140), 이름, 가격표. 가리킨 상품은 올라오고 금색 테와 ▼가 붙는다.
         /// </summary>
-        Button GoldShopRow(MenuList menu, string name, Action run, bool enabled, string pictogram, Color iconColor, string title, string tagText,
-            string note, Color noteColor)
+        Button GoldGood(string name, string pictogram, Color glow, string title, VisualElement tag, bool on, bool soon, Action click)
         {
-            var row = menu.AddRow(name, run, enabled, height: 0);
-            row.style.minHeight = 92;
-            var icon = IconTile(pictogram, 56, iconColor);
-            icon.style.marginRight = 16;
-            row.Add(icon);
-
+            const float width = 220, tile = 186, tileHeight = 140;
+            var good = BareButton(name, click);
+            good.style.width = width;
+            good.style.height = CounterMark + 14 + tileHeight + 6 + 32 + 8 + 42;
+            float top = CounterMark + (on ? 0 : 14);
+            var art = new VisualElement { pickingMode = PickingMode.Ignore };
+            UiStyle.Place(art, (width - tile) / 2, top, tile, tileHeight);
+            art.style.alignItems = Align.Center;
+            art.style.justifyContent = Justify.Center;
+            art.style.backgroundColor = UiStyle.Hex(0x15110d);
+            UiStyle.BorderColor(art, on ? UiStyle.Gold : UiStyle.Stone9, 3);
+            if (!on)
+                art.style.borderTopColor = PlaqueTop;
+            UiStyle.Radius(art, 10);
+            art.style.overflow = Overflow.Hidden;
+            var light = new VisualElement { pickingMode = PickingMode.Ignore };
+            light.style.position = Position.Absolute;
+            light.style.left = light.style.top = light.style.right = light.style.bottom = 0;
+            light.style.backgroundImage = new StyleBackground(UiStyle.Radial);
+            light.style.unityBackgroundImageTintColor = UiStyle.Alpha(glow, soon ? 0.16f : 0.4f);
+            art.Add(light);
+            art.Add(Picto(pictogram, 92, soon ? UiStyle.Stone4 : UiStyle.Text));
+            good.Add(art);
             var texts = UiStyle.Box();
             texts.pickingMode = PickingMode.Ignore;
-            texts.style.flexShrink = 1;
-            var names = Row();
-            names.pickingMode = PickingMode.Ignore;
-            names.style.alignItems = Align.Center;
-            var label = RowLabel(title, 26, UiStyle.Text, bold: true);
+            UiStyle.Place(texts, 0, CounterMark + 14 + tileHeight + 6, width);
+            texts.style.alignItems = Align.Center;
+            var label = UiStyle.Label(title, 22, soon ? UiStyle.Hex(0xd8c4a8) : StallInk, bold: true);
+            label.pickingMode = PickingMode.Ignore;
             label.style.whiteSpace = WhiteSpace.NoWrap;
-            names.Add(label);
-            if (tagText != null)
+            texts.Add(label);
+            tag.style.marginTop = 8;
+            texts.Add(tag);
+            good.Add(texts);
+            if (on)
             {
-                var tag = RowLabel(tagText, 19, enabled ? UiStyle.Gold : UiStyle.TextDim, bold: true);
-                tag.name = name + "-tag";
-                tag.style.whiteSpace = WhiteSpace.NoWrap;
-                tag.style.marginLeft = 12;
-                tag.style.paddingLeft = tag.style.paddingRight = 10;
-                tag.style.paddingTop = tag.style.paddingBottom = 1;
-                UiStyle.BorderColor(tag, UiStyle.Stone5, 2);
-                UiStyle.Radius(tag, 14);
-                names.Add(tag);
+                var mark = UiStyle.Label("▼", 24, UiStyle.Gold);
+                mark.pickingMode = PickingMode.Ignore;
+                mark.style.unityTextAlign = TextAnchor.MiddleCenter;
+                UiStyle.Place(mark, 0, -4, width, CounterMark);
+                good.Add(mark);
             }
-            texts.Add(names);
-            var description = RowLabel(note, 18, noteColor);
-            description.name = name + "-note";
-            description.style.whiteSpace = WhiteSpace.Normal;
-            texts.Add(description);
-            row.Add(texts);
-            return row;
-        }
-
-        /// <summary>줄 오른쪽 끝의 값 (27 Black).</summary>
-        static Label GoldShopValue(string name, string text, Color color)
-        {
-            var value = RowTag(text, 27, color);
-            UiStyle.Black(value);
-            value.name = name;
-            return value;
-        }
-
-        void GoldShopSideRow(MenuList menu)
-        {
-            int limit = _save.SideDeckLimit, price = _save.SideDeckExpansionPrice;
-            bool maxed = _save.SideDeckLimitMaxed, ok = _save.SideDeckExpansionProblem() == null;
-            string tag = maxed ? "영구 · 끝까지 늘렸다" : $"영구 · {limit + 1}장째";
-            string note = maxed ? $"시작 사이드 덱이 {limit}장이다. 더 늘릴 수 없다."
-                : !ok ? $"골드가 {price - _save.Gold} 모자라다."
-                : $"런을 시작할 때 사이드 덱에 넣는 장수가 {limit}장에서 {limit + 1}장으로 늘어난다.";
-            var row = GoldShopRow(menu, "gold-shop-side", OpenSideDeckConfirm, ok, "상점:사이드 덱", UiStyle.Gold, "사이드 덱 확장", tag, note,
-                !ok && !maxed ? UiStyle.Bad : UiStyle.TextDim);
-            // 10칸 중 가진 칸. 살 수 있으면 다음 칸을 오름 색으로 가리킨다.
-            var pips = SideSlotPips("gold-shop-side-slots", limit, ok ? limit + 1 : 0, large: false);
-            pips.style.marginLeft = StyleKeyword.Auto;
-            pips.style.paddingLeft = 16;
-            row.Add(pips);
-            var value = GoldShopValue("gold-shop-side-price", maxed ? "샀음" : $"골드 {price}", maxed ? UiStyle.TextDim : ok ? UiStyle.Gold : UiStyle.Bad);
-            value.style.marginLeft = 0;
-            value.style.minWidth = 150;
-            value.style.unityTextAlign = TextAnchor.MiddleRight;
-            row.Add(value);
-        }
-
-        void GoldShopDisassembleRow(MenuList menu)
-        {
-            var list = _save.Disassemblable(_rarities);
-            int cards = list.Sum(x => x.Count), gold = list.Sum(x => x.Count * x.GoldEach);
-            bool any = cards > 0;
-            var row = GoldShopRow(menu, "gold-shop-disassemble", OpenDisassemble, any, "상점:분해", UiStyle.Good, "컬렉션 분해",
-                any ? $"넘는 분 {cards}장" : "넘는 분 없음",
-                any ? $"카드마다 {RunRules.DisassemblyKeep}장은 남기고, 넘는 분을 골드로 바꾼다." : $"{RunRules.DisassemblyKeep}장을 넘게 가진 카드가 없다.",
-                any ? UiStyle.TextDim : UiStyle.Bad);
-            if (!any)
-                return;
-            var gain = UiStyle.Box();
-            gain.pickingMode = PickingMode.Ignore;
-            gain.style.marginLeft = StyleKeyword.Auto;
-            gain.style.paddingLeft = 16;
-            gain.style.alignItems = Align.FlexEnd;
-            gain.style.flexShrink = 0;
-            var value = RowLabel($"골드 +{gold}", 27, UiStyle.Good);
-            UiStyle.Black(value);
-            value.name = "gold-shop-disassemble-gold";
-            value.style.whiteSpace = WhiteSpace.NoWrap;
-            gain.Add(value);
-            gain.Add(RowLabel("모두 분해하면", 15, UiStyle.TextDim));
-            row.Add(gain);
-        }
-
-        /// <summary>아직 없는 상품의 자리 (카드 팩, 스트럭처 덱): 꺼져 있고 값만 보인다.</summary>
-        void GoldShopSoonRow(MenuList menu, string name, string pictogram, string title, string note, int price)
-        {
-            var row = GoldShopRow(menu, name, () => { }, false, pictogram, UiStyle.Stone4, title, "준비 중", note, UiStyle.TextDim);
-            row.Add(GoldShopValue(name + "-price", $"골드 {price}", UiStyle.TextDim));
+            good.EnableInClassList("selected", on);
+            return good;
         }
 
         /// <summary>
-        /// 시작 사이드 덱의 영구 칸 10개. 가진 칸(owned)은 채우고, 다음에 살 칸(next, 1부터. 없으면 0)은 오름 색 테두리로 가리킨다.
-        /// large면 확인 창의 큰 칸(52×74)이고 다음 칸에 +를 쓴다. 아니면 목록 줄의 작은 칸(18×26).
+        /// 시작 사이드 덱의 영구 칸 10개 (52×74)와 칸마다 그 칸을 살 때의 값. 가진 칸(owned)은 채우고, 다음에 살 칸(next, 1부터. 없으면 0)은 오름 색으로 가리킨다.
         /// </summary>
-        static VisualElement SideSlotPips(string name, int owned, int next, bool large)
+        static VisualElement SideSlots(string name, int owned, int next)
         {
             var row = UiStyle.Box(name, FlexDirection.Row);
             row.pickingMode = PickingMode.Ignore;
@@ -204,96 +376,36 @@ namespace DuelRoguelike.UI
             for (int i = 1; i <= RunRules.PermanentSideDeckMax; i++)
             {
                 bool have = i <= owned, buying = i == next;
-                var pip = new VisualElement { name = have ? "slot-owned" : buying ? "slot-next" : "slot-empty" };
-                pip.pickingMode = PickingMode.Ignore;
-                pip.style.width = large ? 52 : 18;
-                pip.style.height = large ? 74 : 26;
-                pip.style.marginLeft = i == 1 ? 0 : large ? 10 : 5;
-                pip.style.alignItems = Align.Center;
-                pip.style.justifyContent = Justify.Center;
-                UiStyle.Radius(pip, large ? 6 : 3);
-                UiStyle.BorderColor(pip, have ? (large ? UiStyle.Gold : UiStyle.GoldDeep) : buying ? UiStyle.Good : UiStyle.Stone5, 2);
-                pip.style.backgroundColor = have ? (large ? UiStyle.Stone6 : UiStyle.Gold) : buying && large ? UiStyle.Alpha(UiStyle.Good, 0.05f) : Color.clear;
-                if (buying && large)
+                var column = UiStyle.Box();
+                column.style.alignItems = Align.Center;
+                column.style.marginLeft = i == 1 ? 0 : 8;
+                var slot = new VisualElement { name = have ? "slot-owned" : buying ? "slot-next" : "slot-empty" };
+                slot.style.width = 52;
+                slot.style.height = 74;
+                slot.style.alignItems = Align.Center;
+                slot.style.justifyContent = Justify.Center;
+                UiStyle.Radius(slot, 6);
+                UiStyle.BorderColor(slot, have ? UiStyle.Gold : buying ? UiStyle.Good : UiStyle.Stone5, 2);
+                slot.style.backgroundColor = have ? UiStyle.Stone6 : buying ? UiStyle.Alpha(UiStyle.Good, 0.05f) : Color.clear;
+                if (buying)
                 {
                     var plus = UiStyle.Label("+", 30, UiStyle.Good);
                     UiStyle.Black(plus);
-                    plus.pickingMode = PickingMode.Ignore;
-                    pip.Add(plus);
+                    slot.Add(plus);
                     // 새로 생길 칸이 천천히 깜박인다
-                    var blink = pip;
+                    var blink = slot;
                     blink.schedule.Execute(() => blink.style.opacity = 0.55f + 0.45f * Mathf.PingPong(Time.unscaledTime * 1.4f, 1f)).Every(33);
                 }
-                row.Add(pip);
+                column.Add(slot);
+                // 아직 없는 칸 아래에는 그 칸의 값 (50, 100, …): 앞으로 얼마가 드는지 보인다
+                int nth = i - RunRules.StartingSideDeckMax;
+                var price = UiStyle.Label(!have && nth >= 1 ? RunRules.SideDeckExpansionPrice(nth).ToString() : "", 15, buying ? UiStyle.Gold : UiStyle.Stone4, bold: true);
+                price.style.height = 20;
+                price.style.marginTop = 4;
+                column.Add(price);
+                row.Add(column);
             }
             return row;
-        }
-
-        // ================= 사이드 덱 확장: 구매 확인 =================
-
-        void OpenSideDeckConfirm()
-        {
-            _goldShopIndex = 0;
-            if (_save.SideDeckExpansionProblem() != null)
-                return;
-            int limit = _save.SideDeckLimit, price = _save.SideDeckExpansionPrice;
-            var panel = OpenSlab("gold-shop-confirm", 880);
-            panel.style.alignItems = Align.Center;
-            panel.Add(WindowTitle("사이드 덱 확장"));
-            panel.Add(Text("시작 사이드 덱", 19, UiStyle.TextDim, top: 16));
-            var slots = SideSlotPips("gold-confirm-slots", limit, limit + 1, large: true);
-            slots.style.marginTop = 10;
-            panel.Add(slots);
-
-            var change = Row();
-            change.name = "gold-confirm-change";
-            change.style.alignItems = Align.Center;
-            change.style.marginTop = 10;
-            Label Big(string text, Color color)
-            {
-                var label = UiStyle.Label(text, 54, color);
-                UiStyle.Black(label);
-                label.style.whiteSpace = WhiteSpace.NoWrap;
-                return label;
-            }
-            change.Add(Big($"{limit}장", UiStyle.TextDim));
-            var arrow = Big("→", UiStyle.TextDim);
-            arrow.style.marginLeft = arrow.style.marginRight = 18;
-            change.Add(arrow);
-            change.Add(Big($"{limit + 1}장", UiStyle.Good));
-            panel.Add(change);
-
-            var note = Text("한 번 사면 계속 남는다. 다음에 시작하는 런부터 쓴다. 되돌릴 수 없다.", 19, UiStyle.TextDim, top: 6);
-            note.style.whiteSpace = WhiteSpace.Normal;
-            note.style.unityTextAlign = TextAnchor.MiddleCenter;
-            panel.Add(note);
-            var cost = Row();
-            cost.style.alignItems = Align.FlexEnd;
-            cost.style.marginTop = 14;
-            var priceLabel = UiStyle.Label($"골드 {price}", 27, UiStyle.Gold);
-            UiStyle.Black(priceLabel);
-            priceLabel.name = "gold-confirm-price";
-            cost.Add(priceLabel);
-            var after = Text($"가진 골드 {_save.Gold} → {_save.Gold - price}", 19, UiStyle.TextDim);
-            after.name = "gold-confirm-after";
-            after.style.marginLeft = 16;
-            after.style.marginBottom = 3;
-            cost.Add(after);
-            panel.Add(cost);
-
-            var buttons = new ButtonRow();
-            buttons.Root.style.marginTop = 22;
-            buttons.Add("gold-shop-buy", "산다", BuySideDeckExpansion, gold: true, width: 300);
-            buttons.Add("gold-shop-buy-cancel", "그만둔다", OpenGoldShop, width: 300);
-            buttons.Select(0);
-            _windowRow = buttons;
-            panel.Add(buttons.Root);
-            var hints = Hints(("←", "A", null), ("→", "D", "고르기"), ("Z", "J", "결정"), ("X", "K", "그만둔다"));
-            hints.name = "modal-hints";
-            hints.style.marginTop = 16;
-            panel.Add(hints);
-            _windowCancel = OpenGoldShop;
-            ApplyKeyCaps();
         }
 
         void BuySideDeckExpansion()
@@ -301,232 +413,129 @@ namespace DuelRoguelike.UI
             int price = _save.SideDeckExpansionPrice;
             if (!_save.BuySideDeckExpansion())
             {
-                OpenGoldShop();
+                ShowGoldShop();
                 return;
             }
             Persist();
             Sound.Play(Sfx.Coin);
             Debug.Log($"[골드 상점] 사이드 덱 확장: 시작 사이드 덱 {_save.SideDeckLimit}장 (골드 {price}, 남은 골드 {_save.Gold})");
-            OpenGoldShop();
-            ShowGoldBanner($"사이드 덱이 {_save.SideDeckLimit}장으로 늘었다.");
+            _goldButtons = false; // 이어서 또 사려면 다시 "산다"로 내려가야 한다
+            ShowGoldShop();
+            ShowStageBanner("gold-banner", $"사이드 덱이 {_save.SideDeckLimit}장으로 늘었다.");
+            ShopFloat("gold-counter", $"-{price}", UiStyle.Bad);
         }
 
-        // ================= 띠 알림 (창 위) =================
+        // ================= 분해 =================
 
-        /// <summary>
-        /// 창 위에 띠 알림을 띄운다 (docs/UI.md "부품 > 띠 알림"과 같은 모양·시간). 창 층에 무대와 같은 배율의 판을 깔고 그 위에 띠를 놓는다.
-        /// 창이 바뀌면 띠도 함께 사라진다.
-        /// </summary>
-        void ShowGoldBanner(string text)
+        void AddGoldDisassemble(VisualElement stage, VisualElement center, VisualElement foot, int excessCards, int excessGold, ref string after)
         {
-            var layer = new VisualElement { name = "gold-banner-layer", pickingMode = PickingMode.Ignore };
-            UiStyle.Place(layer, 0, 0, StageWidth, StageHeight);
-            layer.style.transformOrigin = new TransformOrigin(Length.Percent(0), Length.Percent(0));
-            layer.AddToClassList(FitLayerClass);
-            var banner = BannerStrip("gold-banner", text);
-            layer.Add(banner);
-            _modalLayer.Add(layer);
-            FitLayer(layer);
-            StartCoroutine(GoldBannerRoutine(layer, banner));
-        }
-
-        /// <summary>띠 알림의 띠: 무대 가운데를 가로지르는 어두운 띠와 큰 글 (이름은 name, 글은 name-text).</summary>
-        static VisualElement BannerStrip(string name, string text)
-        {
-            var banner = Row();
-            banner.name = name;
-            banner.pickingMode = PickingMode.Ignore;
-            UiStyle.Place(banner, 0, 482, StageWidth, 116);
-            banner.style.alignItems = Align.Center;
-            banner.style.justifyContent = Justify.Center;
-            banner.style.backgroundColor = UiStyle.Alpha(UiStyle.Stone9, 0.92f);
-            banner.style.borderTopWidth = banner.style.borderBottomWidth = 3;
-            banner.style.borderTopColor = banner.style.borderBottomColor = UiStyle.GoldDeep;
-            var label = UiStyle.Label(text, 48);
-            UiStyle.Black(label);
-            label.name = name + "-text";
-            label.pickingMode = PickingMode.Ignore;
-            label.style.whiteSpace = WhiteSpace.NoWrap;
-            banner.Add(label);
-            return banner;
-        }
-
-        IEnumerator GoldBannerRoutine(VisualElement layer, VisualElement banner)
-        {
-            yield return Tween(0.16f, t =>
-            {
-                banner.style.opacity = t;
-                banner.style.scale = new Scale(new Vector3(1f, 0.2f + 0.8f * t, 1f));
-            });
-            yield return Tween(1.15f, _ => { });
-            yield return Tween(0.2f, t => banner.style.opacity = 1f - t);
-            layer.RemoveFromHierarchy();
-        }
-
-        /// <summary>가진 골드 옆에 "+N"이 떠올랐다 사라진다 (분해로 골드를 얻었을 때).</summary>
-        void ShowGoldGain(int gold)
-        {
-            var counter = _modalLayer.Q("gold-counter");
-            if (counter == null)
-                return;
-            var gain = UiStyle.Label($"+{gold}", 34, UiStyle.Good);
-            UiStyle.Black(gain);
-            gain.name = "gold-gain";
-            gain.pickingMode = PickingMode.Ignore;
-            gain.style.whiteSpace = WhiteSpace.NoWrap;
-            gain.style.position = Position.Absolute;
-            gain.style.right = 0;
-            gain.style.top = 58;
-            counter.Add(gain);
-            StartCoroutine(GoldGainRoutine(gain));
-        }
-
-        static IEnumerator GoldGainRoutine(VisualElement gain)
-        {
-            yield return Tween(0.9f, t =>
-            {
-                gain.style.opacity = t < 0.25f ? t * 4f : 1f - (t - 0.25f) / 0.75f;
-                gain.style.translate = new Translate(0, 16f - 40f * t);
-            });
-            gain.RemoveFromHierarchy();
-        }
-
-        // ================= 컬렉션 분해 =================
-
-        /// <summary>분해할 수 있는 카드 (화면 순서: 몬스터 → 마법 → 함정 → 엑스트라, 카드명 순).</summary>
-        List<uint> DisassembleCodes() => Sorted(_save.Disassemblable(_rarities).Select(x => x.Code)).ToList();
-
-        void OpenDisassemble()
-        {
-            _goldShopIndex = 1;
             var codes = DisassembleCodes();
-            if (_selectedPile != Pile.Disassemble || !codes.Contains(_selectedCode))
-            {
-                _selectedPile = Pile.Disassemble;
-                _selectedCode = 0;
-            }
-            _cardViews.Clear(); // 처음 화면에는 카드가 없다. 이 창을 다시 그릴 때마다 비운다.
-            int totalCards = codes.Sum(c => _save.DisassemblableCount(c, _rarities));
-            int totalGold = codes.Sum(c => _save.DisassemblableCount(c, _rarities) * GameSave.DisassemblyGold(c, _rarities));
-
-            var panel = OpenSlab("gold-disassemble", 1720);
-            panel.style.height = 960;
-            panel.style.paddingLeft = panel.style.paddingRight = 24;
-            panel.style.paddingTop = 20;
-            panel.style.paddingBottom = 18;
-            var head = Row();
-            head.style.alignItems = Align.FlexEnd;
-            head.style.flexShrink = 0;
-            var titles = UiStyle.Box();
-            titles.Add(WindowTitle("컬렉션 분해"));
-            titles.Add(Text($"카드마다 {RunRules.DisassemblyKeep}장은 남기고, 넘는 분만 골드로 바꾼다. 분해한 카드는 돌아오지 않는다.", 19, UiStyle.TextDim, top: 4));
-            head.Add(titles);
-            head.Add(GoldCounter("disassemble-gold"));
-            panel.Add(head);
-
-            var body = Row();
-            body.style.flexGrow = 1;
-            body.style.flexShrink = 1;
-            body.style.marginTop = 14;
-            var left = UiStyle.Box();
-            left.style.width = PickColumns * (PickCardWidth + 12) + 28; // 세로 스크롤 막대 자리까지
-            left.style.flexShrink = 0;
-            var scroll = new ScrollView(ScrollViewMode.Vertical);
-            scroll.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
-            scroll.style.flexGrow = 1;
-            scroll.style.flexShrink = 1;
-            var grid = Grid(scroll.contentContainer);
-            left.Add(scroll);
-            var rates = string.Join(" · ", Enumerable.Range(0, RarityTable.RarityCount).Select(i => $"{(Rarity)i} {RunRules.DisassemblyGoldFor((Rarity)i)}"));
-            var legend = Text("1장에 받는 골드   " + rates, 19, UiStyle.TextDim, top: 8);
-            legend.name = "disassemble-rates";
-            legend.style.flexShrink = 0;
-            left.Add(legend);
-            var notice = Text(_disassembleNotice ?? "", 19, UiStyle.Good, top: 4);
-            notice.name = "disassemble-notice";
-            notice.style.flexShrink = 0;
-            notice.style.minHeight = 26;
-            left.Add(notice);
-            body.Add(left);
-            var detail = UiStyle.Box("disassemble-detail");
-            detail.style.width = PickDetailWidth;
-            detail.style.marginLeft = StyleKeyword.Auto;
-            detail.style.flexShrink = 0;
-            body.Add(detail);
-            panel.Add(body);
-
-            var all = UiStyle.StoneButton(totalCards > 0 ? $"전부 분해 · {totalCards}장 · 골드 +{totalGold}" : "전부 분해", OpenDisassembleAllConfirm, small: true);
-            all.name = "disassemble-all";
-            all.SetEnabled(totalCards > 0);
-            panel.Add(WindowFooter(Hints(("← ↑ ↓ →", "W A S D", "카드 고르기"), ("Z", "J", "1장 분해"), ("X", "K", "닫기")),
-                all, KeyButton("gold-disassemble-close", "닫기", CloseDisassemble, "X", "K", 112)));
-            ApplyKeyCaps();
-
-            // 카드 고르기 창의 키보드(PickKey)를 그대로 쓴다
-            _detail = detail;
-            _renderDetail = RenderDisassembleDetail;
-            _pickSlots.Clear();
-            _cardPickGrid = grid;
-            const string pickName = "gold-disassemble";
-            if (_pickName != pickName)
-                _pickCursor = -1;
-            _pickName = pickName;
+            _goldCard = Mathf.Clamp(_goldCard, 0, Mathf.Max(0, codes.Count - 1));
             if (codes.Count == 0)
-                grid.Add(Text($"{RunRules.DisassemblyKeep}장을 넘게 가진 카드가 없다.", 19, UiStyle.TextDim));
-            foreach (uint candidate in codes)
             {
-                uint code = candidate;
-                grid.Add(PickSlot(Pile.Disassemble, code, () => DisassembleCards(code, 1), count: _collection.Count(code),
-                    tag: $"넘는 분 {_save.DisassemblableCount(code, _rarities)}"));
-            }
-            ShowDetail(_selectedPile, _selectedCode, pinned: true);
-        }
-
-        void CloseDisassemble()
-        {
-            _disassembleNotice = null;
-            _selectedCode = 0;
-            OpenGoldShop();
-        }
-
-        void RenderDisassembleDetail(VisualElement panel, Pile pile, uint code, bool pinned)
-        {
-            int excess = code == 0 || pile != Pile.Disassemble ? 0 : _save.DisassemblableCount(code, _rarities);
-            if (excess <= 0)
-            {
-                AddPickEmpty(panel, _pickSlots.Count > 0 ? "왼쪽에서 카드를 고른다. 결정 키나 두 번 누르기로 1장씩 분해한다."
-                    : $"{RunRules.DisassemblyKeep}장을 넘게 가진 카드가 없다.");
+                var none = UiStyle.Label($"{RunRules.DisassemblyKeep}장을 넘게 가진 카드가 없다.", 24, StallInk);
+                none.name = "disassemble-none";
+                none.pickingMode = PickingMode.Ignore;
+                UiStyle.Place(none, 0, 540, StageWidth);
+                none.style.unityTextAlign = TextAnchor.MiddleCenter;
+                stage.Add(none);
+                center.Add(ShopHeadLine("컬렉션 분해", null, ("남는 카드 없음", UiStyle.TextDim, true)));
+                center.Add(Text($"카드마다 {RunRules.DisassemblyKeep}장은 남기고, 남는 카드를 골드로 바꾸는 곳이다.", 24, UiStyle.TextDim, top: 10));
+                AddDisassembleNotice(center);
+                _goldConfirmAll = false;
                 return;
             }
-            panel.Add(_faces.BuildDetail(code, PickDetailWidth, DisassembleDetailHeight));
-            int each = GameSave.DisassemblyGold(code, _rarities);
-            string grade = _rarities.TryGet(code, out var rarity) ? rarity.ToString() : "?";
-            var info = Text($"컬렉션 {_collection.Count(code)}장 · 넘는 분 {excess}장 · {grade} 1장에 골드 {each}", 17, UiStyle.TextDim, top: 8);
+
+            var row = CounterRow("disassemble-row", 196, 414, 1528, GoldCardWidth);
+            VisualElement on = null;
+            for (int i = 0; i < codes.Count; i++)
+            {
+                int index = i;
+                uint code = codes[i];
+                bool isOn = i == _goldCard;
+                var slot = CounterCard(SlotName(Pile.Disassemble, code), code, isOn, () =>
+                {
+                    _goldCard = index;
+                    _goldButtons = false;
+                    _goldConfirmAll = false;
+                    ShowGoldShop();
+                }, GoldCardWidth, count: _collection.Count(code), tag: $"남는 카드 {_save.DisassemblableCount(code, _rarities)}");
+                row.Add(slot);
+                if (isOn)
+                    on = slot;
+            }
+            stage.Add(row);
+            ScrollCounterTo(row, on);
+
+            if (_goldConfirmAll)
+            {
+                // 전부 분해: 아래 판에서 한 번 묻는다. 처음에는 "그만둔다"가 골라져 있어서 결정 키를 거듭 눌러도 분해되지 않는다.
+                var byRarity = new int[RarityTable.RarityCount];
+                foreach (var (card, count, _) in _save.Disassemblable(_rarities))
+                    if (_rarities.TryGet(card, out var grade))
+                        byRarity[(int)grade] += count;
+                string breakdown = string.Join(" · ", Enumerable.Range(0, byRarity.Length).Reverse().Where(i => byRarity[i] > 0).Select(i => $"{(Rarity)i} {byRarity[i]}장"));
+                var confirm = UiStyle.Box("gold-disassemble-confirm");
+                var what = Text($"남는 카드 {excessCards}장을 모두 골드로 바꾼다.", 30, UiStyle.Text, bold: true);
+                what.name = "disassemble-all-text";
+                confirm.Add(what);
+                confirm.Add(Text(breakdown, 19, UiStyle.TextDim, top: 6));
+                confirm.Add(Text("되돌릴 수 없다. 분해한 카드는 돌아오지 않는다.", 19, UiStyle.Opponent, top: 4));
+                var reward = Text($"받을 골드 +{excessGold}", 27, UiStyle.Good, top: 10);
+                UiStyle.Black(reward);
+                reward.name = "disassemble-all-gold";
+                confirm.Add(reward);
+                center.Add(confirm);
+                var yes = AddGoldNavButton(foot, "disassemble-all-confirm", "분해한다", DisassembleAll, 240);
+                yes.style.color = UiStyle.Bad;
+                AddGoldNavButton(foot, "disassemble-all-cancel", "그만둔다", CancelDisassembleAll, 240, gold: true);
+                after = $"분해하면 {_save.Gold + excessGold}";
+                return;
+            }
+
+            uint pointed = codes[_goldCard];
+            int excess = _save.DisassemblableCount(pointed, _rarities), each = GameSave.DisassemblyGold(pointed, _rarities);
+            var tags = new List<(string, Color, bool)>();
+            if (_rarities.TryGet(pointed, out var rarity))
+                tags.Add((rarity.ToString(), CardFaces.RarityColor(rarity), true));
+            var head = ShopHeadLine($"「{_text.CardName(pointed)}」", null, tags.ToArray());
+            var gain = UiStyle.Label($"1장에 골드 +{each}", 27, UiStyle.Good);
+            UiStyle.Black(gain);
+            gain.name = "disassemble-each";
+            gain.style.whiteSpace = WhiteSpace.NoWrap;
+            gain.style.marginLeft = StyleKeyword.Auto;
+            head.Add(gain);
+            center.Add(head);
+            var info = Text($"컬렉션 {_collection.Count(pointed)}장 · 남는 카드 {excess}장", 24, top: 6);
             info.name = "disassemble-info";
-            info.style.whiteSpace = WhiteSpace.Normal;
-            panel.Add(info);
-            if (!pinned)
-                return;
-            var one = UiStyle.StoneButton($"1장 분해 · 골드 +{each}", () => DisassembleCards(code, 1), gold: true);
-            one.name = "disassemble-one";
-            one.style.marginTop = 10;
-            one.style.fontSize = 23;
-            one.style.paddingLeft = one.style.paddingRight = 8;
-            panel.Add(one);
-            var rest = UiStyle.StoneButton($"이 카드의 넘는 분 모두 · 골드 +{each * excess}", () => DisassembleCards(code, excess), small: true);
-            rest.name = "disassemble-card-all";
-            rest.style.marginTop = 8;
-            rest.style.fontSize = 17;
-            rest.style.paddingLeft = rest.style.paddingRight = 4;
-            rest.SetEnabled(excess > 1);
-            panel.Add(rest);
+            center.Add(info);
+            center.Add(Text($"카드마다 {RunRules.DisassemblyKeep}장은 남긴다. 분해한 카드는 돌아오지 않는다.", 19, UiStyle.TextDim, top: 2));
+            var rates = string.Join(" · ", Enumerable.Range(0, RarityTable.RarityCount).Select(i => $"{(Rarity)i} {RunRules.DisassemblyGoldFor((Rarity)i)}"));
+            var legend = Text("1장에 받는 골드   " + rates, 17, UiStyle.TextDim, top: 8);
+            legend.name = "disassemble-rates";
+            center.Add(legend);
+            AddDisassembleNotice(center);
+
+            AddGoldNavButton(foot, "disassemble-all", $"전부 분해 · {excessCards}장 · 골드 +{excessGold}", AskDisassembleAll, 360);
+            AddGoldNavButton(foot, "disassemble-card-all", $"이 카드의 남는 카드 모두 · 골드 +{each * excess}", () => DisassembleCards(pointed, excess), 380, enabled: excess > 1);
+            AddGoldNavButton(foot, "disassemble-one", $"1장 분해 · 골드 +{each}", () => DisassembleCards(pointed, 1), 280, gold: true);
+            if (!_goldButtons)
+                _goldButton = 2; // 버튼 줄로 내려가면 금색 "1장 분해"부터
+            after = $"1장 분해하면 {_save.Gold + each}";
         }
 
-        /// <summary>카드 count장을 분해한다 (다시 묻지 않는다). 넘는 분이 없어진 카드는 격자에서 빠지고, 같은 자리의 다음 카드를 가리킨다.</summary>
+        void AddDisassembleNotice(VisualElement center)
+        {
+            var notice = Text(_disassembleNotice ?? "", 19, UiStyle.Good, top: 6);
+            notice.name = "disassemble-notice";
+            notice.style.minHeight = 26;
+            center.Add(notice);
+        }
+
+        /// <summary>카드 count장을 분해한다 (다시 묻지 않는다). 남는 카드가 없어진 카드는 좌판에서 빠지고, 같은 자리의 다음 카드를 가리킨다.</summary>
         void DisassembleCards(uint code, int count)
         {
-            var before = DisassembleCodes();
-            int index = before.IndexOf(code);
+            int index = DisassembleCodes().IndexOf(code);
             int gold = _save.Disassemble(code, count, _rarities);
             if (gold <= 0)
                 return;
@@ -535,65 +544,27 @@ namespace DuelRoguelike.UI
             _disassembleNotice = $"「{_text.CardName(code)}」 {count}장을 분해했다. 골드 +{gold}";
             Debug.Log($"[골드 상점] 분해: {_text.CardName(code)} {count}장 → 골드 +{gold} (컬렉션 {_collection.Count(code)}장, 골드 {_save.Gold})");
             var after = DisassembleCodes();
-            _selectedPile = Pile.Disassemble;
-            if (!after.Contains(code))
-            {
-                int next = Mathf.Min(index, after.Count - 1);
-                _selectedCode = next >= 0 ? after[next] : 0;
-                if (_pickCursor >= 0)
-                    _pickCursor = Mathf.Max(next, 0);
-            }
-            else
-                _selectedCode = code;
-            OpenDisassemble();
-            ShowGoldGain(gold);
+            int at = after.IndexOf(code);
+            _goldCard = at >= 0 ? at : Mathf.Clamp(index, 0, Mathf.Max(0, after.Count - 1));
+            if (after.Count == 0)
+                _goldButtons = false;
+            ShowGoldShop();
+            ShopFloat("gold-counter", $"+{gold}", UiStyle.Good);
         }
 
-        /// <summary>
-        /// 전부 분해 확인 창. 런 포기 창처럼 처음에는 "그만둔다"가 골라져 있어서, 결정 키를 두 번 눌러도 분해되지 않는다.
-        /// </summary>
-        void OpenDisassembleAllConfirm()
+        void AskDisassembleAll()
         {
-            var list = _save.Disassemblable(_rarities);
-            int cards = list.Sum(x => x.Count), gold = list.Sum(x => x.Count * x.GoldEach);
-            if (cards == 0)
-                return;
-            var byRarity = new int[RarityTable.RarityCount];
-            foreach (var (code, count, _) in list)
-                if (_rarities.TryGet(code, out var rarity))
-                    byRarity[(int)rarity] += count;
-            string breakdown = string.Join(" · ", Enumerable.Range(0, byRarity.Length).Reverse().Where(i => byRarity[i] > 0).Select(i => $"{(Rarity)i} {byRarity[i]}장"));
+            _goldConfirmAll = true;
+            _goldButtons = true;
+            _goldButton = 1; // 그만둔다
+            ShowGoldShop();
+        }
 
-            var panel = OpenSlab("gold-disassemble-confirm", 880);
-            panel.style.alignItems = Align.Center;
-            panel.Add(WindowTitle("전부 분해"));
-            var what = Text($"{RunRules.DisassemblyKeep}장을 넘는 카드 {cards}장을 모두 골드로 바꾼다.", 26, top: 18);
-            what.name = "disassemble-all-text";
-            what.style.whiteSpace = WhiteSpace.Normal;
-            what.style.unityTextAlign = TextAnchor.MiddleCenter;
-            panel.Add(what);
-            panel.Add(Text(breakdown, 19, UiStyle.TextDim, top: 6));
-            var warn = Text("되돌릴 수 없다. 분해한 카드는 돌아오지 않는다.", 19, UiStyle.Opponent, top: 8);
-            warn.style.unityTextAlign = TextAnchor.MiddleCenter;
-            panel.Add(warn);
-            var reward = Text($"받을 골드 +{gold}", 24, UiStyle.Good, bold: true, top: 12);
-            reward.name = "disassemble-all-gold";
-            panel.Add(reward);
-
-            var buttons = new ButtonRow();
-            buttons.Root.style.marginTop = 22;
-            var confirm = buttons.Add("disassemble-all-confirm", "분해한다", DisassembleAll, width: 300);
-            confirm.style.color = UiStyle.Bad;
-            buttons.Add("disassemble-all-cancel", "그만둔다", OpenDisassemble, gold: true, width: 300);
-            buttons.Select(1);
-            _windowRow = buttons;
-            panel.Add(buttons.Root);
-            var hints = Hints(("←", "A", null), ("→", "D", "고르기"), ("Z", "J", "결정"), ("X", "K", "그만둔다"));
-            hints.name = "modal-hints";
-            hints.style.marginTop = 16;
-            panel.Add(hints);
-            _windowCancel = OpenDisassemble;
-            ApplyKeyCaps();
+        void CancelDisassembleAll()
+        {
+            _goldConfirmAll = false;
+            _goldButtons = false;
+            ShowGoldShop();
         }
 
         void DisassembleAll()
@@ -606,11 +577,104 @@ namespace DuelRoguelike.UI
                 Debug.Log($"[골드 상점] 전부 분해: {cards}장 → 골드 +{gold} (골드 {_save.Gold})");
             }
             _disassembleNotice = null;
-            _selectedCode = 0;
-            _pickCursor = -1;
-            OpenGoldShop();
+            _goldConfirmAll = false;
+            _goldButtons = false;
+            _goldCard = 0;
+            ShowGoldShop();
             if (cards > 0)
-                ShowGoldBanner($"카드 {cards}장을 분해했다. 골드 +{gold}");
+            {
+                ShowStageBanner("gold-banner", $"카드 {cards}장을 분해했다. 골드 +{gold}");
+                ShopFloat("gold-counter", $"+{gold}", UiStyle.Good);
+            }
+        }
+
+        // ================= 키보드 =================
+
+        void GoldShopKey(Nav nav)
+        {
+            if (nav == Nav.PrevTab || nav == Nav.NextTab)
+            {
+                if (!_goldConfirmAll)
+                    SetGoldTab(nav == Nav.PrevTab ? GoldTab.Buy : GoldTab.Disassemble);
+                return;
+            }
+            bool anyButton = _goldNavButtons.Any(b => b.Button.enabledSelf);
+            if (_goldButtons)
+            {
+                // 아래 버튼 줄
+                switch (nav)
+                {
+                    case Nav.Left:
+                    case Nav.Right:
+                        int n = _goldNavButtons.Count, i = _goldButton;
+                        for (int step = 0; step < n; step++)
+                        {
+                            i = ((i + (nav == Nav.Left ? -1 : 1)) % n + n) % n;
+                            if (_goldNavButtons[i].Button.enabledSelf)
+                                break;
+                        }
+                        _goldButton = i;
+                        ShowGoldShop();
+                        break;
+                    case Nav.Confirm:
+                        if (_goldButton < _goldNavButtons.Count)
+                            Press(_goldNavButtons[_goldButton].Button);
+                        break;
+                    case Nav.Up:
+                    case Nav.Cancel:
+                        if (_goldConfirmAll)
+                        {
+                            if (nav == Nav.Cancel)
+                                CancelDisassembleAll();
+                            break;
+                        }
+                        _goldButtons = false;
+                        ShowGoldShop();
+                        break;
+                }
+                return;
+            }
+            // 좌판
+            int count = _goldTab == GoldTab.Buy ? GoldGoods.Length : DisassembleCodes().Count;
+            switch (nav)
+            {
+                case Nav.Left:
+                case Nav.Right:
+                    if (count == 0)
+                        break;
+                    int delta = nav == Nav.Left ? -1 : 1;
+                    if (_goldTab == GoldTab.Buy)
+                        _goldItem = ((_goldItem + delta) % count + count) % count;
+                    else
+                        _goldCard = ((_goldCard + delta) % count + count) % count;
+                    ShowGoldShop();
+                    break;
+                case Nav.Down:
+                    if (anyButton)
+                    {
+                        _goldButtons = true;
+                        ShowGoldShop();
+                    }
+                    break;
+                case Nav.Confirm:
+                    if (_goldTab == GoldTab.Disassemble)
+                    {
+                        // 결정 키는 가리킨 카드를 1장 분해한다
+                        var codes = DisassembleCodes();
+                        if (_goldCard < codes.Count)
+                            DisassembleCards(codes[_goldCard], 1);
+                    }
+                    else if (anyButton)
+                    {
+                        // 사는 것은 "산다" 버튼으로 내려가서 한 번 더 누른다
+                        _goldButtons = true;
+                        ShowGoldShop();
+                    }
+                    break;
+                case Nav.Cancel:
+                    CloseGoldShop();
+                    break;
+            }
         }
     }
 }

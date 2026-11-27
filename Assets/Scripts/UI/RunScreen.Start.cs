@@ -298,9 +298,7 @@ namespace DuelRoguelike.UI
             // 층에 들어가면 한 번 뜨는 창(이벤트·휴식·칩교환소)은 런마다, 이어하기마다 다시 센다.
             _eventShownFloor = _restShownFloor = _shopShownFloor = 0;
             _eventResult = null;
-            _shopProduct = null;
-            ResetHubView();
-            _shopRelease = 0;
+            ResetHubView(); // 칩교환소 장면도 접는다 (ForgetShop)
         }
 
         // ================= 레시피 창 (새 런, 덱 편집) =================

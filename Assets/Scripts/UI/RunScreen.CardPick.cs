@@ -1,5 +1,5 @@
 // 런 화면: 카드 고르기 창의 틀. docs/UI.md "나머지 창 > 카드 고르기". RunScreen.cs의 머리말 참고.
-// 카드를 골라야 하는 창 셋(보스 보상의 봉인 해제, 메인 덱 보충, 칩교환소에서 풀 카드·대신 봉인할 카드)이 같은 틀을 쓴다:
+// 카드를 골라야 하는 창 셋(보스 보상의 봉인 해제, 메인 덱 보충, 칩교환소의 직접 고르는 교체에서 대신 봉인할 카드)이 같은 틀을 쓴다:
 // 덱 창과 같은 크기의 돌판에 제목과 설명, 왼쪽에 격자(한 줄 10장), 오른쪽에 상세 카드와 금색 실행 버튼.
 // 마우스: 올리면 미리 보기, 누르면 고르기(실행 버튼이 나온다), 두 번 누르면 바로 실행.
 // 키보드: 이동 키로 카드를 고르고(첫 키는 첫 카드를 가리키기만 한다) 결정 키로 실행한다. 닫을 수 있는 창만 취소 키를 받는다.
@@ -27,10 +27,12 @@ namespace DuelRoguelike.UI
         /// 카드 고르기 창을 열고 격자를 돌려준다 (PickSlot으로 카드를 넣는다). 상세 칸은 render가 그린다.
         /// cancel이 있으면 아래 줄 오른쪽에 놓고 취소 키가 그것을 누른다. 없으면 닫을 수 없는 창이다.
         /// </summary>
+        /// <param name="headRight">머리 줄 오른쪽 끝에 놓을 것 (칩교환소: 풀기로 한 카드와 값). 없으면 null.</param>
+        /// <param name="dim">뒤를 덮는 어두운 정도 (칩교환소 장면 위에 뜰 때는 장면이 비쳐 보이게 옅게).</param>
         VisualElement OpenCardPick(string name, string title, string intro, string warning, string detailName,
-            Action<VisualElement, Pile, uint, bool> render, Button cancel = null, string cancelLabel = null)
+            Action<VisualElement, Pile, uint, bool> render, Button cancel = null, string cancelLabel = null, VisualElement headRight = null, float dim = 0.9f)
         {
-            var panel = OpenSlab(name, 1720);
+            var panel = OpenSlab(name, 1720, dim);
             panel.style.height = 960;
             panel.style.paddingLeft = panel.style.paddingRight = 24;
             panel.style.paddingTop = 20;
@@ -45,6 +47,13 @@ namespace DuelRoguelike.UI
             introLabel.style.flexShrink = 1;
             introLabel.style.whiteSpace = WhiteSpace.Normal;
             head.Add(introLabel);
+            if (headRight != null)
+            {
+                headRight.style.marginLeft = StyleKeyword.Auto;
+                headRight.style.paddingLeft = 18;
+                headRight.style.flexShrink = 0;
+                head.Add(headRight);
+            }
             panel.Add(head);
             if (!string.IsNullOrEmpty(warning))
             {

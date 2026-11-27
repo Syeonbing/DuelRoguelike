@@ -518,18 +518,20 @@ namespace DuelRoguelike.Tests
             Assert.AreEqual("5층", Find<Label>(RunUi, "stand-floor")?.text, "칩교환소에 올라섰는데 서 있는 층이 5층이 아니다");
             Assert.AreEqual("3", Find<Label>(RunUi, "stat-sealed")?.text, "봉인 3장이 보이지 않는다");
             Assert.AreEqual("400", Find<Label>(RunUi, "stat-chips")?.text, "위 막대에 칩이 없다");
-            Assert.IsNotNull(Find<VisualElement>(RunUi, "chip-exchange"), "칩교환소 층에 왔는데 칩교환소 창이 저절로 뜨지 않았다");
+            Assert.IsNotNull(Find<VisualElement>(RunUi, "chip-exchange"), "칩교환소 층에 왔는데 칩교환소 장면이 저절로 펴지지 않았다");
             Click(Find<Button>(RunUi, "shop-close"));
             yield return null;
-            Assert.IsNull(Find<VisualElement>(RunUi, "chip-exchange"), "칩교환소 창이 닫히지 않았다");
+            Assert.IsNull(Find<VisualElement>(RunUi, "chip-exchange"), "칩교환소에서 나가지 않았다");
             yield return Shot(RunUi, "11-tower");
 
             Click(Find<Button>(RunUi, "open-shop"));
             yield return null;
-            Assert.IsNotNull(Find<VisualElement>(RunUi, "chip-exchange"), "칩교환소 창이 열리지 않았다");
+            Assert.IsNotNull(Find<VisualElement>(RunUi, "chip-exchange"), "칩교환소 장면이 펴지지 않았다");
             Assert.AreEqual("400", Find<Label>(RunUi, "shop-chips")?.text, "칩교환소의 보유 칩");
-            StringAssert.Contains("고대의 망원경", HubTextOf("shop-buy-ItemCard"), "칩교환소에 아이템 카드(고대의 망원경) 상품이 없다");
-            foreach (string product in new[] { "SwapSameRarity", "SwapSameRarityChosen", "SwapAny", "SwapAnyChosen", "Unseal", "ItemCard" })
+            StringAssert.Contains("고대의 망원경", HubTextOf("shop-item"), "칩교환소에 아이템 카드(고대의 망원경)가 없다");
+            Assert.AreEqual(3, Named("card-shoprelease-").Count, "계산대의 봉인된 카드");
+            // 처음에는 첫 봉인된 카드를 가리키고, 그 카드에 쓸 방법 다섯 가지가 값과 함께 나온다
+            foreach (string product in new[] { "SwapSameRarity", "SwapSameRarityChosen", "SwapAny", "SwapAnyChosen", "Unseal" })
                 Assert.IsTrue(Find<Button>(RunUi, "shop-buy-" + product)?.enabledSelf == true, $"칩 400인데 {product}를 살 수 없다");
             yield return Shot(RunUi, "12-shop");
 
@@ -549,17 +551,22 @@ namespace DuelRoguelike.Tests
 
             // 아이템 카드 「고대의 망원경」(60): 상점 덱으로 가고, 상점 덱에서 적용하면 탑 미리보기가 2층이 되어 7층(확률 이벤트 층)이 보인다.
             Assert.IsNull(Find<VisualElement>(RunUi, "tower-preview-7"), "아이템 없이 7층이 미리 보인다");
+            Click(Find<Button>(RunUi, "shop-item"));
+            yield return null;
             Click(Find<Button>(RunUi, "shop-buy-ItemCard"));
             yield return null;
-            Assert.IsNotNull(Find<VisualElement>(RunUi, "chip-exchange"), "아이템 카드를 산 뒤 칩교환소 창으로 돌아오지 않았다");
+            Assert.IsNotNull(Find<VisualElement>(RunUi, "chip-exchange"), "아이템 카드를 산 뒤 칩교환소 장면이 사라졌다");
             Assert.AreEqual("80", Find<Label>(RunUi, "shop-chips")?.text, "아이템 카드(60) 뒤 칩");
-            StringAssert.StartsWith("칩교환소: 아이템 카드", Find<Label>(RunUi, "move-notice")?.text ?? "", "아이템 카드를 산 뒤 알림");
+            StringAssert.Contains("샀다", Find<Label>(RunUi, "shop-result-text")?.text ?? "", "아이템 카드를 산 뒤 결과");
+            yield return Shot(RunUi, "12b-shop-item");
+            Click(Find<Button>(RunUi, "shop-item")); // 결과를 접고 아이템 카드를 다시 가리킨다
+            yield return null;
             var soldItem = Find<Button>(RunUi, "shop-buy-ItemCard");
             Assert.IsTrue(soldItem != null && !soldItem.enabledSelf && Find<Label>(RunUi, "shop-price-ItemCard")?.text == "샀음", "산 아이템 카드를 또 살 수 있다");
-            yield return Shot(RunUi, "12b-shop-item");
             Click(Find<Button>(RunUi, "shop-close"));
             yield return null;
-            Assert.IsNull(Find<VisualElement>(RunUi, "chip-exchange"), "칩교환소 창이 닫히지 않았다");
+            Assert.IsNull(Find<VisualElement>(RunUi, "chip-exchange"), "칩교환소에서 나가지 않았다");
+            StringAssert.StartsWith("칩교환소: 아이템 카드", Find<Label>(RunUi, "move-notice")?.text ?? "", "아이템 카드를 산 뒤 알림");
             yield return OpenDeck("shop");
             Assert.IsNotNull(Find<VisualElement>(RunUi, "card-shop-17092736"), "덱 창의 상점 덱 탭에 산 아이템 카드가 없다");
             StringAssert.Contains("상점 덱 1/10", HubTextOf("zone-shop"), "상점 덱 탭 제목");
@@ -753,22 +760,22 @@ namespace DuelRoguelike.Tests
             Debug.Log($"[런 화면 시험] 런 포기: {runFloor}층, 확인 창(계속한다·K·J로는 끝나지 않음) → 포기 → 런 종료 화면, 골드 +{gained}, 저장 파일에서 런 빠짐");
         }
 
-        /// <summary>칩교환소에서 상품 하나를 산다: 사기 → 풀 카드 → (직접 고르는 교체면 대신 봉인할 카드) → 사기. 산 뒤 칩교환소 창으로 돌아온다.</summary>
+        /// <summary>
+        /// 칩교환소에서 상품 하나를 산다: 계산대의 첫 봉인된 카드를 가리키고 → 방법을 누른다 → (직접 고르는 교체면 대신 봉인할 카드를 골라 치른다).
+        /// 산 뒤에는 결과가 아래 판에 보인다. 결과를 접고 (첫 카드를 다시 가리켜) 방법들이 보이는 상태로 돌아온다.
+        /// </summary>
         IEnumerator BuyInShop(string product, bool chooseSeal)
         {
             int sideBefore = SavedCards("side").Count;
-            Click(Find<Button>(RunUi, "shop-buy-" + product));
-            yield return null;
-            Assert.IsNotNull(Find<VisualElement>(RunUi, "shop-pick"), $"{product}: 카드를 고르는 창이 열리지 않았다");
             var release = Named("card-shoprelease-");
-            Assert.Greater(release.Count, 0, $"{product}: 풀 카드 후보가 없다");
+            Assert.Greater(release.Count, 0, $"{product}: 계산대에 봉인된 카드가 없다");
             Click(release[0]);
             yield return null;
-            yield return Shot(RunUi, "13-shop-pick");
-            Click(Find<Button>(RunUi, "shop-confirm"));
+            Click(Find<Button>(RunUi, "shop-buy-" + product));
             yield return null;
             if (chooseSeal)
             {
+                Assert.IsNotNull(Find<VisualElement>(RunUi, "shop-pick"), $"{product}: 대신 봉인할 카드를 고르는 창이 열리지 않았다");
                 var seal = Named("card-shopseal-");
                 Assert.Greater(seal.Count, 0, $"{product}: 대신 봉인할 카드 후보가 없다");
                 Click(seal[seal.Count - 1]);
@@ -777,11 +784,17 @@ namespace DuelRoguelike.Tests
                 Click(Find<Button>(RunUi, "shop-confirm"));
                 yield return null;
             }
-            Assert.IsNotNull(Find<VisualElement>(RunUi, "chip-exchange"), $"{product}: 산 뒤 칩교환소 창으로 돌아오지 않았다");
-            StringAssert.StartsWith("칩교환소:", Find<Label>(RunUi, "move-notice")?.text ?? "", $"{product}: 산 뒤 알림");
+            Assert.IsNull(Find<VisualElement>(RunUi, "shop-pick"), $"{product}: 산 뒤 카드 고르기 창이 남아 있다");
+            Assert.IsNotNull(Find<VisualElement>(RunUi, "chip-exchange"), $"{product}: 산 뒤 칩교환소 장면이 사라졌다");
+            Assert.IsNotNull(Find<VisualElement>(RunUi, "shop-result"), $"{product}: 산 뒤 결과가 보이지 않는다");
+            yield return Shot(RunUi, "13-shop-result");
             Assert.AreEqual(sideBefore + 1, SavedCards("side").Count, $"{product}: 풀린 카드가 사이드 덱에 더해지지 않았다");
-            Assert.AreEqual($"사이드 {sideBefore + 1}", Regex.Match(Find<Label>(RunUi, "deck-counts")?.text ?? "", @"사이드 \d+").Value,
-                $"{product}: 메뉴의 사이드 덱 장수가 저장 파일과 다르다");
+            var left = Named("card-shoprelease-");
+            if (left.Count > 0)
+            {
+                Click(left[0]);
+                yield return null;
+            }
         }
 
         /// <summary>
