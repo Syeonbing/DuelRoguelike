@@ -164,9 +164,9 @@ namespace DuelRoguelike.UI
             {
                 p.BeginPath();
                 p.MoveTo(At(ChipKeeperX, ChipKeeperY, -50, -6));
-                p.QuadraticCurveTo(At(ChipKeeperX, ChipKeeperY, 0, -40), At(ChipKeeperX, ChipKeeperY, 50, -6));
+                Quad(p, At(ChipKeeperX, ChipKeeperY, -50, -6), At(ChipKeeperX, ChipKeeperY, 0, -40), At(ChipKeeperX, ChipKeeperY, 50, -6));
                 p.LineTo(At(ChipKeeperX, ChipKeeperY, 70, 6));
-                p.QuadraticCurveTo(At(ChipKeeperX, ChipKeeperY, 0, -22), At(ChipKeeperX, ChipKeeperY, -70, 6));
+                Quad(p, At(ChipKeeperX, ChipKeeperY, 70, 6), At(ChipKeeperX, ChipKeeperY, 0, -22), At(ChipKeeperX, ChipKeeperY, -70, 6));
                 p.ClosePath();
                 if (pass == 0) p.Fill();
                 else p.Stroke();
@@ -300,7 +300,7 @@ namespace DuelRoguelike.UI
                     p.MoveTo(new Vector2(x, 60));
                     p.LineTo(new Vector2(x + 120, 60));
                     p.LineTo(new Vector2(x + 120, 168));
-                    p.QuadraticCurveTo(new Vector2(x + 60, 206), new Vector2(x, 168));
+                    Quad(p, new Vector2(x + 120, 168), new Vector2(x + 60, 206), new Vector2(x, 168));
                     p.ClosePath();
                     if (pass == 0) p.Fill();
                     else p.Stroke();
@@ -316,8 +316,8 @@ namespace DuelRoguelike.UI
             {
                 p.BeginPath();
                 p.MoveTo(At(StallKeeperX, StallKeeperY, -84, -20));
-                p.QuadraticCurveTo(At(StallKeeperX, StallKeeperY, 0, -48), At(StallKeeperX, StallKeeperY, 84, -20));
-                p.QuadraticCurveTo(At(StallKeeperX, StallKeeperY, 0, -4), At(StallKeeperX, StallKeeperY, -84, -20));
+                Quad(p, At(StallKeeperX, StallKeeperY, -84, -20), At(StallKeeperX, StallKeeperY, 0, -48), At(StallKeeperX, StallKeeperY, 84, -20));
+                Quad(p, At(StallKeeperX, StallKeeperY, 84, -20), At(StallKeeperX, StallKeeperY, 0, -4), At(StallKeeperX, StallKeeperY, -84, -20));
                 p.ClosePath();
                 if (pass == 0) p.Fill();
                 else p.Stroke();
@@ -326,9 +326,9 @@ namespace DuelRoguelike.UI
             {
                 p.BeginPath();
                 p.MoveTo(At(StallKeeperX, StallKeeperY, -38, -26));
-                p.QuadraticCurveTo(At(StallKeeperX, StallKeeperY, -34, -76), At(StallKeeperX, StallKeeperY, 0, -78));
-                p.QuadraticCurveTo(At(StallKeeperX, StallKeeperY, 34, -76), At(StallKeeperX, StallKeeperY, 38, -26));
-                p.QuadraticCurveTo(At(StallKeeperX, StallKeeperY, 0, -36), At(StallKeeperX, StallKeeperY, -38, -26));
+                Quad(p, At(StallKeeperX, StallKeeperY, -38, -26), At(StallKeeperX, StallKeeperY, -34, -76), At(StallKeeperX, StallKeeperY, 0, -78));
+                Quad(p, At(StallKeeperX, StallKeeperY, 0, -78), At(StallKeeperX, StallKeeperY, 34, -76), At(StallKeeperX, StallKeeperY, 38, -26));
+                Quad(p, At(StallKeeperX, StallKeeperY, 38, -26), At(StallKeeperX, StallKeeperY, 0, -36), At(StallKeeperX, StallKeeperY, -38, -26));
                 p.ClosePath();
                 if (pass == 0) p.Fill();
                 else p.Stroke();
@@ -337,7 +337,7 @@ namespace DuelRoguelike.UI
             p.lineWidth = 6;
             p.BeginPath();
             p.MoveTo(At(StallKeeperX, StallKeeperY, -35, -35));
-            p.QuadraticCurveTo(At(StallKeeperX, StallKeeperY, 0, -45), At(StallKeeperX, StallKeeperY, 35, -35));
+            Quad(p, At(StallKeeperX, StallKeeperY, -35, -35), At(StallKeeperX, StallKeeperY, 0, -45), At(StallKeeperX, StallKeeperY, 35, -35));
             p.Stroke();
         }
 
@@ -366,6 +366,13 @@ namespace DuelRoguelike.UI
         // ================= 도형 =================
 
         static Vector2 At(float x, float y, float dx, float dy) => new Vector2(x + dx, y + dy);
+
+        /// <summary>
+        /// from에서 to까지의 2차 곡선을 3차 곡선으로 그린다. Painter2D의 QuadraticCurveTo는 MoveTo 바로 뒤에 쓰면
+        /// 시작점을 (0, 0)으로 잡아 화면 모서리까지 뻗는 쐐기가 생긴다 (2026-11-28 확인).
+        /// </summary>
+        static void Quad(Painter2D p, Vector2 from, Vector2 control, Vector2 to) =>
+            p.BezierCurveTo(from + (control - from) * (2f / 3f), to + (control - to) * (2f / 3f), to);
 
         static void Line(Painter2D p, float x0, float y0, float x1, float y1)
         {
@@ -461,7 +468,7 @@ namespace DuelRoguelike.UI
             {
                 p.BeginPath();
                 p.MoveTo(new Vector2(x - 42, y + 50));
-                p.QuadraticCurveTo(new Vector2(x, y + 28), new Vector2(x + 42, y + 50));
+                Quad(p, new Vector2(x - 42, y + 50), new Vector2(x, y + 28), new Vector2(x + 42, y + 50));
                 p.LineTo(new Vector2(x + 84, y + 200));
                 p.LineTo(new Vector2(x - 84, y + 200));
                 p.ClosePath();

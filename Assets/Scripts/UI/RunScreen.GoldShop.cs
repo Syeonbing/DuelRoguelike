@@ -110,7 +110,8 @@ namespace DuelRoguelike.UI
             var gap = new VisualElement();
             gap.style.flexGrow = 1;
             foot.Add(gap);
-            foot.Add(KeyButton("gold-shop-close", "닫기", CloseGoldShop, "X", "K", 112));
+            var close = KeyButton("gold-shop-close", "닫기", CloseGoldShop, "X", "K", 112);
+            foot.Add(close);
 
             string after = "";
             if (_goldTab == GoldTab.Buy)
@@ -118,6 +119,9 @@ namespace DuelRoguelike.UI
             else
                 AddGoldDisassemble(stage, center, foot, excessCards, excessGold, ref after);
             stage.Add(slab);
+            // 전부 분해를 묻는 동안에는 취소 키가 "그만둔다"라서 닫기 버튼을 숨긴다
+            if (_goldConfirmAll)
+                close.style.display = DisplayStyle.None;
 
             if (_goldNavButtons.Count == 0 || !_goldNavButtons.Any(b => b.Button.enabledSelf))
                 _goldButtons = false;
@@ -133,7 +137,7 @@ namespace DuelRoguelike.UI
             hints.Add(_goldConfirmAll ? Hints(("←", "A", null), ("→", "D", "고르기"), ("Z", "J", "결정"), ("X", "K", "그만둔다"))
                 : _goldButtons ? Hints(("←", "A", null), ("→", "D", "고르기"), ("Z", "J", "결정"), ("↑", "W", "위 줄로"), ("X", "K", "뒤로"))
                 : _goldTab == GoldTab.Buy ? Hints(("Q", "Q", null), ("E", "E", "산다 · 분해"), ("←", "A", null), ("→", "D", "고르기"), ("Z", "J", "결정"), ("X", "K", "닫기"))
-                : Hints(("Q", "Q", null), ("E", "E", "산다 · 분해"), ("←", "A", null), ("→", "D", "카드 고르기"), ("Z", "J", "1장 분해"), ("↓", "S", "아래 줄로"), ("X", "K", "닫기")));
+                : Hints(("Q", "Q", null), ("E", "E", "산다 · 분해"), ("←", "A", null), ("→", "D", "카드 고르기"), ("Z", "J", "1장 분해"), ("X", "K", "닫기")));
             ApplyKeyCaps();
         }
 
@@ -516,9 +520,9 @@ namespace DuelRoguelike.UI
             center.Add(legend);
             AddDisassembleNotice(center);
 
-            AddGoldNavButton(foot, "disassemble-all", $"전부 분해 · {excessCards}장 · 골드 +{excessGold}", AskDisassembleAll, 360);
-            AddGoldNavButton(foot, "disassemble-card-all", $"이 카드의 남는 카드 모두 · 골드 +{each * excess}", () => DisassembleCards(pointed, excess), 380, enabled: excess > 1);
-            AddGoldNavButton(foot, "disassemble-one", $"1장 분해 · 골드 +{each}", () => DisassembleCards(pointed, 1), 280, gold: true);
+            AddGoldNavButton(foot, "disassemble-all", $"전부 분해 · {excessCards}장 · 골드 +{excessGold}", AskDisassembleAll, 300);
+            AddGoldNavButton(foot, "disassemble-card-all", $"이 카드의 남는 카드 모두 · 골드 +{each * excess}", () => DisassembleCards(pointed, excess), 330, enabled: excess > 1);
+            AddGoldNavButton(foot, "disassemble-one", $"1장 분해 · 골드 +{each}", () => DisassembleCards(pointed, 1), 250, gold: true);
             if (!_goldButtons)
                 _goldButton = 2; // 버튼 줄로 내려가면 금색 "1장 분해"부터
             after = $"1장 분해하면 {_save.Gold + each}";

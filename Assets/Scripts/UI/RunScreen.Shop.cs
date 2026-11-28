@@ -230,6 +230,8 @@ namespace DuelRoguelike.UI
             button.style.backgroundColor = Color.clear;
             UiStyle.BorderColor(button, Color.clear, 0);
             button.style.flexShrink = 0;
+            // 버튼의 기본값(가운데 맞춤)이 안에 든 카드의 글로 물려 내려가면 줄인 카드명이 양쪽으로 넘쳐 첫 글자가 잘린다
+            button.style.unityTextAlign = TextAnchor.UpperLeft;
             return button;
         }
 
@@ -367,8 +369,8 @@ namespace DuelRoguelike.UI
             label.pickingMode = PickingMode.Ignore;
             label.style.whiteSpace = WhiteSpace.NoWrap;
             label.style.position = Position.Absolute;
-            label.style.left = 150;
-            label.style.top = 8;
+            label.style.right = 0;
+            label.style.top = 14;
             box.Add(label);
             StartCoroutine(ShopFloatRoutine(label));
         }
@@ -753,6 +755,7 @@ namespace DuelRoguelike.UI
             plaque.style.paddingBottom = 8;
             plaque.style.alignItems = Align.FlexStart;
             plaque.style.justifyContent = Justify.FlexStart;
+            plaque.style.unityTextAlign = TextAnchor.UpperLeft;
             UiStyle.Radius(plaque, 8);
             SetPlaque(plaque, false);
             var top = UiStyle.Label(small, 17, UiStyle.TextDim);
@@ -972,7 +975,7 @@ namespace DuelRoguelike.UI
             if (_shopResult != null)
                 hints = Hints(("Z", "J", "계속"), ("X", "K", "나간다"));
             else if (_shopRow == ShopRow.Counter)
-                hints = Hints(("←", "A", null), ("→", "D", "카드 고르기"), ("Z", "J", "방법 고르기로"), ("↓", "S", "아래 줄로"), ("X", "K", "나간다"));
+                hints = Hints(("←", "A", null), ("→", "D", "카드 고르기"), ("Z", "J", "결정"), ("↓", "S", "아래 줄로"), ("X", "K", "나간다"));
             else if (_shopRow == ShopRow.Methods)
                 hints = Hints(("←", "A", null), ("→", "D", "방법 고르기"), ("Z", "J", "산다"), ("↑", "W", null), ("↓", "S", "줄 옮기기"), ("X", "K", "뒤로"));
             else

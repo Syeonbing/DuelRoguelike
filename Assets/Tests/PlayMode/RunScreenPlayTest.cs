@@ -512,9 +512,6 @@ namespace DuelRoguelike.Tests
                 text = SetLine(text, "main", string.Join(" ", main.Skip(3)));
                 return SetLine(text, "sealed-main", string.Join(" ", main.Take(3)));
             });
-            Assert.AreEqual("5층 · 칩교환소", Find<Label>(RunUi, "floor-label")?.text, "5층 칩교환소가 아니다");
-            Assert.IsNull(Find<Button>(RunUi, "next-duel"), "칩교환소에 다음 듀얼 버튼이 있다");
-            Assert.IsNotNull(Find<Button>(RunUi, "leave-floor"), "칩교환소에 다음 층으로 버튼이 없다");
             Assert.AreEqual("5층", Find<Label>(RunUi, "stand-floor")?.text, "칩교환소에 올라섰는데 서 있는 층이 5층이 아니다");
             Assert.AreEqual("3", Find<Label>(RunUi, "stat-sealed")?.text, "봉인 3장이 보이지 않는다");
             Assert.AreEqual("400", Find<Label>(RunUi, "stat-chips")?.text, "위 막대에 칩이 없다");
@@ -522,7 +519,12 @@ namespace DuelRoguelike.Tests
             Click(Find<Button>(RunUi, "shop-close"));
             yield return null;
             Assert.IsNull(Find<VisualElement>(RunUi, "chip-exchange"), "칩교환소에서 나가지 않았다");
+            // 허브의 명령 메뉴는 칩교환소 장면에서 나온 뒤에 보인다
+            Assert.AreEqual("5층 · 칩교환소", Find<Label>(RunUi, "floor-label")?.text, "5층 칩교환소가 아니다");
+            Assert.IsNull(Find<Button>(RunUi, "next-duel"), "칩교환소에 다음 듀얼 버튼이 있다");
+            Assert.IsNotNull(Find<Button>(RunUi, "leave-floor"), "칩교환소에 다음 층으로 버튼이 없다");
             yield return Shot(RunUi, "11-tower");
+
 
             Click(Find<Button>(RunUi, "open-shop"));
             yield return null;
