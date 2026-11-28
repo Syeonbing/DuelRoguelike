@@ -62,9 +62,11 @@ namespace DuelRoguelike.UI
                 ReopenFloorWindow();
         }
 
-        /// <summary>창에서 연 덱 창을 닫았을 때 그 창으로 돌아간다 (듀얼 창, 휴식 창).</summary>
+        /// <summary>창에서 연 덱 창을 닫았을 때 그 창으로 돌아간다 (듀얼 창, 휴식 창). 칩교환소는 ShowHub가 장면을 다시 편다.</summary>
         void ReopenFloorWindow()
         {
+            if (_run != null && _run.FloorKind == FloorKind.ChipExchange)
+                return;
             if (_run != null && _run.Phase == RunPhase.Ready && _run.FloorKind == FloorKind.Rest)
                 OpenRest();
             else
@@ -153,7 +155,8 @@ namespace DuelRoguelike.UI
             foot.style.marginTop = 6;
             if (_deckFromDuel)
             {
-                var from = UiStyle.Label(_run.FloorKind == FloorKind.Rest ? "덱 정리 중. 닫으면 휴식 창으로 돌아간다." : "듀얼 전 덱 조정 중. 닫으면 듀얼 창으로 돌아간다.", 17, UiStyle.Gold, bold: true);
+                var from = UiStyle.Label(_run.FloorKind == FloorKind.ChipExchange ? "덱 보는 중. 닫으면 칩교환소로 돌아간다."
+                    : _run.FloorKind == FloorKind.Rest ? "덱 정리 중. 닫으면 휴식 창으로 돌아간다." : "듀얼 전 덱 조정 중. 닫으면 듀얼 창으로 돌아간다.", 17, UiStyle.Gold, bold: true);
                 from.name = "deck-from-duel";
                 from.style.whiteSpace = WhiteSpace.NoWrap;
                 from.style.marginRight = 18;

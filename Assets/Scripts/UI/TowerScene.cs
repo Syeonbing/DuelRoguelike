@@ -26,13 +26,13 @@ namespace DuelRoguelike.UI
             (51, UiStyle.Hex(0x03040f), UiStyle.Hex(0x151a4a)),
         };
 
-        static readonly (float At, Color Color)[] BodyShade =
+        internal static readonly (float At, Color Color)[] BodyShade =
         {
             (0f, UiStyle.Hex(0x57472f)), (0.1f, UiStyle.Hex(0xa28a63)), (0.34f, UiStyle.Hex(0xe6d3aa)),
             (0.5f, UiStyle.Hex(0xdcc79c)), (0.8f, UiStyle.Hex(0x927c58)), (1f, UiStyle.Hex(0x4b3d2c)),
         };
 
-        static readonly (float At, Color Color)[] EaveShade =
+        internal static readonly (float At, Color Color)[] EaveShade =
         {
             (0f, UiStyle.Hex(0x7b6646)), (0.34f, UiStyle.Hex(0xf5e8c6)), (1f, UiStyle.Hex(0x6a5639)),
         };
@@ -118,9 +118,9 @@ namespace DuelRoguelike.UI
 
         static float Now => Time.realtimeSinceStartup * 1000f;
 
-        static Color Mix(Color a, Color b, float t) => new Color(a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, 1f);
+        internal static Color Mix(Color a, Color b, float t) => new Color(a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, 1f);
 
-        static void SkyAt(float altitude, out Color top, out Color bottom)
+        internal static void SkyAt(float altitude, out Color top, out Color bottom)
         {
             int i = 0;
             while (i < Sky.Length - 2 && altitude >= Sky[i + 1].Floor)
@@ -450,7 +450,7 @@ namespace DuelRoguelike.UI
         const float Kappa = 0.5522848f;
 
         /// <summary>타원 하나를 지금 경로에 더한다 (시계 방향). 여러 개를 한 경로에 넣고 한 번에 칠할 수 있다.</summary>
-        static void Ellipse(Painter2D p, float cx, float cy, float rx, float ry)
+        internal static void Ellipse(Painter2D p, float cx, float cy, float rx, float ry)
         {
             float kx = rx * Kappa, ky = ry * Kappa;
             p.MoveTo(new Vector2(cx + rx, cy));
@@ -461,7 +461,7 @@ namespace DuelRoguelike.UI
             p.ClosePath();
         }
 
-        static void Disc(Painter2D p, float cx, float cy, float r, Color color)
+        internal static void Disc(Painter2D p, float cx, float cy, float r, Color color)
         {
             p.fillColor = color;
             p.BeginPath();
@@ -469,7 +469,7 @@ namespace DuelRoguelike.UI
             p.Fill();
         }
 
-        static void FillRect(Painter2D p, float x, float y, float w, float h, Color color)
+        internal static void FillRect(Painter2D p, float x, float y, float w, float h, Color color)
         {
             p.fillColor = color;
             p.BeginPath();
@@ -484,7 +484,7 @@ namespace DuelRoguelike.UI
         /// <summary>
         /// 구름 하나. 타원 네 개를 한 경로로 한 번에 칠한다. 반투명한 도형을 따로 겹쳐 칠하면 겹친 곳이 얼룩진다.
         /// </summary>
-        static void Cloud(Painter2D p, float x, float y, float w, Color color)
+        internal static void Cloud(Painter2D p, float x, float y, float w, Color color)
         {
             float h = w * 0.2f;
             p.fillColor = color;
@@ -495,7 +495,7 @@ namespace DuelRoguelike.UI
         }
 
         /// <summary>위가 둥근 문·창 모양. (x, y)는 바닥 가운데.</summary>
-        static void Arch(Painter2D p, float x, float y, float w, float h)
+        internal static void Arch(Painter2D p, float x, float y, float w, float h)
         {
             float r = w / 2, cy = y - h + r, k = r * Kappa;
             p.MoveTo(new Vector2(x - r, y));
@@ -507,7 +507,7 @@ namespace DuelRoguelike.UI
         }
 
         /// <summary>꼭짓점 색을 넣은 사각형을 모아 한 번에 그린다.</summary>
-        sealed class QuadBatch
+        internal sealed class QuadBatch
         {
             readonly List<Vertex> _vertices = new List<Vertex>();
             readonly List<ushort> _indices = new List<ushort>();

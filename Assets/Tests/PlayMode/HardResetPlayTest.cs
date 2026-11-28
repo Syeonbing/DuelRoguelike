@@ -68,7 +68,7 @@ namespace DuelRoguelike.Tests
             yield return LoadTitle();
             Click(Find<Button>("open-gold-shop"));
             yield return null;
-            Click(Find<Button>("gold-shop-disassemble"));
+            Click(Find<Button>("gold-tab-disassemble"));
             yield return null;
             Click(Find<Button>("disassemble-all"));
             yield return null;

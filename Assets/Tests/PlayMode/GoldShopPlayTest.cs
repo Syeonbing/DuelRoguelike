@@ -1,11 +1,12 @@
-// 플레이 모드 시험 (짧은 전용 시험): 골드 상점. docs/UI.md "나머지 창 > 골드 상점", docs/ECONOMY.md "골드 가격".
+// 플레이 모드 시험 (짧은 전용 시험): 골드 상점. docs/UI.md "상점 > 골드 상점", docs/ECONOMY.md "골드 가격".
 // Run 씬의 처음 화면에서 버튼과 가상 키보드만으로 골드 상점을 다뤄 본다. 듀얼은 하지 않는다.
-// 1. 스타터 덱 4개를 가진 새 게임 (골드 0. 시험 폴더에 써 둔다: TestSaves): 메뉴의 "골드 상점", 사이드 덱 확장 줄은 골드가 모자라 꺼져 있고, 팩·스트럭처 덱은 "준비 중"으로 꺼져 있다.
-// 2. 컬렉션 분해: 3장을 넘게 가진 카드만 나온다. 금색 버튼과 결정 키로 1장씩 분해 → 골드가 늘고 저장 파일에 남는다.
-//    "전부 분해"는 한 번 묻는다 (처음에는 "그만둔다": 결정 키로는 분해되지 않는다). 분해하면 띠 알림이 뜨고, 넘는 카드가 없어진다.
+// 1. 스타터 덱 4개를 가진 새 게임 (골드 0. 시험 폴더에 써 둔다: TestSaves): 메뉴의 "골드 상점"으로 노점 화면이 열린다. "산다" 쪽의 사이드 덱 확장은
+//    골드가 모자라 살 수 없고(까닭이 보인다), 카드 팩·스트럭처 덱은 "입고 예정"이다.
+// 2. 분해 (E 키로 창구를 바꾼다): 3장을 넘게 가진 카드만 좌판에 깔린다. 금색 버튼과 결정 키로 1장씩 분해 → 골드가 늘고 저장 파일에 남는다.
+//    "전부 분해"는 아래 판에서 한 번 묻는다 (처음에는 "그만둔다": 결정 키로는 분해되지 않는다). 분해하면 띠 알림이 뜨고, 남는 카드가 없어진다.
 // 3. 저장 파일을 고쳐 골드 130, 유희 편 레시피의 시작 사이드 덱 5장(영구 칸 3 + 임시 칸 2)으로 다시 켠다.
 //    새 런 창의 임시 확장: 살 수 있는 만큼(2장)으로 시작하고, − 버튼과 좌우 키로 바꾼다. 사지 않은 카드는 "두고 감".
-// 4. 사이드 덱 확장: 확인 창에서 취소 키는 사지 않고 돌아오고, 결정 키("산다")는 산다 → 골드 130 → 80, 한도 4장, 띠 알림,
+// 4. 사이드 덱 확장: 결정 키는 좌판에서 "산다" 버튼으로 내려가기만 하고(취소 키로 돌아온다), 한 번 더 눌러야 산다 → 골드 130 → 80, 한도 4장, 띠 알림,
 //    저장 파일의 side-limit 4. 다음 확장(100)은 골드가 모자라 꺼진다.
 // 5. 씬을 다시 불러도(게임을 다시 켠 것처럼) 골드와 한도가 그대로다. 덱 편집 화면의 시작 사이드 덱 칸(영구 칸 4, 임시 칸 5),
 //    임시 칸의 카드를 영구 칸으로 옮기기. 임시 칸 1장을 사서 런을 시작하면 골드 80 → 72, 런의 사이드 덱 5장.
@@ -68,84 +69,96 @@ namespace DuelRoguelike.Tests
         [UnityTest, Timeout(600000)]
         public IEnumerator GoldShop()
         {
-            // ---- 1. 새 게임: 골드 0 ----
+            // ---- 1. 새 게임: 골드 0. 처음에는 "산다" 쪽이고 사이드 덱 확장을 가리킨다 ----
             yield return LoadTitle();
             Assert.AreEqual("골드 0", Text("title-gold"), "새 게임의 메뉴에 보이는 골드");
             yield return Shot("gold-0-title");
             yield return OpenShop();
+            Assert.IsNull(Find<VisualElement>("title-menu"), "골드 상점 화면에 처음 화면의 메뉴가 남아 있다");
             Assert.AreEqual(0, ShopGold(), "새 게임의 가진 골드");
-            Assert.IsFalse(Find<Button>("gold-shop-side").enabledSelf, "골드 0인데 사이드 덱 확장 줄이 켜져 있다");
+            Assert.IsTrue(Find<Button>("gold-tab-buy").ClassListContains("selected"), "처음에는 산다 쪽이어야 한다");
+            Assert.IsTrue(Find<Button>("gold-shop-side").ClassListContains("selected"), "처음에는 사이드 덱 확장을 가리켜야 한다");
+            Assert.IsFalse(Find<Button>("gold-shop-buy").enabledSelf, "골드 0인데 산다 버튼이 켜져 있다");
             StringAssert.Contains("모자라다", Text("gold-shop-side-note"), "골드가 모자란 까닭이 없다");
-            Assert.AreEqual("골드 50", Text("gold-shop-side-price"), "첫 확장의 값");
+            Assert.AreEqual("50", Text("gold-shop-side-price"), "첫 확장의 값");
             Assert.AreEqual(3, Find<VisualElement>("gold-shop-side-slots").Query("slot-owned").ToList().Count, "처음에 가진 사이드 덱 칸");
-            Assert.IsFalse(Find<Button>("gold-shop-pack").enabledSelf || Find<Button>("gold-shop-structure").enabledSelf, "준비 중인 상품이 켜져 있다");
-            Assert.AreEqual("준비 중", Text("gold-shop-pack-tag"));
-            Assert.IsTrue(Find<Button>("gold-shop-disassemble").enabledSelf, "새 게임에는 4장인 카드가 있는데 분해 줄이 꺼져 있다");
-            Assert.IsTrue(Find<Button>("gold-shop-disassemble").ClassListContains("selected"), "켜진 첫 줄(컬렉션 분해)을 가리키고 있지 않다");
-            yield return Shot("gold-1-shop-empty");
+            Assert.AreEqual("입고 예정", Text("gold-shop-pack-tag"), "카드 팩은 아직 없다");
+            Assert.AreEqual("입고 예정", Text("gold-shop-structure-tag"), "스트럭처 덱은 아직 없다");
+            yield return Shot("gold-1-buy-empty");
+            yield return Tap(Key.Z); // 살 수 없으면 결정 키가 "산다"로 내려가지 않는다
+            Assert.IsFalse(Find<Button>("gold-shop-buy").parent.ClassListContains("selected"), "살 수 없는데 산다 버튼을 가리킨다");
+            yield return Tap(Key.RightArrow);
+            Assert.IsTrue(Find<Button>("gold-shop-pack").ClassListContains("selected"), "오른쪽 키로 카드 팩을 가리키지 않았다");
+            Assert.IsNull(Find<Button>("gold-shop-buy"), "입고 예정인 상품에 산다 버튼이 있다");
+            yield return Shot("gold-1b-soon");
+            yield return Tap(Key.LeftArrow);
 
-            // ---- 2. 컬렉션 분해 ----
-            int allGold = PlusGold(Text("gold-shop-disassemble-gold"));
-            Click(Find<Button>("gold-shop-disassemble"));
-            yield return null;
-            Assert.IsNotNull(Find<VisualElement>("gold-disassemble"), "분해 창이 열리지 않았다");
+            // ---- 2. 분해: E 키로 창구를 바꾼다. 남는 카드가 좌판에 깔린다 ----
+            yield return Tap(Key.E);
+            Assert.IsTrue(Find<Button>("gold-tab-disassemble").ClassListContains("selected"), "E 키로 분해 쪽으로 바뀌지 않았다");
             var cards = Named("card-disassemble-").Select(e => e.name.Substring("card-disassemble-".Length)).ToList();
             Assert.Greater(cards.Count, 1, "분해할 수 있는 카드가 둘 이상이어야 한다 (새 게임에는 4장인 카드가 여럿 있다)");
-            Assert.IsNull(Find<Button>("disassemble-one"), "카드를 고르기 전인데 분해 버튼이 있다");
-            // 마우스: 카드를 고르고 금색 버튼으로 1장
+            int allGold = PlusGold(Find<Button>("disassemble-all").text);
+            // 마우스: 금색 버튼으로 가리킨 카드를 1장
             string first = cards[0];
+            Assert.IsTrue(Find<VisualElement>("card-disassemble-" + first).ClassListContains("selected"), "처음에는 첫 카드를 가리켜야 한다");
             int ownedFirst = ShownCount("card-disassemble-" + first);
-            Assert.Greater(ownedFirst, Keep, "분해 창의 카드는 3장을 넘게 가진 카드여야 한다");
-            Click(Find<VisualElement>("card-disassemble-" + first));
-            yield return null;
+            Assert.Greater(ownedFirst, Keep, "좌판의 카드는 3장을 넘게 가진 카드여야 한다");
             var one = Find<Button>("disassemble-one");
-            Assert.IsNotNull(one, "카드를 골랐는데 분해 버튼이 없다");
+            Assert.IsNotNull(one, "분해 버튼이 없다");
             int firstGold = PlusGold(one.text);
             Assert.Greater(firstGold, 0, $"분해 버튼의 골드: {one.text}");
             yield return Shot("gold-2-disassemble");
             Click(one);
             yield return null;
-            Assert.AreEqual(firstGold, int.Parse(Text("disassemble-gold")), "1장 분해한 뒤 가진 골드");
+            Assert.AreEqual(firstGold, ShopGold(), "1장 분해한 뒤 가진 골드");
             StringAssert.Contains("분해했다", Text("disassemble-notice"), "분해 알림이 없다");
             Assert.AreEqual(firstGold, SavedGold(), "분해로 얻은 골드가 저장 파일에 없다");
             Assert.AreEqual(ownedFirst - 1, OwnedInSave(first), "분해한 카드의 컬렉션 장수");
             Assert.AreEqual(ownedFirst - 1 > Keep, Find<VisualElement>("card-disassemble-" + first) != null,
-                "넘는 분이 남은 카드만 격자에 남아야 한다");
-            // 키보드: 첫 키는 첫 카드를 가리키고, 결정 키는 1장 분해
-            string second = Named("card-disassemble-")[0].name.Substring("card-disassemble-".Length);
-            int ownedSecond = ShownCount("card-disassemble-" + second);
+                "남는 카드가 있는 카드만 좌판에 남아야 한다");
+            // 키보드: 좌우로 카드를 가리키고, 결정 키는 1장 분해
             yield return Tap(Key.RightArrow);
-            Assert.IsNotNull(Find<Button>("disassemble-one"), "이동 키로 카드를 가리켰는데 분해 버튼이 없다");
+            var pointed = Named("card-disassemble-").FirstOrDefault(c => c.ClassListContains("selected"));
+            Assert.IsNotNull(pointed, "이동 키를 눌렀는데 가리키는 카드가 없다");
+            string second = pointed.name.Substring("card-disassemble-".Length);
+            int ownedSecond = ShownCount(pointed.name);
             int secondGold = PlusGold(Find<Button>("disassemble-one").text);
             yield return Tap(Key.Z);
-            Assert.AreEqual(firstGold + secondGold, int.Parse(Text("disassemble-gold")), "결정 키로 1장 분해한 뒤 가진 골드");
+            Assert.AreEqual(firstGold + secondGold, ShopGold(), "결정 키로 1장 분해한 뒤 가진 골드");
             Assert.AreEqual(ownedSecond - 1, OwnedInSave(second), "결정 키로 분해한 카드의 컬렉션 장수");
-            // 전부 분해: 처음에는 "그만둔다"가 골라져 있어 결정 키로는 분해되지 않는다
+            // 전부 분해: 아래 버튼 줄로 내려가 고른다. 한 번 묻고, 처음에는 "그만둔다"가 골라져 있어 결정 키로는 분해되지 않는다
             int rest = allGold - firstGold - secondGold;
+            yield return Tap(Key.DownArrow);
+            Assert.IsTrue(Find<Button>("disassemble-one").parent.ClassListContains("selected"), "아래 키로 버튼 줄(1장 분해)에 가지 않았다");
+            for (int i = 0; i < 2 && !Find<Button>("disassemble-all").parent.ClassListContains("selected"); i++)
+                yield return Tap(Key.LeftArrow);
             var all = Find<Button>("disassemble-all");
+            Assert.IsTrue(all.parent.ClassListContains("selected"), "왼쪽 키로 전부 분해를 가리키지 않았다");
             StringAssert.Contains($"골드 +{rest}", all.text, "전부 분해 버튼의 골드");
-            Click(all);
-            yield return null;
-            Assert.IsNotNull(Find<VisualElement>("gold-disassemble-confirm"), "전부 분해 확인 창이 뜨지 않았다");
+            yield return Tap(Key.Z);
+            Assert.IsNotNull(Find<VisualElement>("gold-disassemble-confirm"), "전부 분해를 한 번 묻지 않았다");
             Assert.AreEqual($"받을 골드 +{rest}", Text("disassemble-all-gold"));
+            Assert.IsTrue(Find<Button>("disassemble-all-cancel").parent.ClassListContains("selected"), "처음에는 그만둔다가 골라져 있어야 한다");
             yield return Shot("gold-3-disassemble-all");
             yield return Tap(Key.Z);
-            Assert.IsNotNull(Find<VisualElement>("gold-disassemble"), "확인 창에서 결정 키(그만둔다)를 눌렀는데 분해 창으로 돌아오지 않았다");
+            Assert.IsNull(Find<VisualElement>("gold-disassemble-confirm"), "결정 키(그만둔다)를 눌렀는데 물음이 남아 있다");
             Assert.AreEqual(firstGold + secondGold, SavedGold(), "그만뒀는데 골드가 바뀌었다");
             Click(Find<Button>("disassemble-all"));
             yield return null;
             Click(Find<Button>("disassemble-all-confirm"));
             yield return null;
-            Assert.IsNotNull(Find<VisualElement>("gold-shop"), "전부 분해한 뒤 골드 상점으로 돌아오지 않았다");
+            Assert.IsNotNull(Find<VisualElement>("gold-shop"), "전부 분해한 뒤 골드 상점이 아니다");
             StringAssert.Contains("분해했다", Text("gold-banner-text") ?? "", "전부 분해한 뒤 띠 알림이 없다");
             Assert.AreEqual(allGold, ShopGold(), "전부 분해한 뒤 가진 골드");
             Assert.AreEqual(allGold, SavedGold(), "전부 분해한 골드가 저장 파일에 없다");
             Assert.IsTrue(SavedCollection().Values.All(n => n <= Keep), "전부 분해했는데 3장을 넘는 카드가 남아 있다");
-            Assert.IsFalse(Find<Button>("gold-shop-disassemble").enabledSelf, "넘는 카드가 없는데 분해 줄이 켜져 있다");
-            yield return Shot("gold-4-shop-after-disassemble");
+            Assert.AreEqual(0, Named("card-disassemble-").Count, "남는 카드가 없는데 좌판에 카드가 있다");
+            Assert.IsNotNull(Find<Label>("disassemble-none"), "남는 카드가 없다는 글이 없다");
+            yield return Shot("gold-4-disassembled");
             Debug.Log($"[골드 상점 시험] 분해: 카드 {cards.Count}종, 골드 +{allGold}");
-            Click(Find<Button>("gold-shop-close"));
-            yield return null;
+            yield return Tap(Key.X);
+            Assert.IsNull(Find<VisualElement>("gold-shop"), "취소 키로 골드 상점이 닫히지 않았다");
             Assert.AreEqual($"골드 {allGold}", Text("title-gold"), "상점을 닫은 뒤 메뉴의 골드");
 
             // ---- 3. 저장 파일을 고쳐 골드 130, 유희 편 레시피의 시작 사이드 덱 5장 ----
@@ -187,34 +200,32 @@ namespace DuelRoguelike.Tests
             Click(Find<Button>("start-back"));
             yield return null;
 
-            // ---- 4. 사이드 덱 확장 ----
+            // ---- 4. 사이드 덱 확장: 확인 창 없이, 결정 키가 "산다"로 내려가고 한 번 더 눌러야 산다 ----
             yield return OpenShop();
-            var sideRow = Find<Button>("gold-shop-side");
-            Assert.IsTrue(sideRow.enabledSelf, "골드 130인데 사이드 덱 확장 줄이 꺼져 있다");
-            Assert.IsTrue(sideRow.ClassListContains("selected"), "켜진 첫 줄(사이드 덱 확장)을 가리키고 있지 않다");
-            StringAssert.Contains("4장째", Text("gold-shop-side-tag"));
+            var buy = Find<Button>("gold-shop-buy");
+            Assert.IsTrue(buy.enabledSelf, "골드 130인데 산다 버튼이 꺼져 있다");
+            Assert.AreEqual("산다 · 골드 50", buy.text);
+            Assert.AreEqual(1, Find<VisualElement>("gold-shop-side-slots").Query("slot-next").ToList().Count, "새로 생길 칸이 없다");
             yield return Shot("gold-6-shop");
-            Click(sideRow);
-            yield return null;
-            Assert.IsNotNull(Find<VisualElement>("gold-shop-confirm"), "구매 확인 창이 뜨지 않았다");
-            Assert.AreEqual("골드 50", Text("gold-confirm-price"));
-            Assert.AreEqual("가진 골드 130 → 80", Text("gold-confirm-after"));
-            Assert.AreEqual(1, Find<VisualElement>("gold-confirm-slots").Query("slot-next").ToList().Count, "확인 창에 새로 생길 칸이 없다");
+            yield return Tap(Key.Z);
+            Assert.IsTrue(Find<Button>("gold-shop-buy").parent.ClassListContains("selected"), "결정 키로 산다 버튼을 가리키지 않았다");
+            Assert.AreEqual("사면 80", Text("gold-shop-after"), "사면 남는 골드");
+            Assert.AreEqual(130, ShopGold(), "한 번 눌렀는데 벌써 샀다");
             yield return Shot("gold-7-confirm");
             yield return Tap(Key.X);
-            Assert.IsNotNull(Find<VisualElement>("gold-shop"), "취소 키로 골드 상점에 돌아오지 않았다");
+            Assert.IsNotNull(Find<VisualElement>("gold-shop"), "버튼 줄에서 취소 키를 눌렀는데 골드 상점이 닫혔다");
+            Assert.IsFalse(Find<Button>("gold-shop-buy").parent.ClassListContains("selected"), "취소 키로 좌판에 돌아오지 않았다");
             Assert.AreEqual(130, ShopGold(), "취소했는데 골드가 줄었다");
-            yield return Tap(Key.Z); // 가리키는 줄(사이드 덱 확장)을 연다
-            Assert.IsNotNull(Find<VisualElement>("gold-shop-confirm"), "결정 키로 구매 확인 창이 뜨지 않았다");
-            yield return Tap(Key.Z); // 산다 (처음에 골라져 있다)
-            Assert.IsNotNull(Find<VisualElement>("gold-shop"), "산 뒤 골드 상점으로 돌아오지 않았다");
+            yield return Tap(Key.Z);
+            yield return Tap(Key.Z); // 산다
             Assert.AreEqual("사이드 덱이 4장으로 늘었다.", Text("gold-banner-text"), "산 뒤 띠 알림");
             Assert.AreEqual(80, ShopGold(), "산 뒤 가진 골드");
             Assert.AreEqual(80, SavedGold());
             Assert.AreEqual(4, SavedNumber("side-limit"), "늘린 한도가 저장 파일에 없다");
             Assert.AreEqual(4, Find<VisualElement>("gold-shop-side-slots").Query("slot-owned").ToList().Count, "산 뒤 가진 칸");
-            Assert.AreEqual("골드 100", Text("gold-shop-side-price"), "다음 확장의 값");
-            Assert.IsFalse(Find<Button>("gold-shop-side").enabledSelf, "골드 80으로 100짜리 확장이 켜져 있다");
+            Assert.AreEqual("100", Text("gold-shop-side-price"), "다음 확장의 값");
+            Assert.IsFalse(Find<Button>("gold-shop-buy").enabledSelf, "골드 80으로 100짜리 확장이 켜져 있다");
+            Assert.IsFalse(Find<Button>("gold-shop-buy").parent.ClassListContains("selected"), "산 뒤에도 산다 버튼을 가리키고 있다 (결정 키를 거듭 누르면 또 산다)");
             StringAssert.Contains("20 모자라다", Text("gold-shop-side-note"));
             yield return Shot("gold-8-bought");
             Click(Find<Button>("gold-shop-close"));
